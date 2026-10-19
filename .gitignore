@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Données locales du serveur : sauvegardes, bans, configuration réelle (jamais publiées)
+data/
+boardtrouble.config.json
