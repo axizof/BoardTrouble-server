@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   type BoardDefinition,
-  type FloorRules,
+  type FloorDefinition,
   prepareBoard,
   type Space,
   type SpaceKind,
@@ -25,7 +25,7 @@ const EDGES = ['b5', 'b6', 'b7', 'b8'];
 /** Deux étages de 12 cases vides : start -> a1..a12 -> b1..b12 -> goal. */
 function floorsBoard(
   kinds: Record<string, SpaceKind> = {},
-  floors?: Record<number, FloorRules>,
+  floors?: Record<number, FloorDefinition>,
 ): BoardDefinition {
   const spaces = PATH.map((id, index): Space => {
     const next = PATH[index + 1];

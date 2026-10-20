@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { prepareBoard } from '../board/board';
-import { buildSpiralPrototype } from '../boards/spiralPrototype';
+import { buildMontTrouble } from '../boards/montTrouble';
 import type { GameEvent } from '../game/types';
 import { FOUR_PLAYERS } from '../testing/fixtures';
 import { animationTime } from './pacing';
 import { GameSession, type SeatControl } from './session';
 
-const board = prepareBoard(buildSpiralPrototype());
+const board = prepareBoard(buildMontTrouble());
 const DECISION_TIME = 20_000;
 
 function start(seats: Record<string, SeatControl>, seed = 1) {

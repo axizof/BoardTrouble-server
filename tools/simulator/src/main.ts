@@ -1,10 +1,5 @@
 // Simulateur d'équilibrage : bun run simulate -- [--games 2000] [--table 4|6] [--seed 1]
-import {
-  type BotLevel,
-  buildSpiralPrototype,
-  prepareBoard,
-  type TableSize,
-} from '@board-trouble/core';
+import { type BotLevel, buildMontTrouble, prepareBoard, type TableSize } from '@board-trouble/core';
 import { type GameRecord, simulateGame } from './simulate';
 
 // Estimation de durée réelle : mini-jeu avec sa présentation, et un tour animé.
@@ -25,7 +20,7 @@ const tableSize = Number(args.get('--table') ?? 4) as TableSize;
 const seed = Number(args.get('--seed') ?? 1);
 if (tableSize !== 4 && tableSize !== 6) throw new Error('--table doit valoir 4 ou 6');
 
-const board = prepareBoard(buildSpiralPrototype());
+const board = prepareBoard(buildMontTrouble());
 const pathLength = board.distanceToGoal.get(board.definition.start) ?? 0;
 
 console.log(
