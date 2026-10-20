@@ -59,6 +59,14 @@ export function simulateGame(board: Board, levels: BotLevel[], seed: number): Ga
         rng,
       );
       if (intent?.type === 'roll') turns++;
+    } else if (phase.type === 'turn' && phase.step.type === 'awaitDuelResult') {
+      const [winner] =
+        simulateMinigame([phase.playerId, phase.step.opponent], levelOf, rng)[0] ?? [];
+      intent = { type: 'submitDuelResult', winner: winner ?? null };
+    } else if (phase.type === 'turn') {
+      // 1 contre tous : le joueur seul gagne environ une fois sur trois, plus s'il est fort.
+      const skill = MINIGAME_SKILL[levelOf.get(phase.playerId) ?? 'normal'];
+      intent = { type: 'submitOneVsAllResult', soloWon: rng.chance(skill * 0.7) };
     } else if (phase.type === 'finale') {
       intent = {
         type: 'submitFinaleResult',
