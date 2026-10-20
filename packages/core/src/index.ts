@@ -13,6 +13,7 @@ export * from './interactions/interactions';
 export * from './items/catalog';
 export * from './items/useItem';
 export * from './jail/jail';
+export * from './lobby/players';
 export * from './minigames/catalog';
 export * from './random/rng';
 export * from './session/pacing';

@@ -4,12 +4,18 @@ import { buildMontTrouble } from '../boards/montTrouble';
 import type { GameEvent } from '../game/types';
 import { FOUR_PLAYERS } from '../testing/fixtures';
 import { animationTime } from './pacing';
-import { GameSession, type SeatControl } from './session';
+import { GameSession, type Seat, type SeatControl } from './session';
 
 const board = prepareBoard(buildMontTrouble());
 const DECISION_TIME = 20_000;
 
-function start(seats: Record<string, SeatControl>, seed = 1) {
+function start(controls: Record<string, SeatControl>, seed = 1) {
+  const seats = Object.fromEntries(
+    Object.entries(controls).map(([id, control]): [string, Seat] => [
+      id,
+      { control, character: 'fox' },
+    ]),
+  );
   return GameSession.create(
     board,
     { players: FOUR_PLAYERS, tableSize: 4, seed },
@@ -87,7 +93,12 @@ describe('a game session', () => {
     expect(snapshot).toMatchObject({
       type: 'snapshot',
       you: 'ana',
-      seats: { ana: 'human', bob: 'bot', cam: 'bot', dan: 'bot' },
+      seats: {
+        ana: { kind: 'human', character: 'fox' },
+        bob: { kind: 'bot', character: 'fox' },
+        cam: { kind: 'bot', character: 'fox' },
+        dan: { kind: 'bot', character: 'fox' },
+      },
       state: { rngState: 0 },
     });
     const secret: GameEvent = { type: 'mirrorArmed', playerId: 'ana' };
