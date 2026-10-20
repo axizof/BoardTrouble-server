@@ -59,6 +59,7 @@ describe('special dice faces', () => {
         { kind: 'gold', faces: 6 },
         { special: { kind: 'trapped', call: 5 } },
       );
+      expect(roll.call).toBe(5);
       if (roll.trapped) expect(roll.total).toBe(0);
       else {
         hits++;

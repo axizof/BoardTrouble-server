@@ -48,6 +48,8 @@ export type DiceRoll = {
   special: SpecialDieKind | null;
   /** Dé Piégé tombé sur une face piégée : on n'avance pas. */
   trapped: boolean;
+  /** Chiffre annoncé avec le Dé Piégé : l'annonce est publique, réussie ou non. */
+  call: number | null;
   bonus: number | null;
   /** Dé 1-6 en plus quand le dé normal et le dé bonus font le même chiffre. */
   extra: number | null;
@@ -77,6 +79,7 @@ export function rollDice(rng: Rng, bonusDie: BonusDie | null, options: RollOptio
     normal: main.value,
     special: special?.kind ?? null,
     trapped: main.trapped,
+    call: special?.kind === 'trapped' ? special.call : null,
     bonus,
     extra,
     turbo,
