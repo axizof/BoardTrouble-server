@@ -1,4 +1,4 @@
-import { getSpace, type SpaceId, type SpaceKind } from '../board/board';
+import { getSpace, isGateKind, type SpaceId, type SpaceKind } from '../board/board';
 import { startInteraction } from '../interactions/interactions';
 import {
   catchUpFactor,
@@ -12,7 +12,8 @@ import { kidnap } from '../jail/jail';
 import { applyTrouble, drawSpaceEvent } from '../trouble/events';
 import { effectiveKind } from '../trouble/overlays';
 import { activePlayerId, type Context, type Flow, removeItem } from './context';
-import type { HostileVia, ItemSource, PlayerId, PlayerState } from './types';
+import { freightLiftWorks, launchSeesaw, rollGiantDie, transport } from './spaces';
+import type { HostileVia, ItemSource, PlayerId, PlayerState, TurnStep } from './types';
 
 /** Assez pour revenir sur ses pas lors des plus grands reculs. */
 const TRAIL_LENGTH = 64;
@@ -44,7 +45,9 @@ export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' 
   }
 
   const kind = effectiveKind(ctx.board, ctx.state, space.id);
-  if (!hasEffect(kind, player, activePlayerId(ctx.state) === player.id)) return 'continue';
+  if (!hasEffect(kind, player, activePlayerId(ctx.state) === player.id, ctx.state.round)) {
+    return 'continue';
+  }
 
   // Pendant l'Éruption, les cases -3 s'enchaînent sans pile ou face, 3 fois au plus.
   const erupting = ctx.state.overlays.eruptionUntil !== null && kind.type === 'malus';
@@ -83,6 +86,29 @@ export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' 
       return startInteraction(ctx, player, kind.type);
     case 'filous':
       return applyHostile(ctx, player, null, (victim) => kidnap(ctx, victim));
+    case 'springboard':
+      return advanceByEffect(ctx, player, kind.amount);
+    case 'statue': {
+      const { amount } = kind;
+      return applyHostile(ctx, player, null, (victim) => recoil(ctx, victim, amount));
+    }
+    case 'elevator':
+    case 'freightLift':
+    case 'slide':
+    case 'teleporter':
+      return transport(ctx, player, kind.to, kind.type);
+    case 'seesaw':
+      return launchSeesaw(ctx, player, kind.partner);
+    case 'giantDie':
+      return rollGiantDie(ctx, player);
+    case 'wheel':
+      return pauseFor(ctx, player, {
+        type: 'awaitWheel',
+        segments: kind.segments,
+        resume: ctx.resume,
+      });
+    case 'bet':
+      return pauseFor(ctx, player, { type: 'awaitBet', resume: ctx.resume });
     case 'item':
       return gainItem(
         ctx,
@@ -109,13 +135,36 @@ export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' 
   }
 }
 
-function hasEffect(kind: SpaceKind, player: PlayerState, isActive: boolean): boolean {
+/** Le tour attend le choix du joueur (roue, pari...). */
+function pauseFor(ctx: Context, player: PlayerState, step: TurnStep): Flow {
+  ctx.state.phase = { type: 'turn', playerId: player.id, step };
+  return 'paused';
+}
+
+function hasEffect(
+  kind: SpaceKind,
+  player: PlayerState,
+  isActive: boolean,
+  round: number,
+): boolean {
   switch (kind.type) {
     case 'bonus':
     case 'malus':
     case 'trouble':
     case 'filous':
+    case 'springboard':
+    case 'statue':
+    case 'elevator':
+    case 'slide':
+    case 'teleporter':
+    case 'seesaw':
       return true;
+    case 'freightLift':
+      return freightLiftWorks(round);
+    case 'giantDie':
+    case 'wheel':
+    case 'bet':
+      return isActive;
     case 'item':
     case 'chest':
       return isActive;
@@ -318,7 +367,7 @@ export function stepForward(player: PlayerState, next: SpaceId): void {
 }
 
 export function isGate(kind: SpaceKind): boolean {
-  return kind.type === 'gate' || kind.type === 'finalGate';
+  return isGateKind(kind);
 }
 
 /** Échange de places : aucune case ne s'active (01-vision-et-plateau.md, section 8). */

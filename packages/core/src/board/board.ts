@@ -30,10 +30,68 @@ export type SpaceKind =
   | { type: 'vendetta' }
   /** Les Filous enlèvent le joueur et l'enferment dans leur Cachot. */
   | { type: 'filous' }
+  // Déplacement et hasard.
+  /** Projette loin devant. */
+  | { type: 'springboard'; amount: number }
+  /** Renvoie loin derrière (rare). */
+  | { type: 'statue'; amount: number }
+  /** Monte d'un étage jusqu'à `to`. Les destinations sont du level design. */
+  | { type: 'elevator'; to: SpaceId }
+  /** Comme l'ascenseur, mais ne marche qu'une manche sur deux (les manches paires). */
+  | { type: 'freightLift'; to: SpaceId }
+  /** Descend d'un étage jusqu'à `to`. */
+  | { type: 'slide'; to: SpaceId }
+  /** Envoie vers le téléporteur jumeau `to`. */
+  | { type: 'teleporter'; to: SpaceId }
+  /** Arriver sur un bout projette de 4 cases les joueurs posés sur l'autre bout (`partner`). */
+  | { type: 'seesaw'; partner: SpaceId }
+  /** Un dé géant à faces illustrées décide. */
+  | { type: 'giantDie' }
+  /** Une roue que le joueur arrête lui-même (test de timing) ; issues propres à la case. */
+  | { type: 'wheel'; segments: WheelSegment[] }
+  /** Parier de 1 à 5 cases sur le vainqueur du prochain mini-jeu. */
+  | { type: 'bet' }
   /** Porte à seuil : faire `threshold` ou plus aux dés, le seuil baisse à chaque échec. */
   | { type: 'gate'; threshold: number }
+  /** Deux portes : choisir un passage ; l'un est piégé et repousse de 5 cases. */
+  | { type: 'twinGate' }
+  /** Porte d'adresse : un mini-défi solo de 10 s ; réussi, on passe avec 3 cases de plus. */
+  | { type: 'skillGate' }
+  /** Péage : payer un objet pour passer tout de suite, ou tenter le seuil aux dés. */
+  | { type: 'tollGate'; threshold: number }
+  /** Porte au rocher : en cas d'échec, un rocher dévale le chemin et pousse tout le monde. */
+  | { type: 'boulderGate'; threshold: number }
   /** Porte finale au sommet : le seuil ne baisse pas. */
   | { type: 'finalGate'; threshold: number };
+
+export type WheelSegment =
+  | { type: 'advance'; amount: number }
+  | { type: 'recoil'; amount: number }
+  | { type: 'item' }
+  | { type: 'trouble' }
+  | { type: 'nothing' };
+
+/** Cases qui renvoient vers une autre case (destination ou partenaire). */
+export function linkedSpace(kind: SpaceKind): SpaceId | null {
+  switch (kind.type) {
+    case 'elevator':
+    case 'freightLift':
+    case 'slide':
+    case 'teleporter':
+      return kind.to;
+    case 'seesaw':
+      return kind.partner;
+    default:
+      return null;
+  }
+}
+
+/** Toutes les sortes de portes : elles arrêtent le déplacement. */
+export function isGateKind(kind: SpaceKind): boolean {
+  return ['gate', 'twinGate', 'skillGate', 'tollGate', 'boulderGate', 'finalGate'].includes(
+    kind.type,
+  );
+}
 
 export type Space = {
   id: SpaceId;
@@ -79,17 +137,27 @@ export function validateBoard(definition: BoardDefinition): string[] {
     const isEnd = space.kind.type === 'finalGate';
     if (isEnd && space.next.length > 0) errors.push('La porte finale doit terminer le chemin');
     if (!isEnd && space.next.length === 0) errors.push(`Cul-de-sac sur "${space.id}"`);
-    if (
-      (space.kind.type === 'bonus' || space.kind.type === 'malus') &&
-      (!Number.isInteger(space.kind.amount) || space.kind.amount < 1)
-    ) {
+    if ('amount' in space.kind && (!Number.isInteger(space.kind.amount) || space.kind.amount < 1)) {
       errors.push(`Montant invalide sur "${space.id}"`);
     }
     if (
-      (space.kind.type === 'gate' || space.kind.type === 'finalGate') &&
+      'threshold' in space.kind &&
       (!Number.isInteger(space.kind.threshold) || space.kind.threshold < 1)
     ) {
       errors.push(`Seuil invalide sur "${space.id}"`);
+    }
+    const linked = linkedSpace(space.kind);
+    if (linked !== null && !definition.spaces[linked]) {
+      errors.push(`La case "${space.id}" renvoie vers "${linked}", introuvable`);
+    }
+    if (space.kind.type === 'seesaw') {
+      const partner = definition.spaces[space.kind.partner]?.kind;
+      if (partner?.type !== 'seesaw' || partner.partner !== space.id) {
+        errors.push(`La bascule "${space.id}" doit former une paire avec "${space.kind.partner}"`);
+      }
+    }
+    if (space.kind.type === 'wheel' && space.kind.segments.length === 0) {
+      errors.push(`La roue "${space.id}" n'a aucune issue`);
     }
   }
 

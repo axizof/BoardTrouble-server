@@ -1,5 +1,4 @@
-import type { Board } from '../board/board';
-import { distanceToGoal } from '../board/board';
+import { type Board, distanceToGoal } from '../board/board';
 import { bonusDieForRank, breakTies, type DiceRoll, rollDice } from '../dice/dice';
 import { resolveDuel, resolveOneVsAll, resolveTarget } from '../interactions/interactions';
 import { drawItem, type ItemId } from '../items/catalog';
@@ -23,7 +22,9 @@ import {
 } from '../trouble/gauge';
 import { type Context, type Flow, getPlayer, removeItem } from './context';
 import { advanceByEffect, gainItem, openChest, recoil } from './effects';
-import { moveWithDice, testGate } from './movement';
+import { attemptGate, chooseDoor, payToll, resolveSkillGate } from './gates';
+import { moveWithDice } from './movement';
+import { applyWheelSegment, MAX_BET, placeBet, settleBets } from './spaces';
 import type {
   Actor,
   ApplyResult,
@@ -89,6 +90,7 @@ export function createGame(
     trouble: { gauge: 0, chaos: config.chaos ?? 'normal' },
     overlays: { inversionUntil: null, eruptionUntil: null, fog: null },
     finalGateOpenedBy: [],
+    bets: [],
     phase: { type: 'minigame' },
     rngState: 0,
   };
@@ -112,8 +114,12 @@ export function whoMustAct(state: GameState): Actor | null {
     case 'bonusMinigame':
       return { type: 'system' };
     case 'turn':
-      // Les résultats de duel et de 1 contre tous viennent du serveur (le mini-jeu).
-      if (phase.step.type === 'awaitDuelResult' || phase.step.type === 'awaitOneVsAllResult') {
+      // Résultats de mini-jeux et de tests d'adresse : ils viennent du serveur.
+      if (
+        ['awaitDuelResult', 'awaitOneVsAllResult', 'awaitSkillGate', 'awaitWheel'].includes(
+          phase.step.type,
+        )
+      ) {
         return { type: 'system' };
       }
       return { type: 'player', playerId: phase.playerId };
@@ -195,6 +201,22 @@ export function applyIntent(
     case 'chooseJailAction':
       playJailAction(ctx, intent.action);
       break;
+    case 'chooseDoor':
+    case 'payToll':
+    case 'submitSkillGateResult':
+      resolveGate(ctx, intent);
+      break;
+    case 'submitWheelResult':
+      resolvePause(ctx, (player, step) => {
+        const segment = step.type === 'awaitWheel' ? step.segments[intent.segment] : undefined;
+        if (!segment) throw new Error('Segment de roue inconnu');
+        ctx.events.push({ type: 'wheelStopped', playerId: player.id, segment: intent.segment });
+        return applyWheelSegment(ctx, player, segment);
+      });
+      break;
+    case 'placeBet':
+      resolvePause(ctx, (player) => placeBet(ctx, player, intent.on, intent.stake));
+      break;
     case 'chooseTrapdoor':
       openTrapdoor(ctx, activePlayer(ctx), intent.trapdoor);
       endTurn(ctx);
@@ -234,6 +256,17 @@ function checkIntent(
       if (phase.type !== 'trouble') return 'wrongPhase';
       if (phase.chooser !== actor.playerId) return 'notYourTurn';
       return phase.options.includes(intent.event) ? null : 'invalidChoice';
+    case 'submitSkillGateResult':
+      if (actor.type !== 'system') return 'notAllowed';
+      return phase.type === 'turn' && phase.step.type === 'awaitSkillGate' ? null : 'wrongPhase';
+    case 'submitWheelResult': {
+      if (actor.type !== 'system') return 'notAllowed';
+      if (phase.type !== 'turn' || phase.step.type !== 'awaitWheel') return 'wrongPhase';
+      const count = phase.step.segments.length;
+      return Number.isInteger(intent.segment) && intent.segment >= 0 && intent.segment < count
+        ? null
+        : 'invalidChoice';
+    }
     case 'submitDuelResult':
     case 'submitOneVsAllResult': {
       if (actor.type !== 'system') return 'notAllowed';
@@ -289,6 +322,20 @@ function checkIntent(
     case 'chooseTrapdoor':
       if (step.type !== 'awaitTrapdoor') return 'wrongPhase';
       return [0, 1, 2].includes(intent.trapdoor) ? null : 'invalidChoice';
+    case 'chooseDoor':
+      if (step.type !== 'awaitDoor') return 'wrongPhase';
+      return intent.door === 0 || intent.door === 1 ? null : 'invalidChoice';
+    case 'payToll': {
+      if (step.type !== 'awaitToll') return 'wrongPhase';
+      const player = getPlayer(state, actor.playerId);
+      return intent.item === null || player.inventory.includes(intent.item) ? null : 'itemNotOwned';
+    }
+    case 'placeBet': {
+      if (step.type !== 'awaitBet') return 'wrongPhase';
+      const validStake =
+        Number.isInteger(intent.stake) && intent.stake >= 1 && intent.stake <= MAX_BET;
+      return validStake && everyone.includes(intent.on) ? null : 'invalidChoice';
+    }
     case 'resolveItemSwap': {
       if (step.type !== 'awaitItemSwap') return 'wrongPhase';
       const player = getPlayer(state, actor.playerId);
@@ -320,6 +367,8 @@ function startRound(ctx: Context, ranking: PlayerId[][]): void {
   );
   ctx.events.push({ type: 'roundStarted', round: state.round });
   ctx.events.push({ type: 'minigameRanked', order, tieBreaks, bonusDice: { ...state.bonusDice } });
+  const [winner] = order;
+  if (winner !== undefined) settleBets(ctx, winner);
   startTurn(ctx);
 }
 
@@ -423,11 +472,37 @@ function purposeOf(player: PlayerState): 'move' | 'gate' {
  * passe, il avance du même total au-delà de la porte.
  */
 function playRoll(ctx: Context, player: PlayerState, dice: DiceRoll): void {
-  if (player.atGate && testGate(ctx, player, () => dice.total) !== 'passed') {
-    endTurn(ctx);
-    return;
+  if (player.atGate) {
+    const outcome = attemptGate(ctx, player, dice.total, dice.total);
+    if (outcome === 'paused') return;
+    if (outcome !== 'passed') {
+      endTurn(ctx);
+      return;
+    }
   }
   afterAction(ctx, moveWithDice(ctx, player, dice.total), 'endTurn');
+}
+
+/** Suite d'une porte à choix : deux portes, péage, porte d'adresse. */
+function resolveGate(
+  ctx: Context,
+  intent: Extract<Intent, { type: 'chooseDoor' | 'payToll' | 'submitSkillGateResult' }>,
+): void {
+  const { phase } = ctx.state;
+  if (phase.type !== 'turn') throw new Error('Pas de porte en attente');
+  const player = activePlayer(ctx);
+  const { step } = phase;
+  let flow: Flow;
+  if (intent.type === 'chooseDoor' && step.type === 'awaitDoor') {
+    flow = chooseDoor(ctx, player, intent.door, step.remaining);
+  } else if (intent.type === 'payToll' && step.type === 'awaitToll') {
+    flow = payToll(ctx, player, intent.item, step.remaining, step.roll);
+  } else if (intent.type === 'submitSkillGateResult' && step.type === 'awaitSkillGate') {
+    flow = resolveSkillGate(ctx, player, intent.success, step.remaining);
+  } else {
+    throw new Error('Porte en attente incohérente');
+  }
+  afterAction(ctx, flow, 'endTurn');
 }
 
 function continueAfterBranch(ctx: Context, spaceId: string): void {
@@ -454,7 +529,9 @@ type PausedStep = Extract<
       | 'awaitItemSwap'
       | 'awaitTarget'
       | 'awaitDuelResult'
-      | 'awaitOneVsAllResult';
+      | 'awaitOneVsAllResult'
+      | 'awaitWheel'
+      | 'awaitBet';
   }
 >;
 
@@ -482,6 +559,8 @@ function isPausedStep(step: TurnStep): step is PausedStep {
     'awaitTarget',
     'awaitDuelResult',
     'awaitOneVsAllResult',
+    'awaitWheel',
+    'awaitBet',
   ].includes(step.type);
 }
 
