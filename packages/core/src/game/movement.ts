@@ -35,7 +35,13 @@ export function moveWithDice(
       ctx.state.phase = {
         type: 'turn',
         playerId: player.id,
-        step: { type: 'awaitBranch', remaining, options: [...space.next] },
+        step: {
+          type: 'awaitBranch',
+          remaining,
+          options: [...space.next],
+          mode: 'dice',
+          resume: 'endTurn',
+        },
       };
       return 'paused';
     }

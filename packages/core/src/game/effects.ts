@@ -51,8 +51,7 @@ export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' 
   ctx.events.push({ type: 'spaceTriggered', playerId: player.id, spaceId: space.id });
   switch (space.kind.type) {
     case 'bonus':
-      moveByEffect(ctx, player, space.kind.amount);
-      return resolveArrival(ctx, player, 'effect');
+      return advanceByEffect(ctx, player, space.kind.amount);
     case 'malus': {
       const { amount } = space.kind;
       return applyHostile(ctx, player, null, (victim) => recoil(ctx, victim, amount));
@@ -171,37 +170,67 @@ export function applyHostile(
   return effect(victim);
 }
 
-/** Recul de `amount` cases par le chemin suivi, puis effet de la case d'arrivée. */
+/** Recul de `amount` cases par le chemin réellement suivi, puis effet de la case d'arrivée. */
 export function recoil(ctx: Context, player: PlayerState, amount: number): Flow {
-  moveByEffect(ctx, player, -amount);
+  const path: SpaceId[] = [];
+  for (let i = 0; i < amount; i++) {
+    const previous = player.trail.pop() ?? ctx.board.predecessors.get(player.position)?.[0];
+    if (previous === undefined) break;
+    player.position = previous;
+    player.atGate = isGate(getSpace(ctx.board, previous).kind);
+    path.push(previous);
+  }
+  if (path.length > 0)
+    ctx.events.push({ type: 'moved', playerId: player.id, path, cause: 'effect' });
   return resolveArrival(ctx, player, 'effect');
 }
 
 /**
- * Déplacement d'effet : vers l'avant par la voie principale, sans choix ; vers l'arrière
- * par le chemin réellement suivi. Un effet ne franchit jamais une porte : il s'arrête devant.
+ * Avancée par un effet (case bonus, Fusée...), puis effet de la case d'arrivée. Elle ne
+ * franchit jamais une porte : elle s'arrête devant. À un embranchement, le joueur dont c'est
+ * le tour choisit sa voie ; un joueur déplacé pendant le tour d'un autre ne peut pas répondre
+ * à ce moment-là et suit la voie principale. `firstStep` est la voie choisie.
  */
-export function moveByEffect(ctx: Context, player: PlayerState, delta: number): void {
+export function advanceByEffect(
+  ctx: Context,
+  player: PlayerState,
+  steps: number,
+  firstStep?: SpaceId,
+): Flow {
   const path: SpaceId[] = [];
-  for (let i = 0; i < Math.abs(delta); i++) {
-    if (delta > 0) {
-      if (player.atGate) break;
-      const next = getSpace(ctx.board, player.position).next[0];
-      if (next === undefined) break;
-      stepForward(player, next);
-      player.atGate = isGate(getSpace(ctx.board, next).kind);
-      path.push(next);
-    } else {
-      const previous = player.trail.pop() ?? ctx.board.predecessors.get(player.position)?.[0];
-      if (previous === undefined) break;
-      player.position = previous;
-      player.atGate = isGate(getSpace(ctx.board, previous).kind);
-      path.push(previous);
+  const flush = () => {
+    if (path.length > 0)
+      ctx.events.push({ type: 'moved', playerId: player.id, path: [...path], cause: 'effect' });
+    path.length = 0;
+  };
+  let forced = firstStep;
+  for (let remaining = steps; remaining > 0 && !player.atGate; remaining--) {
+    const { next } = getSpace(ctx.board, player.position);
+    if (forced === undefined && next.length > 1 && activePlayerId(ctx.state) === player.id) {
+      flush();
+      ctx.events.push({ type: 'branchReached', playerId: player.id, options: [...next] });
+      ctx.state.phase = {
+        type: 'turn',
+        playerId: player.id,
+        step: {
+          type: 'awaitBranch',
+          remaining,
+          options: [...next],
+          mode: 'effect',
+          resume: ctx.resume,
+        },
+      };
+      return 'paused';
     }
+    const step = forced ?? next[0];
+    forced = undefined;
+    if (step === undefined) break;
+    stepForward(player, step);
+    player.atGate = isGate(getSpace(ctx.board, step).kind);
+    path.push(step);
   }
-  if (path.length > 0) {
-    ctx.events.push({ type: 'moved', playerId: player.id, path, cause: 'effect' });
-  }
+  flush();
+  return resolveArrival(ctx, player, 'effect');
 }
 
 export function stepForward(player: PlayerState, next: SpaceId): void {

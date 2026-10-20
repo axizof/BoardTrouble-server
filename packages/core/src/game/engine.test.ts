@@ -159,7 +159,13 @@ describe('branches', () => {
     expect(paused.state.phase).toEqual({
       type: 'turn',
       playerId: roller,
-      step: { type: 'awaitBranch', remaining: 3, options: ['a1', 'b1'] },
+      step: {
+        type: 'awaitBranch',
+        remaining: 3,
+        options: ['a1', 'b1'],
+        mode: 'dice',
+        resume: 'endTurn',
+      },
     });
     expect(
       applyIntent(board, paused.state, player(roller), { type: 'chooseBranch', spaceId: 'm1' }),
@@ -174,6 +180,31 @@ describe('branches', () => {
     });
     expect(positionOf(chosen.state, roller)).toBe('merge');
     expect(currentPlayer(chosen.state)).not.toBe(roller);
+  });
+});
+
+describe('branches during effect moves', () => {
+  test('lets the active player choose a lane when a rocket goes through a fork', () => {
+    const { board, state: initial } = setup(forkBoard());
+    const roller = currentPlayer(initial);
+    const state = patchPlayer(initial, roller, { inventory: ['rocket'] });
+
+    const paused = act(board, state, player(roller), { type: 'useItem', item: 'rocket' });
+    expect(paused.state.phase).toMatchObject({
+      step: {
+        type: 'awaitBranch',
+        remaining: 5,
+        options: ['a1', 'b1'],
+        mode: 'effect',
+        resume: 'roll',
+      },
+    });
+    const chosen = act(board, paused.state, player(roller), {
+      type: 'chooseBranch',
+      spaceId: 'b1',
+    });
+    expect(positionOf(chosen.state, roller)).toBe('m2');
+    expect(chosen.state.phase).toMatchObject({ playerId: roller, step: { type: 'awaitRoll' } });
   });
 });
 

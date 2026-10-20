@@ -3,7 +3,7 @@ import { bonusDieForRank, breakTies, type DiceRoll, rollDice } from '../dice/dic
 import { itemUseError, useItem } from '../items/useItem';
 import { Rng } from '../random/rng';
 import { type Context, type Flow, getPlayer, removeItem } from './context';
-import { openChest } from './effects';
+import { advanceByEffect, openChest } from './effects';
 import { moveWithDice, testGate } from './movement';
 import type {
   Actor,
@@ -292,7 +292,13 @@ function continueAfterBranch(ctx: Context, spaceId: string): void {
     throw new Error("Pas d'embranchement en attente");
   }
   const player = activePlayer(ctx);
-  afterAction(ctx, moveWithDice(ctx, player, phase.step.remaining, spaceId), 'endTurn');
+  const { remaining, mode, resume } = phase.step;
+  if (mode === 'dice') {
+    afterAction(ctx, moveWithDice(ctx, player, remaining, spaceId), 'endTurn');
+    return;
+  }
+  ctx.resume = resume;
+  afterAction(ctx, advanceByEffect(ctx, player, remaining, spaceId), resume);
 }
 
 /** Reprend après une pause (coffre, inventaire plein), là où elle s'était arrêtée. */

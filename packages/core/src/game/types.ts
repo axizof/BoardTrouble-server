@@ -24,7 +24,17 @@ export type TurnStep =
   | { type: 'awaitRoll' }
   /** Relance activée : garder le lancer ou relancer. */
   | { type: 'awaitRerollChoice'; roll: DiceRoll }
-  | { type: 'awaitBranch'; remaining: number; options: SpaceId[] }
+  /**
+   * Embranchement. `mode` : déplacement aux dés ou par un effet (case bonus, Fusée), qui ne
+   * se poursuivent pas pareil.
+   */
+  | {
+      type: 'awaitBranch';
+      remaining: number;
+      options: SpaceId[];
+      mode: 'dice' | 'effect';
+      resume: Resume;
+    }
   /** Case Coffre : choisir l'un des deux coffres. */
   | { type: 'awaitChest'; resume: Resume }
   /** Inventaire plein : échanger l'objet proposé contre un des siens, ou le refuser. */
