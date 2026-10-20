@@ -157,6 +157,7 @@ function randomKind(rng: Rng, flavour: 'trunk' | 'short' | 'long'): SpaceKind {
       springboard: 0.015,
       statue: 0.005,
       giantDie: 0.015,
+      specialDie: 0.02,
       wheel: 0.01,
       bet: 0.01,
       ...interactions(0.012),
