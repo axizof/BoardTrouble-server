@@ -22,7 +22,8 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
   keyUsed: 1200,
   finalGateOpened: 2500,
   coinFlipped: 1500,
-  spaceTriggered: 600,
+  // Le temps de lire ce que fait la case (le jeu l'annonce à l'écran).
+  spaceTriggered: 1600,
   itemGained: 1200,
   itemRefused: 600,
   itemDiscarded: 600,
@@ -87,7 +88,8 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
   gameWon: 5000,
 };
 
-export const MOVE_STEP_TIME = 350;
+/** Le personnage marche d'une case à l'autre (environ 6 m) : il prend son temps. */
+export const MOVE_STEP_TIME = 700;
 
 /**
  * Temps nécessaire pour jouer ces événements. Il est calculé sur ce que voit un spectateur :
