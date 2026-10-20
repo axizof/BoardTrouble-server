@@ -6,6 +6,9 @@ import { viewEvents } from '../game/views';
 // même chose au même moment (01-architecture.md, section 5). Valeurs de départ, à recaler
 // sur les vraies animations du plateau.
 const EVENT_TIME: Record<GameEvent['type'], number> = {
+  introEnded: 600,
+  // Tout le monde lance en même temps : les dés roulent ensemble, pas l'un après l'autre.
+  orderRolled: 400,
   orderDrawn: 3500,
   roundStarted: 1200,
   minigameRanked: 2500,

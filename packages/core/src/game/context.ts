@@ -42,3 +42,16 @@ export function removeItem(player: PlayerState, item: ItemId): void {
   if (index >= 0) player.inventory.splice(index, 1);
   if (item === 'mirror' && !player.inventory.includes('mirror')) player.mirrorArmed = false;
 }
+
+/**
+ * Les joueurs à attendre dans une phase où tout le monde agit en même temps (intro, tirage
+ * de l'ordre) ; null dans les autres phases.
+ */
+export function pendingPlayers(state: GameState): PlayerId[] | null {
+  const { phase } = state;
+  if (phase.type === 'intro') return phase.waiting;
+  if (phase.type === 'orderRoll') {
+    return state.players.map((player) => player.id).filter((id) => phase.rolls[id] === undefined);
+  }
+  return null;
+}

@@ -2,6 +2,7 @@ export * from './board/board';
 export * from './boards/montTrouble';
 export * from './bots/boardBot';
 export * from './dice/dice';
+export { pendingPlayers } from './game/context';
 export * from './game/engine';
 export * from './game/floors';
 export * from './game/gates';

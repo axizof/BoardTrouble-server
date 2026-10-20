@@ -40,7 +40,7 @@ import {
   GAUGE_MAX,
   ROUND_GAIN,
 } from '../trouble/gauge';
-import { type Context, type Flow, getPlayer, removeItem } from './context';
+import { type Context, type Flow, getPlayer, pendingPlayers, removeItem } from './context';
 import { advanceByEffect, gainItem, gainSpecialDie, openChest, recoil } from './effects';
 import { blowWind, runConveyors } from './floors';
 import { attemptGate, chooseDoor, payToll, resolveSkillGate } from './gates';
@@ -70,24 +70,18 @@ const HOLE_STEPS = 2;
  * Crée une partie et joue le tirage de l'ordre. La première manche n'a pas de mini-jeu :
  * elle se joue dans l'ordre du tirage, sans dé bonus, pour lancer la partie tout de suite.
  */
-export function createGame(
-  board: Board,
-  config: GameConfig,
-): { state: GameState; events: GameEvent[] } {
+/**
+ * La partie au départ, avant la présentation du plateau : tout le monde attend l'intro, puis
+ * lance son dé pour l'ordre. C'est ainsi que commence une vraie partie (session).
+ */
+export function openGame(board: Board, config: GameConfig): GameState {
   const ids = config.players.map((player) => player.id);
   if (ids.length !== config.tableSize) {
     throw new Error(`Il faut ${config.tableSize} joueurs (bots compris), reçu ${ids.length}`);
   }
   if (new Set(ids).size !== ids.length) throw new Error('Identifiants de joueurs en double');
 
-  const rng = new Rng(config.seed);
-  const rolls = ids.map((playerId) => ({ playerId, value: rng.int(1, 6) }));
-  const groups = [6, 5, 4, 3, 2, 1]
-    .map((value) => rolls.filter((roll) => roll.value === value).map((roll) => roll.playerId))
-    .filter((group) => group.length > 0);
-  const { order, tieBreaks } = breakTies(groups, rng);
-
-  const state: GameState = {
+  return {
     version: 1,
     boardId: board.definition.id,
     tableSize: config.tableSize,
@@ -105,7 +99,8 @@ export function createGame(
       specialDice: [],
     })),
     round: 1,
-    turnOrder: order,
+    // Provisoire : le tirage de l'ordre la remplace.
+    turnOrder: ids,
     turnIndex: 0,
     bonusDice: Object.fromEntries(ids.map((id) => [id, null])),
     turn: freshTurn(),
@@ -115,15 +110,51 @@ export function createGame(
     finalGateOpenedBy: [],
     bets: [],
     minigames: { played: {}, last: null, nextChooser: null },
-    phase: { type: 'transition' },
-    rngState: 0,
+    phase: { type: 'intro', waiting: ids },
+    rngState: new Rng(config.seed).state,
   };
-  const ctx = newContext(board, state, rng);
+}
+
+/**
+ * Crée la partie directement au premier tour : l'intro et le tirage de l'ordre se jouent
+ * d'office (simulateur, tests).
+ */
+export function createGame(
+  board: Board,
+  config: GameConfig,
+): { state: GameState; events: GameEvent[] } {
+  const state = openGame(board, config);
+  const ctx = newContext(board, state, new Rng(state.rngState));
+  endIntro(ctx);
+  for (const player of state.players) rollForOrder(ctx, player.id);
+  state.rngState = ctx.rng.state;
+  return { state, events: ctx.events };
+}
+
+function endIntro(ctx: Context): void {
+  ctx.state.phase = { type: 'orderRoll', rolls: {} };
+  ctx.events.push({ type: 'introEnded' });
+}
+
+/** Un joueur lance son dé pour l'ordre ; au dernier lancer, l'ordre est tiré et la partie commence. */
+function rollForOrder(ctx: Context, playerId: PlayerId): void {
+  const { phase } = ctx.state;
+  if (phase.type !== 'orderRoll') throw new Error("Lancer pour l'ordre hors du tirage");
+  const value = ctx.rng.int(1, 6);
+  phase.rolls[playerId] = value;
+  ctx.events.push({ type: 'orderRolled', playerId, value });
+  if (pendingPlayers(ctx.state)?.length !== 0) return;
+
+  const rolls = ctx.state.players.map(({ id }) => ({ playerId: id, value: phase.rolls[id] ?? 0 }));
+  const groups = [6, 5, 4, 3, 2, 1]
+    .map((face) => rolls.filter((roll) => roll.value === face).map((roll) => roll.playerId))
+    .filter((group) => group.length > 0);
+  const { order, tieBreaks } = breakTies(groups, ctx.rng);
+  ctx.state.turnOrder = order;
+  ctx.state.phase = { type: 'transition' };
   ctx.events.push({ type: 'orderDrawn', rolls, tieBreaks, order });
   ctx.events.push({ type: 'roundStarted', round: 1 });
   startTurn(ctx);
-  state.rngState = rng.state;
-  return { state, events: ctx.events };
 }
 
 /**
@@ -156,6 +187,12 @@ export function whoMustAct(state: GameState): Actor | null {
     }
     case 'finished':
       return null;
+    case 'intro':
+    case 'orderRoll': {
+      // Tout le monde agit en même temps : l'hôte attend d'abord le premier de la liste.
+      const [first] = pendingPlayers(state) ?? [];
+      return first ? { type: 'player', playerId: first } : null;
+    }
     case 'transition':
       throw new Error("Phase transitoire : elle n'est jamais en attente");
   }
@@ -264,6 +301,15 @@ export function applyIntent(
       if (ctx.state.phase.type === 'itemChoices') resolveQueuedChoice(ctx, intent.discard);
       else resolvePause(ctx, (player) => swapItem(ctx, player, intent.discard));
       break;
+    case 'skipIntro':
+      if (ctx.state.phase.type === 'intro' && actor.type === 'player') {
+        ctx.state.phase.waiting = ctx.state.phase.waiting.filter((id) => id !== actor.playerId);
+        if (ctx.state.phase.waiting.length === 0) endIntro(ctx);
+      }
+      break;
+    case 'rollForOrder':
+      if (actor.type === 'player') rollForOrder(ctx, actor.playerId);
+      break;
   }
 
   draft.rngState = ctx.rng.state;
@@ -322,6 +368,13 @@ function checkIntent(
       if (step.type !== 'awaitDuelResult') return 'wrongPhase';
       const fighters: (PlayerId | null)[] = [phase.playerId, step.opponent, null];
       return fighters.includes(intent.winner) ? null : 'invalidChoice';
+    }
+    case 'skipIntro':
+    case 'rollForOrder': {
+      if (actor.type !== 'player') return 'notAllowed';
+      const expected = intent.type === 'skipIntro' ? 'intro' : 'orderRoll';
+      if (phase.type !== expected) return 'wrongPhase';
+      return pendingPlayers(state)?.includes(actor.playerId) ? null : 'notYourTurn';
     }
     case 'resolveItemSwap': {
       if (phase.type !== 'itemChoices') break;
