@@ -70,10 +70,20 @@ function laneIds(floor: number, lane: string, count: number): string[] {
 }
 
 function randomKind(rng: Rng, flavour: 'trunk' | 'short' | 'long'): SpaceKind {
-  const roll = rng.next();
-  const bonusRate = flavour === 'long' ? 0.35 : 0.15;
-  const malusRate = flavour === 'short' ? 0.25 : 0.12;
-  if (roll < bonusRate) return { type: 'bonus', amount: rng.chance(0.75) ? 3 : 5 };
-  if (roll < bonusRate + malusRate) return { type: 'malus', amount: rng.chance(0.75) ? 3 : 5 };
+  // Voie courte : plus d'objets et de coffres, mais plus de malus. Voie longue : plus de bonus.
+  const rates = {
+    trunk: { bonus: 0.15, malus: 0.12, item: 0.12, chest: 0.02, rest: 0.03 },
+    short: { bonus: 0.1, malus: 0.22, item: 0.25, chest: 0.1, rest: 0 },
+    long: { bonus: 0.35, malus: 0.1, item: 0.08, chest: 0, rest: 0.05 },
+  }[flavour];
+  let roll = rng.next();
+  for (const [type, rate] of Object.entries(rates)) {
+    roll -= rate;
+    if (roll >= 0) continue;
+    if (type === 'bonus' || type === 'malus') {
+      return { type, amount: rng.chance(0.75) ? 3 : 5 };
+    }
+    return { type: type as 'item' | 'chest' | 'rest' };
+  }
   return { type: 'empty' };
 }
