@@ -50,7 +50,7 @@ function jailedAna(board: Board, state: GameState, jail = { turns: 0, progress: 
   const jailed = patch(state, 'ana', { position: 's3', trail: ['start', 's1', 's2'], jail });
   return act(
     board,
-    { ...jailed, phase: { type: 'minigame' } },
+    { ...jailed, phase: { type: 'minigame', minigame: 'stacker' } },
     { type: 'system' },
     {
       type: 'submitMinigameResult',

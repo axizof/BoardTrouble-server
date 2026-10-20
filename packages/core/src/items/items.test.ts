@@ -220,7 +220,7 @@ describe('using items', () => {
   test('an unused mirror expires at the start of its owner next turn', () => {
     const { board, state: initial } = setup();
     let state = patch(initial, 'ana', { inventory: ['mirror'], mirrorArmed: true });
-    state = { ...state, phase: { type: 'minigame' } };
+    state = { ...state, phase: { type: 'minigame', minigame: 'stacker' } };
     const { state: after, events } = act(
       board,
       state,
@@ -382,7 +382,9 @@ describe('item spaces', () => {
       const ana = get(after, 'ana');
       if (ana.inventory.length === 1) {
         items++;
-        expect(['rare', 'veryRare']).toContain(ITEMS[ana.inventory[0] as ItemId].rarity);
+        expect(['rare', 'veryRare', 'legendary']).toContain(
+          ITEMS[ana.inventory[0] as ItemId].rarity,
+        );
       } else {
         traps++;
         expect(ana.position).toBe('s3');

@@ -10,6 +10,8 @@ import {
 } from '../game/effects';
 import { push } from '../game/floors';
 import type { GameState, PlayerId, PlayerState, TargetedInteraction } from '../game/types';
+import type { MinigameId } from '../minigames/catalog';
+import { chooseMinigame, drawMinigame, drawMinigameOptions } from '../minigames/selection';
 
 export type InteractionKind =
   | TargetedInteraction
@@ -149,7 +151,11 @@ export function startInteraction(ctx: Context, player: PlayerState, kind: Intera
       state.phase = {
         type: 'turn',
         playerId: player.id,
-        step: { type: 'awaitOneVsAllResult', resume: ctx.resume },
+        step: {
+          type: 'awaitOneVsAllChoice',
+          options: drawMinigameOptions(ctx, 'oneVsAll', state.tableSize),
+          resume: ctx.resume,
+        },
       };
       return 'paused';
     case 'vendetta': {
@@ -214,11 +220,23 @@ function startDuel(
   kind: 'duel' | 'vendetta',
 ): void {
   ctx.events.push({ type: 'duelStarted', challenger: player.id, opponent, kind });
+  const minigame = drawMinigame(ctx, 'duel', 2);
   ctx.state.phase = {
     type: 'turn',
     playerId: player.id,
-    step: { type: 'awaitDuelResult', opponent, kind, resume: ctx.resume },
+    step: { type: 'awaitDuelResult', opponent, kind, minigame, resume: ctx.resume },
   };
+}
+
+/** Le joueur seul a choisi son mini-jeu : on attend le résultat. */
+export function startOneVsAll(ctx: Context, player: PlayerState, minigame: MinigameId): Flow {
+  chooseMinigame(ctx, player, minigame);
+  ctx.state.phase = {
+    type: 'turn',
+    playerId: player.id,
+    step: { type: 'awaitOneVsAllResult', minigame, resume: ctx.resume },
+  };
+  return 'paused';
 }
 
 /**

@@ -5,8 +5,6 @@ import type { Rng } from '../random/rng';
 
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'veryRare' | 'legendary';
 
-// La Boîte mystère, le Joker et le Sceau du Plateau arrivent avec leur système (petit
-// TROUBLE sur soi, choix du mini-jeu).
 export type ItemId =
   | 'turboDie'
   | 'rocket'
@@ -21,7 +19,10 @@ export type ItemId =
   | 'mirror'
   | 'grapple'
   | 'luckyCharm'
-  | 'key';
+  | 'key'
+  | 'mysteryBox'
+  | 'joker'
+  | 'boardSeal';
 
 export type ItemDefinition = {
   rarity: Rarity;
@@ -46,6 +47,12 @@ export const ITEMS: Record<ItemId, ItemDefinition> = {
   /** Porte-bonheur : la roue du Cachot passe à 60 %. Il se déclenche seul. */
   luckyCharm: { rarity: 'rare', use: 'passive' },
   key: { rarity: 'veryRare', use: 'passive' },
+  /** Un objet au hasard, ou un petit TROUBLE sur soi. */
+  mysteryBox: { rarity: 'common', use: 'self' },
+  /** Choisir le prochain mini-jeu de manche parmi 3. */
+  joker: { rarity: 'rare', use: 'self' },
+  /** Déclencher tout de suite un événement TROUBLE choisi parmi 3. */
+  boardSeal: { rarity: 'legendary', use: 'self' },
 };
 
 export const ITEM_IDS = Object.keys(ITEMS) as ItemId[];
@@ -66,6 +73,9 @@ export const ITEM_VALUE: Record<ItemId, number> = {
   grapple: 6,
   luckyCharm: 4,
   key: 6,
+  mysteryBox: 2,
+  joker: 3,
+  boardSeal: 6,
 };
 export const INVENTORY_SIZE = 3;
 

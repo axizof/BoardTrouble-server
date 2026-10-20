@@ -1,6 +1,7 @@
 import { distanceToGoal, getSpace, type Space, type SpaceId } from '../board/board';
 import { rollDice } from '../dice/dice';
 import type { ItemId } from '../items/catalog';
+import { drawMinigame } from '../minigames/selection';
 import { type Context, type Flow, removeItem } from './context';
 import { applyHostile, isGate, recoil } from './effects';
 import { fallFromEdge, isIce } from './floors';
@@ -46,7 +47,7 @@ export function attemptGate(
     case 'twinGate':
       return pause({ type: 'awaitDoor', remaining });
     case 'skillGate':
-      return pause({ type: 'awaitSkillGate', remaining });
+      return pause({ type: 'awaitSkillGate', remaining, minigame: drawMinigame(ctx, 'solo', 1) });
     case 'tollGate':
       if (player.inventory.length > 0)
         return pause({ type: 'awaitToll', remaining, roll: turnRoll });

@@ -5,8 +5,9 @@ import { progressRanking } from '../game/progress';
 import type { GameState, Intent, PlayerId, PlayerState, TargetedInteraction } from '../game/types';
 import { ITEM_VALUE, type ItemId } from '../items/catalog';
 import { itemUseError, validTargets } from '../items/useItem';
+import type { MinigameId } from '../minigames/catalog';
 import type { Rng } from '../random/rng';
-import type { TroubleEventId } from '../trouble/events';
+import { type TroubleEventId, troubleRanking } from '../trouble/events';
 
 export type BotLevel = 'easy' | 'normal' | 'expert';
 
@@ -19,6 +20,7 @@ const TRAP_REACH = 8;
 
 /** Ordre dans lequel le bot envisage ses objets : les plus décisifs d'abord. */
 const ITEM_PRIORITY: ItemId[] = [
+  'boardSeal',
   'grapple',
   'hourglass',
   'blower',
@@ -29,6 +31,8 @@ const ITEM_PRIORITY: ItemId[] = [
   'glue',
   'firecracker',
   'reroll',
+  'joker',
+  'mysteryBox',
 ];
 
 /**
@@ -48,6 +52,11 @@ export function chooseBoardIntent(
   if (phase.type === 'trouble') {
     return phase.chooser === playerId
       ? { type: 'chooseTrouble', event: chooseTrouble(phase.options) }
+      : null;
+  }
+  if (phase.type === 'minigameChoice') {
+    return phase.chooser === playerId
+      ? { type: 'chooseMinigame', minigame: chooseMinigame(state, phase.options, level, rng) }
       : null;
   }
   if (phase.type === 'itemChoices') {
@@ -109,6 +118,10 @@ export function chooseBoardIntent(
       );
       return { type: 'resolveSpecialDieSwap', discard: worst ?? step.offered };
     }
+    case 'awaitOneVsAllChoice':
+      return { type: 'chooseMinigame', minigame: chooseMinigame(state, step.options, level, rng) };
+    case 'awaitTroubleChoice':
+      return { type: 'chooseTrouble', event: chooseSealEvent(board, state, me, step.options) };
     case 'awaitBet':
       // Le bot parie sur lui-même : il connaît mal les autres.
       return { type: 'placeBet', on: me.id, stake: level === 'expert' ? 3 : 2 };
@@ -165,6 +178,36 @@ function chooseInteractionTarget(
   );
   if (target === undefined) throw new Error('Aucune cible proposée');
   return target;
+}
+
+/** Le bot qui choisit un mini-jeu prend de préférence le moins joué de la partie. */
+function chooseMinigame(
+  state: GameState,
+  options: MinigameId[],
+  level: BotLevel,
+  rng: Rng,
+): MinigameId {
+  if (rng.chance(RANDOM_CHOICE_RATE[level])) return rng.pick(options);
+  const plays = (id: MinigameId) => state.minigames.played[id] ?? 0;
+  const [leastPlayed] = [...options].sort((a, b) => plays(a) - plays(b));
+  if (leastPlayed === undefined) throw new Error('Aucun mini-jeu proposé');
+  return leastPlayed;
+}
+
+/**
+ * Sceau du Plateau : comme le dernier qui choisit un TROUBLE, sauf qu'un bot en tête ne
+ * choisit pas ce qui frappe le premier.
+ */
+function chooseSealEvent(
+  board: Board,
+  state: GameState,
+  me: PlayerState,
+  options: TroubleEventId[],
+): TroubleEventId {
+  const hurtsFirst: TroubleEventId[] = ['grandExchange', 'tax'];
+  const isFirst = troubleRanking(board, state)[0] === me.id;
+  const safe = options.filter((event) => !hurtsFirst.includes(event));
+  return chooseTrouble(isFirst && safe.length > 0 ? safe : options);
 }
 
 const SPECIAL_DIE_VALUE: Record<SpecialDieKind, number> = {
@@ -236,6 +279,8 @@ function chooseItem(
         return validTargets(board, state, me.id, item).some((id) => distanceOf(id) < myDistance);
       case 'mirror':
         return ranking.indexOf(me.id) < ranking.length / 2;
+      case 'boardSeal':
+        return ranking.indexOf(me.id) >= ranking.length / 2;
       case 'rocket': {
         const bonus = state.bonusDice[me.id];
         return !me.atGate && (bonus === null || bonus === undefined || bonus.faces <= 3);

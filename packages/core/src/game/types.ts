@@ -8,6 +8,7 @@ import type {
   TieBreak,
 } from '../dice/dice';
 import type { ItemId } from '../items/catalog';
+import type { MinigameId, MinigameOccasion } from '../minigames/catalog';
 import type { TroubleEventId } from '../trouble/events';
 
 export type PlayerId = string;
@@ -65,9 +66,17 @@ export type TurnStep =
   /** Case d'interaction : choisir l'adversaire. */
   | { type: 'awaitTarget'; interaction: TargetedInteraction; options: PlayerId[]; resume: Resume }
   /** Duel ou Vendetta en cours : en attente du résultat du mini-jeu. */
-  | { type: 'awaitDuelResult'; opponent: PlayerId; kind: 'duel' | 'vendetta'; resume: Resume }
+  | {
+      type: 'awaitDuelResult';
+      opponent: PlayerId;
+      kind: 'duel' | 'vendetta';
+      minigame: MinigameId;
+      resume: Resume;
+    }
+  /** 1 contre tous : le joueur seul choisit son mini-jeu parmi `options`. */
+  | { type: 'awaitOneVsAllChoice'; options: MinigameId[]; resume: Resume }
   /** 1 contre tous en cours : en attente du résultat du mini-jeu. */
-  | { type: 'awaitOneVsAllResult'; resume: Resume }
+  | { type: 'awaitOneVsAllResult'; minigame: MinigameId; resume: Resume }
   /** Au Cachot : avancer sur le chemin intérieur ou tenter la roue. */
   | { type: 'awaitJailChoice' }
   /** Sortie du Cachot : choisir l'une des trois trappes. */
@@ -80,7 +89,7 @@ export type TurnStep =
    */
   | { type: 'awaitToll'; remaining: number; roll: number | null }
   /** Porte d'adresse : en attente du résultat du mini-défi (fourni par le serveur). */
-  | { type: 'awaitSkillGate'; remaining: number }
+  | { type: 'awaitSkillGate'; remaining: number; minigame: MinigameId }
   /**
    * Roue : en attente de l'issue (le serveur la déduit du timing du joueur). Les issues sont
    * notées au déclenchement : sous le Brouillard, la case n'est pas celle du plateau.
@@ -89,23 +98,32 @@ export type TurnStep =
   /** Pari : choisir sur qui parier et combien. */
   | { type: 'awaitBet'; resume: Resume }
   /** Bourse à dés pleine : jeter un dé pour prendre le nouveau, ou le refuser. */
-  | { type: 'awaitSpecialDieSwap'; offered: SpecialDieKind; resume: Resume };
+  | { type: 'awaitSpecialDieSwap'; offered: SpecialDieKind; resume: Resume }
+  /** Sceau du Plateau : choisir l'événement TROUBLE à déclencher. */
+  | { type: 'awaitTroubleChoice'; options: TroubleEventId[]; resume: Resume };
 
 /** Après une pause : finir le tour, ou revenir au lancer (pause pendant un objet). */
 export type Resume = 'endTurn' | 'roll';
 
 export type Phase =
   /** En attente du classement du mini-jeu de manche. */
-  | { type: 'minigame' }
+  | { type: 'minigame'; minigame: MinigameId }
+  /** Un joueur choisit le mini-jeu de manche parmi `options`. */
+  | { type: 'minigameChoice'; chooser: PlayerId; options: MinigameId[] }
   | { type: 'turn'; playerId: PlayerId; step: TurnStep }
   /** Plusieurs joueurs ont ouvert la porte finale : en attente du classement de la finale. */
-  | { type: 'finale'; contenders: PlayerId[] }
+  | { type: 'finale'; contenders: PlayerId[]; minigame: MinigameId }
   /** Le Plateau se réveille : le dernier choisit un événement parmi `options`. */
   | { type: 'trouble'; chooser: PlayerId; options: TroubleEventId[] }
   /** Objets reçus hors des tours avec un inventaire plein : chacun choisit, dans l'ordre. */
   | { type: 'itemChoices'; queue: { playerId: PlayerId; offered: ItemId }[] }
   /** Événement Mini-jeu bonus : en attente de son classement. */
-  | { type: 'bonusMinigame' }
+  | { type: 'bonusMinigame'; minigame: MinigameId }
+  /**
+   * Pendant qu'une action se résout (création de la partie, fin de manche), hors de tout
+   * tour. Jamais un état d'attente.
+   */
+  | { type: 'transition' }
   | { type: 'finished'; winner: PlayerId };
 
 /** Modificateurs du tour en cours, remis à zéro à chaque nouveau tour. */
@@ -159,6 +177,15 @@ export type GameState = {
   finalGateOpenedBy: PlayerId[];
   /** Paris en cours sur le vainqueur du prochain mini-jeu. */
   bets: { playerId: PlayerId; on: PlayerId; stake: number }[];
+  /**
+   * Mini-jeux joués dans la partie (la roue favorise les moins joués et évite le dernier), et
+   * joueur qui choisira le prochain mini-jeu de manche.
+   */
+  minigames: {
+    played: Partial<Record<MinigameId, number>>;
+    last: MinigameId | null;
+    nextChooser: PlayerId | null;
+  };
   phase: Phase;
   /** État du générateur de hasard. Ne doit jamais être envoyé aux clients. */
   rngState: number;
@@ -180,6 +207,7 @@ export type Intent =
   | { type: 'submitFinaleResult'; ranking: PlayerId[][] }
   | { type: 'submitBonusMinigameResult'; ranking: PlayerId[][] }
   | { type: 'chooseTrouble'; event: TroubleEventId }
+  | { type: 'chooseMinigame'; minigame: MinigameId }
   | { type: 'chooseTarget'; playerId: PlayerId }
   /** Résultat d'un duel : le gagnant, ou null en cas d'égalité. */
   | { type: 'submitDuelResult'; winner: PlayerId | null }
@@ -226,13 +254,14 @@ export type ItemSource =
   | 'pickpocket'
   | 'steal'
   | 'trouble'
-  | 'roundEvent';
+  | 'roundEvent'
+  | 'mysteryBox';
 
 /** Faces du dé géant. */
 export type GiantDieFace = 'bird' | 'monster' | 'item' | 'squall' | 'trouble' | 'specialDie';
 
 /** Petits événements de fin de manche, sur un joueur au hasard. */
-export type RoundEventId = 'bird' | 'hole' | 'foundItem' | 'foundSpecialDie';
+export type RoundEventId = 'bird' | 'hole' | 'foundItem' | 'foundSpecialDie' | 'minigameChoice';
 
 /** Ce qui s'est passé, dans l'ordre : c'est ce que le client anime. */
 export type GameEvent =
@@ -322,6 +351,11 @@ export type GameEvent =
   | { type: 'jostled'; playerId: PlayerId; players: PlayerId[] }
   | { type: 'conveyorMoved'; playerId: PlayerId; spaceId: SpaceId }
   | { type: 'windBlew'; floor: number; strength: number; pushed: PlayerId[] }
+  | { type: 'minigameDrawn'; occasion: MinigameOccasion; minigame: MinigameId }
+  | { type: 'minigameChoiceOffered'; playerId: PlayerId; options: MinigameId[] }
+  | { type: 'minigameChosen'; playerId: PlayerId; minigame: MinigameId }
+  | { type: 'minigameChoiceGranted'; playerId: PlayerId }
+  | { type: 'mysteryBoxOpened'; playerId: PlayerId; outcome: 'item' | 'trouble' }
   | { type: 'chestOpened'; playerId: PlayerId; chest: 0 | 1; trapped: boolean }
   | { type: 'rerolled'; playerId: PlayerId; previous: DiceRoll; roll: DiceRoll }
   | { type: 'troubleGauge'; value: number; added: number; reason: 'round' | 'double' | 'gap' }

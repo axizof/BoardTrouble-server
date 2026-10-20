@@ -231,10 +231,19 @@ describe('interaction spaces', () => {
     expect(peaceful.phase).toMatchObject({ playerId: 'bob' });
   });
 
-  test('one versus all: the solo player gains 10 spaces if they win, nothing otherwise', () => {
+  test('one versus all: the solo player chooses the minigame, then gains 10 spaces if they win', () => {
     const { board, state } = setup({ type: 'oneVsAll' });
-    const paused = landAna(board, state).state;
-    expect(paused.phase).toMatchObject({ step: { type: 'awaitOneVsAllResult' } });
+    const choosing = landAna(board, state).state;
+    if (choosing.phase.type !== 'turn' || choosing.phase.step.type !== 'awaitOneVsAllChoice') {
+      throw new Error('Choix du mini-jeu attendu');
+    }
+    const [minigame] = choosing.phase.step.options;
+    if (minigame === undefined) throw new Error('Aucun mini-jeu proposé');
+    expect(
+      applyIntent(board, choosing, player('ana'), { type: 'chooseMinigame', minigame: 'stacker' }),
+    ).toEqual({ ok: false, error: 'invalidChoice' });
+    const paused = act(board, choosing, player('ana'), { type: 'chooseMinigame', minigame }).state;
+    expect(paused.phase).toMatchObject({ step: { type: 'awaitOneVsAllResult', minigame } });
     expect(
       get(act(board, paused, SYSTEM, { type: 'submitOneVsAllResult', soloWon: true }).state, 'ana')
         .position,
