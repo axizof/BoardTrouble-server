@@ -22,6 +22,7 @@ describe('rollDice', () => {
       const roll = rollDice(rng, { kind: 'gold', faces: 6 });
       expect(roll.extra !== null).toBe(roll.bonus === roll.normal);
       expect(roll.total).toBe(roll.normal + (roll.bonus ?? 0) + (roll.extra ?? 0));
+      expect(roll.turbo).toBeNull();
       if (roll.extra !== null) doubles++;
     }
     // Un double sur six, quel que soit le dé bonus.
@@ -34,6 +35,18 @@ describe('rollDice', () => {
     expect(roll.bonus).toBeNull();
     expect(roll.extra).toBeNull();
     expect(roll.total).toBe(roll.normal);
+  });
+});
+
+describe('rollDice with item modifiers', () => {
+  test('adds the turbo die and limits the normal die after placing glue', () => {
+    const rng = new Rng(4);
+    for (let i = 0; i < 500; i++) {
+      const roll = rollDice(rng, null, { normalFaces: 4, turbo: true });
+      expect(roll.normal).toBeLessThanOrEqual(4);
+      expect(roll.turbo).toBeGreaterThanOrEqual(1);
+      expect(roll.total).toBe(roll.normal + (roll.turbo ?? 0));
+    }
   });
 });
 

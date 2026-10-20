@@ -4,4 +4,7 @@ export * from './dice/dice';
 export * from './game/engine';
 export * from './game/progress';
 export * from './game/types';
+export * from './game/views';
+export * from './items/catalog';
+export * from './items/useItem';
 export * from './random/rng';
