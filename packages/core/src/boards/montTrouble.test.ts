@@ -84,7 +84,7 @@ describe('the Mont Trouble', () => {
         const gap = distance(space.position, definition.spaces[next]?.position);
         // Le pont-levis enjambe un vide : ses cases sont plus espacées.
         const isBridge = [space.id, next].some((id) => id.includes('bridge'));
-        expect({ from: space.id, gap: gap >= 1.4 && gap <= (isBridge ? 5.5 : 4) }).toEqual({
+        expect({ from: space.id, gap: gap >= 1.4 && gap <= (isBridge ? 6.5 : 4) }).toEqual({
           from: space.id,
           gap: true,
         });

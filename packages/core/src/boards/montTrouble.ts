@@ -89,7 +89,9 @@ type FloorPlan = FloorDefinition & {
 };
 
 // Huit cases par ligne : le plan se lit comme le plateau, le formateur l'éclaterait en une
-// case par ligne.
+// case par ligne. Les embranchements sont répartis autour de la montagne : chaque étage a
+// ses voies exposées d'un côté différent, et une chute ne tombe pas sur une autre voie
+// exposée.
 // biome-ignore format: plan d'étage aligné à la main
 const FLOORS: FloorPlan[] = [
   {
@@ -112,13 +114,13 @@ const FLOORS: FloorPlan[] = [
     // Dés géants et dés spéciaux. Premier "court et exposé contre long et sûr" : la voie
     // courte longe le vide (objets, coffre, mais un Échange), la longue longe la paroi.
     line: [
-      _, SPECIAL_DIE, bonus(3), _, GIANT_DIE, malus(3), seesaw('f2-14'), ITEM,
-      _, ITEM, SWAP, CHEST, _, bonus(3), seesaw('f2-6'), GIANT_DIE,
-      BET, SLIDE, malus(3), _, FILOUS, ONE_VS_ALL, ELEVATOR, bonus(3),
+      _, SPECIAL_DIE, bonus(3), _, GIANT_DIE, malus(3), seesaw('f2-12'), ITEM,
+      _, bonus(3), SLIDE, BET, seesaw('f2-6'), GIANT_DIE, _, ITEM,
+      SWAP, CHEST, _, FILOUS, ONE_VS_ALL, ELEVATOR, malus(3), bonus(3),
       TROUBLE, { type: 'skillGate' },
     ],
-    edges: [9, 10, 11],
-    branches: [{ name: 'wall', from: 8, to: 12, kinds: [bonus(3), _, bonus(5), _, ITEM] }],
+    edges: [15, 16, 17],
+    branches: [{ name: 'wall', from: 14, to: 18, kinds: [bonus(3), _, bonus(5), _, ITEM] }],
   },
   {
     name: 'Ateliers',
@@ -126,14 +128,14 @@ const FLOORS: FloorPlan[] = [
     // deux. Le monte-charge mène au Glacier les manches paires.
     line: [
       { type: 'wheel', segments: WORKSHOP_WHEEL }, conveyor('forward', 3), ITEM, malus(3),
-      teleporter('f3-15'), bonus(3), _, TROUBLE,
-      ITEM, FILOUS, _, conveyor('backward', 2), MAGNET, _, bonus(3), teleporter('f3-4'),
-      FREIGHT_LIFT, malus(3), _, conveyor('forward', 3), SLIDE, { type: 'tollGate', threshold: 4 },
+      teleporter('f3-12'), _, bonus(3), conveyor('backward', 2),
+      MAGNET, bonus(3), _, FREIGHT_LIFT, teleporter('f3-4'), malus(3), conveyor('forward', 3), _,
+      TROUBLE, ITEM, FILOUS, _, SLIDE, { type: 'tollGate', threshold: 4 },
     ],
-    edges: [7, 8, 9],
+    edges: [16, 17, 18],
     branches: [
-      { name: 'wall', from: 6, to: 10, kinds: [bonus(3), _, REST, bonus(5), _] },
-      { name: 'bridge', from: 13, to: 18, kinds: [DRAWBRIDGE, _] },
+      { name: 'bridge', from: 5, to: 10, kinds: [DRAWBRIDGE, _] },
+      { name: 'wall', from: 15, to: 19, kinds: [bonus(3), _, REST, bonus(5), _] },
     ],
   },
   {
@@ -141,24 +143,25 @@ const FLOORS: FloorPlan[] = [
     // Cases gelées : on glisse jusqu'à la prochaine case non gelée. Embranchement "gauche ou
     // droite" : deux voies de même longueur, l'une glacée au bord du vide, l'autre sûre.
     line: [
-      _, ICE, ICE, ITEM, _, _, ICE, ICE,
-      bonus(5), malus(3), _, ITEM, SQUALL, ELEVATOR, statue(10), ICE,
+      _, _, ICE, ICE, bonus(5), malus(3), _, ITEM,
+      ICE, ICE, ITEM, SQUALL, ELEVATOR, _, statue(10), ICE,
       ICE, TROUBLE, SLIDE, { type: 'boulderGate', threshold: 5 },
     ],
-    edges: [8, 9],
-    branches: [{ name: 'wall', from: 5, to: 10, kinds: [ITEM, _, bonus(3), _] }],
+    edges: [4, 5],
+    branches: [{ name: 'wall', from: 1, to: 6, kinds: [ITEM, _, bonus(3), _] }],
   },
   {
     name: 'Crête des Nuages',
     muddy: true,
     windy: true,
-    // Boue et coups de vent, et une crête exposée jusqu'au sommet.
+    // Boue et coups de vent, et une crête exposée jusqu'au sommet. Pas de toboggan : à deux
+    // pas de la porte finale, redescendre d'un étage décidait trop de parties au hasard.
     line: [
-      _, bonus(3), JOSTLE, ITEM, _, CHEST, TROUBLE, _,
-      malus(3), VENDETTA, _, bonus(3), SLIDE, { type: 'finalGate', threshold: 6 },
+      _, bonus(3), JOSTLE, ITEM, VENDETTA, _, CHEST, _,
+      TROUBLE, _, malus(3), bonus(3), _, { type: 'finalGate', threshold: 6 },
     ],
-    edges: [5, 6, 10, 11],
-    branches: [{ name: 'wall', from: 4, to: 7, kinds: [bonus(3), _, ITEM, _] }],
+    edges: [6, 7, 8, 10, 11],
+    branches: [{ name: 'wall', from: 5, to: 9, kinds: [bonus(3), _, ITEM, _, _] }],
   },
 ];
 
