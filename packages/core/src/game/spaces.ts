@@ -1,9 +1,10 @@
 import { getSpace, type SpaceId, type WheelSegment } from '../board/board';
+import { SPECIAL_DICE } from '../dice/dice';
 import { startInteraction } from '../interactions/interactions';
 import { catchUpFactor, drawItem } from '../items/catalog';
 import { applyTrouble, drawSpaceEvent } from '../trouble/events';
 import { type Context, type Flow, getPlayer } from './context';
-import { advanceByEffect, applyHostile, gainItem, isGate, recoil } from './effects';
+import { advanceByEffect, applyHostile, gainItem, gainSpecialDie, isGate, recoil } from './effects';
 import type { GiantDieFace, PlayerId, PlayerState } from './types';
 
 const SEESAW_LAUNCH = 4;
@@ -11,7 +12,14 @@ const BIRD_STEPS = 10;
 const MONSTER_RECOIL = 6;
 export const MAX_BET = 5;
 
-const GIANT_DIE_FACES: GiantDieFace[] = ['bird', 'monster', 'item', 'squall', 'trouble', 'nothing'];
+const GIANT_DIE_FACES: GiantDieFace[] = [
+  'bird',
+  'monster',
+  'item',
+  'squall',
+  'trouble',
+  'specialDie',
+];
 
 /**
  * Ascenseur, monte-charge, toboggan, téléporteur : le joueur est transporté jusqu'à la case
@@ -73,8 +81,8 @@ export function rollGiantDie(ctx: Context, player: PlayerState): Flow {
       const event = drawSpaceEvent(ctx.board, ctx.state, ctx.rng);
       return event === null ? 'continue' : applyTrouble(ctx, event, null, player);
     }
-    case 'nothing':
-      return 'continue';
+    case 'specialDie':
+      return gainSpecialDie(ctx, player, ctx.rng.pick(SPECIAL_DICE));
   }
 }
 

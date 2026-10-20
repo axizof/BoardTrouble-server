@@ -27,8 +27,27 @@ export function bonusDieForRank(rank: number, tableSize: TableSize): BonusDie | 
   return BONUS_DICE[tableSize][rank] ?? null;
 }
 
+/** Dés spéciaux (01-vision-et-plateau.md, section 6), gardés dans la bourse à dés. */
+export type SpecialDieKind = 'stable' | 'allOrNothing' | 'trapped';
+
+export const SPECIAL_DICE: SpecialDieKind[] = ['stable', 'allOrNothing', 'trapped'];
+export const SPECIAL_DICE_POUCH_SIZE = 3;
+
+// Proportions à régler au simulateur.
+const STABLE_FACES = [2, 2, 3, 3, 3, 3];
+const ALL_OR_NOTHING_FACES = [0, 0, 0, 8, 8, 8];
+/** Dé Piégé : le chiffre annoncé est sur 2 faces sur 6, les 4 autres sont piégées. */
+const TRAPPED_CALLED_FACES = 2;
+
+/** Dé spécial joué ce tour. `call` : chiffre annoncé pour le Dé Piégé. */
+export type SpecialDieUse = { kind: SpecialDieKind; call: number | null };
+
 export type DiceRoll = {
+  /** Dé principal : le dé normal, ou le dé spécial qui l'a remplacé. */
   normal: number;
+  special: SpecialDieKind | null;
+  /** Dé Piégé tombé sur une face piégée : on n'avance pas. */
+  trapped: boolean;
   bonus: number | null;
   /** Dé 1-6 en plus quand le dé normal et le dé bonus font le même chiffre. */
   extra: number | null;
@@ -41,20 +60,41 @@ export type RollOptions = {
   /** Faces du dé normal : 4 quand on a posé une Colle ce tour-ci. */
   normalFaces?: number;
   turbo?: boolean;
+  /** Dé spécial joué à la place du dé normal (pas de double avec un dé spécial). */
+  special?: SpecialDieUse | null;
 };
 
 export function rollDice(rng: Rng, bonusDie: BonusDie | null, options: RollOptions = {}): DiceRoll {
-  const normal = rng.int(1, options.normalFaces ?? 6);
+  const special = options.special ?? null;
+  const main = special
+    ? rollSpecial(rng, special)
+    : { value: rng.int(1, options.normalFaces ?? 6), trapped: false };
   const bonus = bonusDie ? rng.int(1, bonusDie.faces) : null;
-  const extra = bonus === normal ? rng.int(1, 6) : null;
+  const extra = special === null && bonus === main.value ? rng.int(1, 6) : null;
   const turbo = options.turbo ? rng.int(1, 6) : null;
+  const total = main.trapped ? 0 : main.value + (bonus ?? 0) + (extra ?? 0) + (turbo ?? 0);
   return {
-    normal,
+    normal: main.value,
+    special: special?.kind ?? null,
+    trapped: main.trapped,
     bonus,
     extra,
     turbo,
-    total: normal + (bonus ?? 0) + (extra ?? 0) + (turbo ?? 0),
+    total,
   };
+}
+
+function rollSpecial(rng: Rng, { kind, call }: SpecialDieUse): { value: number; trapped: boolean } {
+  switch (kind) {
+    case 'stable':
+      return { value: rng.pick(STABLE_FACES), trapped: false };
+    case 'allOrNothing':
+      return { value: rng.pick(ALL_OR_NOTHING_FACES), trapped: false };
+    case 'trapped': {
+      const hit = rng.int(1, 6) <= TRAPPED_CALLED_FACES;
+      return hit ? { value: call ?? 1, trapped: false } : { value: 0, trapped: true };
+    }
+  }
 }
 
 export type TieBreak = {

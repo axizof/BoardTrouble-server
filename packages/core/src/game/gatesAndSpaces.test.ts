@@ -267,7 +267,14 @@ describe('movement spaces', () => {
       });
       for (const event of events) if (event.type === 'giantDieRolled') faces.add(event.face);
     }
-    expect([...faces].sort()).toEqual(['bird', 'item', 'monster', 'nothing', 'squall', 'trouble']);
+    expect([...faces].sort()).toEqual([
+      'bird',
+      'item',
+      'monster',
+      'specialDie',
+      'squall',
+      'trouble',
+    ]);
   });
 
   test('the wheel waits for the server, then applies the segment it stopped on', () => {

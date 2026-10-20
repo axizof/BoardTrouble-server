@@ -1,4 +1,5 @@
-import { type Board, distanceToGoal } from '../board/board';
+import { type Board, distanceToGoal, getSpace } from '../board/board';
+import type { SpecialDieKind } from '../dice/dice';
 import { getPlayer } from '../game/context';
 import { progressRanking } from '../game/progress';
 import type { GameState, Intent, PlayerId, PlayerState, TargetedInteraction } from '../game/types';
@@ -60,7 +61,8 @@ export function chooseBoardIntent(
   switch (step.type) {
     case 'awaitRoll':
       return (
-        (state.turn.itemUsed ? null : chooseItem(board, state, me, level, rng)) ?? { type: 'roll' }
+        (state.turn.itemUsed ? null : chooseItem(board, state, me, level, rng)) ??
+        chooseRoll(board, state, me, level)
       );
     case 'awaitRerollChoice': {
       const bonus = state.bonusDice[playerId];
@@ -101,6 +103,12 @@ export function chooseBoardIntent(
         type: 'payToll',
         item: me.inventory.length > 0 ? leastValuable(me.inventory) : null,
       };
+    case 'awaitSpecialDieSwap': {
+      const [worst] = [...me.specialDice, step.offered].sort(
+        (a, b) => SPECIAL_DIE_VALUE[a] - SPECIAL_DIE_VALUE[b],
+      );
+      return { type: 'resolveSpecialDieSwap', discard: worst ?? step.offered };
+    }
     case 'awaitBet':
       // Le bot parie sur lui-même : il connaît mal les autres.
       return { type: 'placeBet', on: me.id, stake: level === 'expert' ? 3 : 2 };
@@ -156,6 +164,40 @@ function chooseInteractionTarget(
   );
   if (target === undefined) throw new Error('Aucune cible proposée');
   return target;
+}
+
+const SPECIAL_DIE_VALUE: Record<SpecialDieKind, number> = {
+  stable: 1,
+  allOrNothing: 2,
+  trapped: 3,
+};
+
+/** Cases qu'un bot aime viser avec un Dé Piégé. */
+const GOOD_TARGETS = ['elevator', 'springboard', 'bonus', 'item', 'chest', 'specialDie'];
+
+/**
+ * Lancer, avec ou sans dé spécial. Dé Piégé : annoncer la distance d'une bonne case visible
+ * devant soi. Tout ou rien : quand on est dans la moitié de derrière (il faut prendre des
+ * risques). Un bot Facile ne pense pas à ses dés spéciaux.
+ */
+function chooseRoll(board: Board, state: GameState, me: PlayerState, level: BotLevel): Intent {
+  if (level === 'easy' || me.atGate || me.specialDice.length === 0) return { type: 'roll' };
+  if (me.specialDice.includes('trapped')) {
+    let position = me.position;
+    for (let distance = 1; distance <= 6; distance++) {
+      const next = getSpace(board, position).next[0];
+      if (next === undefined) break;
+      position = next;
+      if (GOOD_TARGETS.includes(getSpace(board, position).kind.type)) {
+        return { type: 'roll', specialDie: 'trapped', call: distance };
+      }
+    }
+  }
+  const ranking = progressRanking(board, state);
+  if (me.specialDice.includes('allOrNothing') && ranking.indexOf(me.id) >= ranking.length / 2) {
+    return { type: 'roll', specialDie: 'allOrNothing' };
+  }
+  return { type: 'roll' };
 }
 
 function leastValuable(items: ItemId[]): ItemId {
