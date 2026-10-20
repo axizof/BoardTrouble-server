@@ -19,7 +19,15 @@ export type PlayerState = {
   inventory: ItemId[];
   /** Miroir activé en secret : jamais envoyé aux autres joueurs. */
   mirrorArmed: boolean;
+  /** Dernier joueur qui l'a fait reculer, et de combien de cases (pour la Vendetta). */
+  lastAttack: { by: PlayerId; spaces: number } | null;
 };
+
+/** Interactions qui demandent de choisir un adversaire. */
+export type TargetedInteraction = 'magnet' | 'steal' | 'duel';
+
+/** Ce qui a causé un effet hostile venant d'un joueur : un objet ou une interaction. */
+export type HostileVia = ItemId | TargetedInteraction;
 
 export type TurnStep =
   | { type: 'awaitRoll' }
@@ -39,7 +47,13 @@ export type TurnStep =
   /** Case Coffre : choisir l'un des deux coffres. */
   | { type: 'awaitChest'; resume: Resume }
   /** Inventaire plein : échanger l'objet proposé contre un des siens, ou le refuser. */
-  | { type: 'awaitItemSwap'; offered: ItemId; source: ItemSource; resume: Resume };
+  | { type: 'awaitItemSwap'; offered: ItemId; source: ItemSource; resume: Resume }
+  /** Case d'interaction : choisir l'adversaire. */
+  | { type: 'awaitTarget'; interaction: TargetedInteraction; options: PlayerId[]; resume: Resume }
+  /** Duel ou Vendetta en cours : en attente du résultat du mini-jeu. */
+  | { type: 'awaitDuelResult'; opponent: PlayerId; kind: 'duel' | 'vendetta'; resume: Resume }
+  /** 1 contre tous en cours : en attente du résultat du mini-jeu. */
+  | { type: 'awaitOneVsAllResult'; resume: Resume };
 
 /** Après une pause : finir le tour, ou revenir au lancer (pause pendant un objet). */
 export type Resume = 'endTurn' | 'roll';
@@ -126,6 +140,10 @@ export type Intent =
   | { type: 'submitFinaleResult'; ranking: PlayerId[][] }
   | { type: 'submitBonusMinigameResult'; ranking: PlayerId[][] }
   | { type: 'chooseTrouble'; event: TroubleEventId }
+  | { type: 'chooseTarget'; playerId: PlayerId }
+  /** Résultat d'un duel : le gagnant, ou null en cas d'égalité. */
+  | { type: 'submitDuelResult'; winner: PlayerId | null }
+  | { type: 'submitOneVsAllResult'; soloWon: boolean }
   | { type: 'useItem'; item: ItemId; target?: PlayerId }
   | { type: 'roll' }
   | { type: 'keepRoll' }
@@ -146,7 +164,14 @@ export type IntentError =
   | 'itemNotUsable'
   | 'invalidTarget';
 
-export type ItemSource = 'itemSpace' | 'chest' | 'rest' | 'pickpocket' | 'trouble' | 'roundEvent';
+export type ItemSource =
+  | 'itemSpace'
+  | 'chest'
+  | 'rest'
+  | 'pickpocket'
+  | 'steal'
+  | 'trouble'
+  | 'roundEvent';
 
 /** Petits événements de fin de manche, sur un joueur au hasard. */
 export type RoundEventId = 'bird' | 'hole' | 'foundItem';
@@ -190,13 +215,24 @@ export type GameEvent =
   | { type: 'mirrorArmed'; playerId: PlayerId }
   /** Privé : seul le propriétaire du Miroir le reçoit. */
   | { type: 'mirrorExpired'; playerId: PlayerId }
-  | { type: 'mirrorReflected'; playerId: PlayerId; attacker: PlayerId; item: ItemId }
+  | { type: 'mirrorReflected'; playerId: PlayerId; attacker: PlayerId; via: HostileVia }
   | { type: 'shieldBlocked'; playerId: PlayerId }
   | { type: 'trapPlaced'; playerId: PlayerId; spaceId: SpaceId; trap: Trap['type'] }
   | { type: 'trapTriggered'; playerId: PlayerId; spaceId: SpaceId; trap: Trap['type'] }
   | { type: 'itemStolen'; playerId: PlayerId; victim: PlayerId; item: ItemId }
   | { type: 'bonusDieLost'; playerId: PlayerId }
   | { type: 'swapped'; playerId: PlayerId; with: PlayerId }
+  | { type: 'squallHit'; playerId: PlayerId; spaces: number }
+  | {
+      type: 'targetChosen';
+      playerId: PlayerId;
+      target: PlayerId;
+      interaction: TargetedInteraction | 'squall' | 'swap';
+    }
+  | { type: 'duelStarted'; challenger: PlayerId; opponent: PlayerId; kind: 'duel' | 'vendetta' }
+  | { type: 'duelEnded'; winner: PlayerId | null }
+  | { type: 'oneVsAllStarted'; solo: PlayerId }
+  | { type: 'oneVsAllEnded'; solo: PlayerId; soloWon: boolean }
   | { type: 'chestOpened'; playerId: PlayerId; chest: 0 | 1; trapped: boolean }
   | { type: 'rerolled'; playerId: PlayerId; previous: DiceRoll; roll: DiceRoll }
   | { type: 'troubleGauge'; value: number; added: number; reason: 'round' | 'double' | 'gap' }

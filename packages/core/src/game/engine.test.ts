@@ -354,11 +354,18 @@ describe('determinism and full games', () => {
       const intent: Intent | null =
         actor.type === 'player'
           ? chooseBoardIntent(board, state, actor.playerId, 'normal', botRng)
-          : phase.type === 'finale'
-            ? { type: 'submitFinaleResult', ranking: phase.contenders.map((id) => [id]) }
-            : phase.type === 'bonusMinigame'
-              ? { type: 'submitBonusMinigameResult', ranking: botRng.shuffle(everyone) }
-              : { type: 'submitMinigameResult', ranking: botRng.shuffle(everyone) };
+          : phase.type === 'turn' && phase.step.type === 'awaitDuelResult'
+            ? {
+                type: 'submitDuelResult',
+                winner: botRng.pick([phase.playerId, phase.step.opponent]),
+              }
+            : phase.type === 'turn'
+              ? { type: 'submitOneVsAllResult', soloWon: botRng.chance(0.3) }
+              : phase.type === 'finale'
+                ? { type: 'submitFinaleResult', ranking: phase.contenders.map((id) => [id]) }
+                : phase.type === 'bonusMinigame'
+                  ? { type: 'submitBonusMinigameResult', ranking: botRng.shuffle(everyone) }
+                  : { type: 'submitMinigameResult', ranking: botRng.shuffle(everyone) };
       if (!intent) throw new Error(`Aucune décision possible (phase ${phase.type})`);
       state = act(board, state, actor, intent).state;
     }
