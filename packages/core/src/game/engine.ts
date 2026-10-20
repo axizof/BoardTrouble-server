@@ -1,6 +1,7 @@
 import type { Board } from '../board/board';
 import { distanceToGoal } from '../board/board';
 import { bonusDieForRank, breakTies, type DiceRoll, rollDice } from '../dice/dice';
+import { resolveDuel, resolveOneVsAll, resolveTarget } from '../interactions/interactions';
 import { drawItem, type ItemId } from '../items/catalog';
 import { itemUseError, useItem } from '../items/useItem';
 import { Rng } from '../random/rng';
@@ -34,6 +35,7 @@ import type {
   PlayerState,
   Resume,
   TurnModifiers,
+  TurnStep,
 } from './types';
 
 const ROUND_EVENT_CHANCE = 0.15;
@@ -74,6 +76,7 @@ export function createGame(
       gateFailures: {},
       inventory: [],
       mirrorArmed: false,
+      lastAttack: null,
     })),
     round: 1,
     turnOrder: order,
@@ -107,6 +110,10 @@ export function whoMustAct(state: GameState): Actor | null {
     case 'bonusMinigame':
       return { type: 'system' };
     case 'turn':
+      // Les résultats de duel et de 1 contre tous viennent du serveur (le mini-jeu).
+      if (phase.step.type === 'awaitDuelResult' || phase.step.type === 'awaitOneVsAllResult') {
+        return { type: 'system' };
+      }
       return { type: 'player', playerId: phase.playerId };
     case 'trouble':
       return { type: 'player', playerId: phase.chooser };
@@ -166,6 +173,23 @@ export function applyIntent(
     case 'chooseChest':
       resolvePause(ctx, (player) => openChest(ctx, player, intent.chest));
       break;
+    case 'chooseTarget':
+      resolvePause(ctx, (player, step) =>
+        step.type === 'awaitTarget'
+          ? resolveTarget(ctx, player, getPlayer(ctx.state, intent.playerId), step.interaction)
+          : 'continue',
+      );
+      break;
+    case 'submitDuelResult':
+      resolvePause(ctx, (player, step) =>
+        step.type === 'awaitDuelResult'
+          ? resolveDuel(ctx, player, step.opponent, step.kind, intent.winner)
+          : 'continue',
+      );
+      break;
+    case 'submitOneVsAllResult':
+      resolvePause(ctx, (player) => resolveOneVsAll(ctx, player, intent.soloWon));
+      break;
     case 'resolveItemSwap':
       if (ctx.state.phase.type === 'itemChoices') resolveQueuedChoice(ctx, intent.discard);
       else resolvePause(ctx, (player) => swapItem(ctx, player, intent.discard));
@@ -201,6 +225,18 @@ function checkIntent(
       if (phase.type !== 'trouble') return 'wrongPhase';
       if (phase.chooser !== actor.playerId) return 'notYourTurn';
       return phase.options.includes(intent.event) ? null : 'invalidChoice';
+    case 'submitDuelResult':
+    case 'submitOneVsAllResult': {
+      if (actor.type !== 'system') return 'notAllowed';
+      if (phase.type !== 'turn') return 'wrongPhase';
+      const { step } = phase;
+      if (intent.type === 'submitOneVsAllResult') {
+        return step.type === 'awaitOneVsAllResult' ? null : 'wrongPhase';
+      }
+      if (step.type !== 'awaitDuelResult') return 'wrongPhase';
+      const fighters: (PlayerId | null)[] = [phase.playerId, step.opponent, null];
+      return fighters.includes(intent.winner) ? null : 'invalidChoice';
+    }
     case 'resolveItemSwap': {
       if (phase.type !== 'itemChoices') break;
       if (actor.type !== 'player') return 'notAllowed';
@@ -235,6 +271,9 @@ function checkIntent(
     case 'chooseChest':
       if (step.type !== 'awaitChest') return 'wrongPhase';
       return intent.chest === 0 || intent.chest === 1 ? null : 'invalidChoice';
+    case 'chooseTarget':
+      if (step.type !== 'awaitTarget') return 'wrongPhase';
+      return step.options.includes(intent.playerId) ? null : 'invalidChoice';
     case 'resolveItemSwap': {
       if (step.type !== 'awaitItemSwap') return 'wrongPhase';
       const player = getPlayer(state, actor.playerId);
@@ -377,18 +416,44 @@ function continueAfterBranch(ctx: Context, spaceId: string): void {
   afterAction(ctx, advanceByEffect(ctx, player, remaining, spaceId), resume);
 }
 
-/** Reprend après une pause (coffre, inventaire plein), là où elle s'était arrêtée. */
-function resolvePause(ctx: Context, resolve: (player: PlayerState) => Flow): void {
+/** Étapes où le tour attend un choix ou un résultat avant de reprendre. */
+type PausedStep = Extract<
+  TurnStep,
+  {
+    type:
+      | 'awaitChest'
+      | 'awaitItemSwap'
+      | 'awaitTarget'
+      | 'awaitDuelResult'
+      | 'awaitOneVsAllResult';
+  }
+>;
+
+/**
+ * Reprend après une pause (coffre, inventaire plein, choix de cible, résultat de duel ou de
+ * 1 contre tous), là où elle s'était arrêtée.
+ */
+function resolvePause(
+  ctx: Context,
+  resolve: (player: PlayerState, step: PausedStep) => Flow,
+): void {
   const { phase } = ctx.state;
-  if (
-    phase.type !== 'turn' ||
-    (phase.step.type !== 'awaitChest' && phase.step.type !== 'awaitItemSwap')
-  ) {
+  if (phase.type !== 'turn' || !isPausedStep(phase.step)) {
     throw new Error('Pas de choix en attente');
   }
-  const { resume } = phase.step;
-  ctx.resume = resume;
-  afterAction(ctx, resolve(activePlayer(ctx)), resume);
+  const { step } = phase;
+  ctx.resume = step.resume;
+  afterAction(ctx, resolve(activePlayer(ctx), step), step.resume);
+}
+
+function isPausedStep(step: TurnStep): step is PausedStep {
+  return [
+    'awaitChest',
+    'awaitItemSwap',
+    'awaitTarget',
+    'awaitDuelResult',
+    'awaitOneVsAllResult',
+  ].includes(step.type);
 }
 
 /** Inventaire plein : jette `discard` pour prendre l'objet proposé, ou refuse ce dernier. */

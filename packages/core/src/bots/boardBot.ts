@@ -1,7 +1,7 @@
 import { type Board, distanceToGoal } from '../board/board';
 import { getPlayer } from '../game/context';
 import { progressRanking } from '../game/progress';
-import type { GameState, Intent, PlayerId, PlayerState } from '../game/types';
+import type { GameState, Intent, PlayerId, PlayerState, TargetedInteraction } from '../game/types';
 import { ITEM_VALUE, type ItemId } from '../items/catalog';
 import { itemUseError, validTargets } from '../items/useItem';
 import type { Rng } from '../random/rng';
@@ -80,6 +80,15 @@ export function chooseBoardIntent(
       return { type: 'chooseChest', chest: rng.chance(0.5) ? 0 : 1 };
     case 'awaitItemSwap':
       return { type: 'resolveItemSwap', discard: leastValuable([...me.inventory, step.offered]) };
+    case 'awaitTarget':
+      return {
+        type: 'chooseTarget',
+        playerId: chooseInteractionTarget(board, state, step.interaction, step.options),
+      };
+    case 'awaitDuelResult':
+    case 'awaitOneVsAllResult':
+      // Le résultat vient du mini-jeu, pas d'une décision du bot.
+      return null;
   }
 }
 
@@ -106,6 +115,26 @@ function chooseTrouble(options: TroubleEventId[]): TroubleEventId {
   const [best] = ranked;
   if (best === undefined) throw new Error('Aucun TROUBLE proposé');
   return best;
+}
+
+/**
+ * Cible d'une interaction : le mieux placé (c'est lui qu'il faut ralentir ou affronter), et
+ * pour un Vol, celui qui a le meilleur objet.
+ */
+function chooseInteractionTarget(
+  board: Board,
+  state: GameState,
+  interaction: TargetedInteraction,
+  options: PlayerId[],
+): PlayerId {
+  const ranking = progressRanking(board, state);
+  const bestItem = (id: PlayerId) =>
+    Math.max(0, ...getPlayer(state, id).inventory.map((item) => ITEM_VALUE[item]));
+  const [target] = [...options].sort((a, b) =>
+    interaction === 'steal' ? bestItem(b) - bestItem(a) : ranking.indexOf(a) - ranking.indexOf(b),
+  );
+  if (target === undefined) throw new Error('Aucune cible proposée');
+  return target;
 }
 
 function leastValuable(items: ItemId[]): ItemId {

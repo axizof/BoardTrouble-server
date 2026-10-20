@@ -1,8 +1,16 @@
 import { type Board, distanceToGoal, getSpace } from '../board/board';
 import { type Context, type Flow, getPlayer, removeItem } from '../game/context';
-import { advanceByEffect, applyHostile, isGate, recoil, swapPlaces } from '../game/effects';
+import {
+  advanceByEffect,
+  applyHostile,
+  isGate,
+  opponentOf,
+  recoil,
+  stealRandomItem,
+  swapPlaces,
+} from '../game/effects';
 import type { GameState, IntentError, PlayerId, PlayerState } from '../game/types';
-import { INVENTORY_SIZE, ITEMS, type ItemId } from './catalog';
+import { ITEMS, type ItemId } from './catalog';
 
 const ROCKET_STEPS = 6;
 const BLOWER_RANGE = 6;
@@ -127,10 +135,12 @@ export function useItem(ctx: Context, user: PlayerState, item: ItemId, targetId?
 }
 
 function useOnTarget(ctx: Context, user: PlayerState, item: ItemId, target: PlayerState): Flow {
-  const source = { player: user, item };
+  const source = { player: user, via: item };
   switch (item) {
     case 'blower':
-      return applyHostile(ctx, target, source, (victim) => recoil(ctx, victim, BLOWER_PUSH));
+      return applyHostile(ctx, target, source, (victim) =>
+        recoil(ctx, victim, BLOWER_PUSH, opponentOf(victim, user, target).id),
+      );
     case 'hourglass':
       return applyHostile(ctx, target, source, (victim) => {
         ctx.state.bonusDice[victim.id] = null;
@@ -138,22 +148,9 @@ function useOnTarget(ctx: Context, user: PlayerState, item: ItemId, target: Play
         return 'continue';
       });
     case 'pickpocket':
-      return applyHostile(ctx, target, source, (victim) => {
-        const thief = victim === target ? user : target;
-        // Renvoyé par un Miroir sur un voleur qui n'a plus rien : il n'y a rien à prendre.
-        if (victim.inventory.length === 0) return 'continue';
-        const stolen = ctx.rng.pick(victim.inventory);
-        removeItem(victim, stolen);
-        ctx.events.push({
-          type: 'itemStolen',
-          playerId: thief.id,
-          victim: victim.id,
-          item: stolen,
-        });
-        if (thief.inventory.length < INVENTORY_SIZE) thief.inventory.push(stolen);
-        else ctx.events.push({ type: 'itemRefused', playerId: thief.id, item: stolen });
-        return 'continue';
-      });
+      return applyHostile(ctx, target, source, (victim) =>
+        stealRandomItem(ctx, victim, opponentOf(victim, user, target)),
+      );
     case 'grapple':
       return applyHostile(ctx, target, source, (victim) => {
         // Renvoyé par un Miroir, l'échange n'a plus de sens : il est simplement annulé.

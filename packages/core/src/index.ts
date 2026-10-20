@@ -5,6 +5,7 @@ export * from './game/engine';
 export * from './game/progress';
 export * from './game/types';
 export * from './game/views';
+export * from './interactions/interactions';
 export * from './items/catalog';
 export * from './items/useItem';
 export * from './random/rng';

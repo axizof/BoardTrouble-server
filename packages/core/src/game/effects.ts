@@ -1,4 +1,5 @@
 import { getSpace, type SpaceId, type SpaceKind } from '../board/board';
+import { startInteraction } from '../interactions/interactions';
 import {
   catchUpFactor,
   drawItem,
@@ -10,7 +11,7 @@ import {
 import { applyTrouble, drawSpaceEvent } from '../trouble/events';
 import { effectiveKind } from '../trouble/overlays';
 import { activePlayerId, type Context, type Flow, removeItem } from './context';
-import type { ItemSource, PlayerState } from './types';
+import type { HostileVia, ItemSource, PlayerId, PlayerState } from './types';
 
 /** Assez pour revenir sur ses pas lors des plus grands reculs. */
 const TRAIL_LENGTH = 64;
@@ -71,6 +72,14 @@ export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' 
       const event = drawSpaceEvent(ctx.board, ctx.state, ctx.rng);
       return event === null ? 'continue' : applyTrouble(ctx, event, null, player);
     }
+    case 'squall':
+    case 'swap':
+    case 'magnet':
+    case 'steal':
+    case 'duel':
+    case 'oneVsAll':
+    case 'vendetta':
+      return startInteraction(ctx, player, kind.type);
     case 'item':
       return gainItem(
         ctx,
@@ -108,6 +117,15 @@ function hasEffect(kind: SpaceKind, player: PlayerState, isActive: boolean): boo
       return isActive;
     case 'rest':
       return isActive && player.inventory.length === 0;
+    case 'vendetta':
+      return isActive && player.lastAttack !== null;
+    case 'squall':
+    case 'swap':
+    case 'magnet':
+    case 'steal':
+    case 'duel':
+    case 'oneVsAll':
+      return isActive;
     default:
       return false;
   }
@@ -160,7 +178,7 @@ export function gainItem(
   return 'continue';
 }
 
-export type HostileSource = { player: PlayerState; item: ItemId };
+export type HostileSource = { player: PlayerState; via: HostileVia };
 
 /**
  * Applique un effet négatif. Un effet ciblé venant d'un joueur est d'abord renvoyé par un
@@ -180,7 +198,7 @@ export function applyHostile(
       type: 'mirrorReflected',
       playerId: target.id,
       attacker: source.player.id,
-      item: source.item,
+      via: source.via,
     });
     victim = source.player;
   }
@@ -192,8 +210,16 @@ export function applyHostile(
   return effect(victim);
 }
 
-/** Recul de `amount` cases par le chemin réellement suivi, puis effet de la case d'arrivée. */
-export function recoil(ctx: Context, player: PlayerState, amount: number): Flow {
+/**
+ * Recul de `amount` cases par le chemin réellement suivi, puis effet de la case d'arrivée.
+ * `attacker` : l'adversaire responsable du recul, retenu pour la Vendetta.
+ */
+export function recoil(
+  ctx: Context,
+  player: PlayerState,
+  amount: number,
+  attacker?: PlayerId,
+): Flow {
   const path: SpaceId[] = [];
   for (let i = 0; i < amount; i++) {
     const previous = player.trail.pop() ?? ctx.board.predecessors.get(player.position)?.[0];
@@ -202,9 +228,34 @@ export function recoil(ctx: Context, player: PlayerState, amount: number): Flow 
     player.atGate = isGate(getSpace(ctx.board, previous).kind);
     path.push(previous);
   }
-  if (path.length > 0)
+  if (path.length > 0) {
     ctx.events.push({ type: 'moved', playerId: player.id, path, cause: 'effect' });
+    if (attacker !== undefined) player.lastAttack = { by: attacker, spaces: path.length };
+  }
   return resolveArrival(ctx, player, 'effect');
+}
+
+/**
+ * L'autre joueur d'une attaque : après un renvoi par le Miroir, la victime est l'attaquant,
+ * et l'effet profite alors à la cible d'origine.
+ */
+export function opponentOf(
+  victim: PlayerState,
+  attacker: PlayerState,
+  target: PlayerState,
+): PlayerState {
+  return victim === target ? attacker : target;
+}
+
+/** Vole un objet au hasard (Pickpocket, case Vol). Une victime sans objet ne perd rien. */
+export function stealRandomItem(ctx: Context, victim: PlayerState, thief: PlayerState): Flow {
+  if (victim.inventory.length === 0) return 'continue';
+  const stolen = ctx.rng.pick(victim.inventory);
+  removeItem(victim, stolen);
+  ctx.events.push({ type: 'itemStolen', playerId: thief.id, victim: victim.id, item: stolen });
+  if (thief.inventory.length < INVENTORY_SIZE) thief.inventory.push(stolen);
+  else ctx.events.push({ type: 'itemRefused', playerId: thief.id, item: stolen });
+  return 'continue';
 }
 
 /**

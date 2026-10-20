@@ -65,6 +65,19 @@ export function buildSpiralPrototype(seed = 2026): BoardDefinition {
   return { id: 'spiral-prototype', name: 'Spirale prototype', start: 'start', spaces };
 }
 
+/** Chaque case d'interaction avec la même fréquence `rate`. */
+function interactions(rate: number) {
+  return {
+    squall: rate,
+    swap: rate,
+    magnet: rate,
+    steal: rate,
+    duel: rate,
+    oneVsAll: rate,
+    vendetta: rate,
+  };
+}
+
 function laneIds(floor: number, lane: string, count: number): string[] {
   return Array.from({ length: count }, (_, index) => `f${floor}-${lane}-${index}`);
 }
@@ -72,9 +85,33 @@ function laneIds(floor: number, lane: string, count: number): string[] {
 function randomKind(rng: Rng, flavour: 'trunk' | 'short' | 'long'): SpaceKind {
   // Voie courte : plus d'objets et de coffres, mais plus de malus. Voie longue : plus de bonus.
   const rates = {
-    trunk: { bonus: 0.15, malus: 0.12, item: 0.12, chest: 0.02, rest: 0.03, trouble: 0.04 },
-    short: { bonus: 0.1, malus: 0.2, item: 0.22, chest: 0.1, rest: 0, trouble: 0.08 },
-    long: { bonus: 0.35, malus: 0.1, item: 0.08, chest: 0, rest: 0.05, trouble: 0 },
+    trunk: {
+      bonus: 0.13,
+      malus: 0.1,
+      item: 0.1,
+      chest: 0.02,
+      rest: 0.03,
+      trouble: 0.04,
+      ...interactions(0.012),
+    },
+    short: {
+      bonus: 0.08,
+      malus: 0.16,
+      item: 0.18,
+      chest: 0.08,
+      rest: 0,
+      trouble: 0.08,
+      ...interactions(0.03),
+    },
+    long: {
+      bonus: 0.33,
+      malus: 0.08,
+      item: 0.08,
+      chest: 0,
+      rest: 0.05,
+      trouble: 0,
+      ...interactions(0.005),
+    },
   }[flavour];
   let roll = rng.next();
   for (const [type, rate] of Object.entries(rates)) {
@@ -83,7 +120,7 @@ function randomKind(rng: Rng, flavour: 'trunk' | 'short' | 'long'): SpaceKind {
     if (type === 'bonus' || type === 'malus') {
       return { type, amount: rng.chance(0.75) ? 3 : 5 };
     }
-    return { type: type as 'item' | 'chest' | 'rest' | 'trouble' };
+    return { type } as SpaceKind;
   }
   return { type: 'empty' };
 }

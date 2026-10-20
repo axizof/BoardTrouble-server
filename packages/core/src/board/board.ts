@@ -13,6 +13,21 @@ export type SpaceKind =
   | { type: 'rest' }
   /** Le Plateau se réveille tout de suite : un petit événement TROUBLE. */
   | { type: 'trouble' }
+  // Interactions entre joueurs : elles ne s'activent que pendant le tour de celui qui arrive.
+  /** Un dé désigne un adversaire, qui recule de 4 à 6 cases. */
+  | { type: 'squall' }
+  /** Un tirage désigne un adversaire : on échange nos places. */
+  | { type: 'swap' }
+  /** On attire un adversaire du même étage de 4 cases au plus vers soi. */
+  | { type: 'magnet' }
+  /** On vole un objet au hasard à un adversaire choisi. */
+  | { type: 'steal' }
+  /** Duel contre un adversaire choisi : +6 pour le gagnant, -6 pour l'autre. */
+  | { type: 'duel' }
+  /** Mini-jeu seul contre tous : +10 en cas de victoire. */
+  | { type: 'oneVsAll' }
+  /** Duel automatique contre le dernier joueur qui nous a fait reculer. */
+  | { type: 'vendetta' }
   /** Porte à seuil : faire `threshold` ou plus aux dés, le seuil baisse à chaque échec. */
   | { type: 'gate'; threshold: number }
   /** Porte finale au sommet : le seuil ne baisse pas. */
