@@ -20,10 +20,22 @@ En conception. Le code arrive après la validation des documents de conception.
 
 [GNU AGPL-3.0](LICENSE) : tu peux héberger, modifier et redistribuer ce serveur librement. Si tu mets en ligne une version modifiée, tu dois publier son code source sous la même licence.
 
-## Contenu prévu
+## Organisation
 
 ```
-packages/core/      règles du jeu, simulation des mini-jeux, bots, protocole
-apps/server/        serveur réseau : salons, reconnexion, modération, sauvegardes
-tools/simulator/    simulateur d'équilibrage (parties entre bots)
+packages/core/      règles du jeu : plateau, dés, tours, portes, bots (TypeScript pur, tourne aussi dans le navigateur)
+tools/simulator/    simulateur d'équilibrage : des milliers de parties entre bots
+apps/server/        serveur réseau (à venir) : salons, reconnexion, modération, sauvegardes
 ```
+
+## Développement
+
+Prérequis : [Bun](https://bun.sh) 1.4 ou plus.
+
+```
+bun install         # installer les dépendances
+bun run check       # lint et format (Biome), types (TypeScript), tests
+bun run simulate    # simuler des parties : --games 2000 --table 4|6 --seed 1
+```
+
+Le moteur de règles est une fonction pure : il reçoit l'état de la partie et une intention ("je lance", "je prends ce chemin"), la valide, et renvoie le nouvel état avec la liste des événements à animer. Tout le hasard passe par un générateur à graine : une même graine rejoue exactement la même partie.
