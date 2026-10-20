@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { CHARACTERS, checkNickname, isCharacter } from './players';
+import {
+  CHARACTERS,
+  checkNickname,
+  isCharacter,
+  naturalAppearance,
+  readAppearance,
+} from './players';
 
 describe('a nickname', () => {
   test('is trimmed and kept between 3 and 16 visible characters', () => {
@@ -23,5 +29,29 @@ describe('the characters', () => {
     expect(CHARACTERS).toHaveLength(8);
     expect(isCharacter('fox')).toBe(true);
     expect(isCharacter('dragon')).toBe(false);
+  });
+});
+
+describe('an appearance sent by a client', () => {
+  test('is read field by field, without anything the client added', () => {
+    const sent = { character: 'cat', coat: 2, hat: 'crown', glasses: 'heart', admin: true };
+    expect(readAppearance(sent)).toEqual({
+      character: 'cat',
+      coat: 2,
+      hat: 'crown',
+      glasses: 'heart',
+    });
+    expect(readAppearance(naturalAppearance('wolf'))).toEqual(naturalAppearance('wolf'));
+  });
+
+  test('is refused when a field is unknown or out of range', () => {
+    const valid = naturalAppearance('fox');
+    expect(readAppearance({ ...valid, character: 'dragon' })).toBeNull();
+    expect(readAppearance({ ...valid, coat: 4 })).toBeNull();
+    expect(readAppearance({ ...valid, coat: 1.5 })).toBeNull();
+    expect(readAppearance({ ...valid, hat: 'helmet' })).toBeNull();
+    expect(readAppearance({ ...valid, glasses: undefined })).toBeNull();
+    expect(readAppearance('fox')).toBeNull();
+    expect(readAppearance(null)).toBeNull();
   });
 });

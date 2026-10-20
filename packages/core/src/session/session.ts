@@ -11,7 +11,7 @@ import type {
   PlayerId,
 } from '../game/types';
 import { type Viewer, viewEvents, viewState } from '../game/views';
-import type { CharacterId } from '../lobby/players';
+import type { Appearance } from '../lobby/players';
 import { Rng } from '../random/rng';
 import { animationTime } from './pacing';
 import { placeholderSystemIntent } from './placeholder';
@@ -20,8 +20,8 @@ import { type HostMessage, PROTOCOL_VERSION, type SeatView } from './protocol';
 /** Qui contrôle une place : un humain, ou un bot de ce niveau. */
 export type SeatControl = 'human' | BotLevel;
 
-/** Une place de la partie : qui la contrôle, et son personnage. */
-export type Seat = { control: SeatControl; character: CharacterId };
+/** Une place de la partie : qui la contrôle, et son apparence. */
+export type Seat = { control: SeatControl; appearance: Appearance };
 
 export type SessionOptions = {
   /** Temps pour décider, en millisecondes (20 s par défaut, réglable dans le salon). */
@@ -146,9 +146,9 @@ export class GameSession {
       board: this.board.definition,
       you: viewer.type === 'player' ? viewer.playerId : null,
       seats: Object.fromEntries(
-        Object.entries(this.seats).map(([id, { control, character }]): [PlayerId, SeatView] => [
+        Object.entries(this.seats).map(([id, { control, appearance }]): [PlayerId, SeatView] => [
           id,
-          { kind: control === 'human' ? 'human' : 'bot', character },
+          { kind: control === 'human' ? 'human' : 'bot', appearance },
         ]),
       ),
       state: viewState(this.#state, viewer),

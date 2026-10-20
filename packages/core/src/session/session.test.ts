@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { prepareBoard } from '../board/board';
 import { buildMontTrouble } from '../boards/montTrouble';
 import type { GameEvent } from '../game/types';
+import { naturalAppearance } from '../lobby/players';
 import { FOUR_PLAYERS } from '../testing/fixtures';
 import { animationTime } from './pacing';
 import { GameSession, type Seat, type SeatControl } from './session';
@@ -13,7 +14,7 @@ function start(controls: Record<string, SeatControl>, seed = 1) {
   const seats = Object.fromEntries(
     Object.entries(controls).map(([id, control]): [string, Seat] => [
       id,
-      { control, character: 'fox' },
+      { control, appearance: naturalAppearance('fox') },
     ]),
   );
   return GameSession.create(
@@ -94,10 +95,10 @@ describe('a game session', () => {
       type: 'snapshot',
       you: 'ana',
       seats: {
-        ana: { kind: 'human', character: 'fox' },
-        bob: { kind: 'bot', character: 'fox' },
-        cam: { kind: 'bot', character: 'fox' },
-        dan: { kind: 'bot', character: 'fox' },
+        ana: { kind: 'human', appearance: naturalAppearance('fox') },
+        bob: { kind: 'bot', appearance: naturalAppearance('fox') },
+        cam: { kind: 'bot', appearance: naturalAppearance('fox') },
+        dan: { kind: 'bot', appearance: naturalAppearance('fox') },
       },
       state: { rngState: 0 },
     });
