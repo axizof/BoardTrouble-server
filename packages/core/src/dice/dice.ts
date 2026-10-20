@@ -32,14 +32,29 @@ export type DiceRoll = {
   bonus: number | null;
   /** Dé 1-6 en plus quand le dé normal et le dé bonus font le même chiffre. */
   extra: number | null;
+  /** Dé 1-6 du Dé Turbo. */
+  turbo: number | null;
   total: number;
 };
 
-export function rollDice(rng: Rng, bonusDie: BonusDie | null): DiceRoll {
-  const normal = rng.int(1, 6);
+export type RollOptions = {
+  /** Faces du dé normal : 4 quand on a posé une Colle ce tour-ci. */
+  normalFaces?: number;
+  turbo?: boolean;
+};
+
+export function rollDice(rng: Rng, bonusDie: BonusDie | null, options: RollOptions = {}): DiceRoll {
+  const normal = rng.int(1, options.normalFaces ?? 6);
   const bonus = bonusDie ? rng.int(1, bonusDie.faces) : null;
   const extra = bonus === normal ? rng.int(1, 6) : null;
-  return { normal, bonus, extra, total: normal + (bonus ?? 0) + (extra ?? 0) };
+  const turbo = options.turbo ? rng.int(1, 6) : null;
+  return {
+    normal,
+    bonus,
+    extra,
+    turbo,
+    total: normal + (bonus ?? 0) + (extra ?? 0) + (turbo ?? 0),
+  };
 }
 
 export type TieBreak = {

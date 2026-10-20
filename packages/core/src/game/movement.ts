@@ -1,26 +1,23 @@
-import { getSpace, type SpaceId, type SpaceKind } from '../board/board';
+import { getSpace, type SpaceId } from '../board/board';
 import { rollDice } from '../dice/dice';
-import type { Context } from './context';
+import { type Context, type Flow, removeItem } from './context';
+import { applyHostile, isGate, resolveArrival, stepForward } from './effects';
 import type { PlayerState } from './types';
 
-/** Assez pour revenir sur ses pas lors des plus grands reculs. */
-const TRAIL_LENGTH = 64;
 /** Une porte à seuil ne descend pas sous ce seuil, quel que soit le nombre d'échecs. */
 const MIN_GATE_THRESHOLD = 2;
 
-export type MoveResult = 'turnOver' | 'awaitingBranch';
-
 /**
- * Déplacement aux dés. S'arrête aux embranchements (le joueur choisira) et à chaque porte
- * (test immédiat : réussite, on continue ; échec, le tour s'arrête). `firstStep` est la
- * case choisie à un embranchement.
+ * Déplacement aux dés. S'arrête aux embranchements (le joueur choisira), sur une Colle
+ * posée par un autre, et à chaque porte (test immédiat : réussite, on continue ; échec,
+ * le tour s'arrête). `firstStep` est la case choisie à un embranchement.
  */
 export function moveWithDice(
   ctx: Context,
   player: PlayerState,
   steps: number,
   firstStep?: SpaceId,
-): MoveResult {
+): Flow {
   let remaining = steps;
   let forced = firstStep;
   const path: SpaceId[] = [];
@@ -40,7 +37,7 @@ export function moveWithDice(
         playerId: player.id,
         step: { type: 'awaitBranch', remaining, options: [...space.next] },
       };
-      return 'awaitingBranch';
+      return 'paused';
     }
     const next = forced ?? space.next[0];
     forced = undefined;
@@ -53,30 +50,56 @@ export function moveWithDice(
     if (isGate(getSpace(ctx.board, next).kind)) {
       flush();
       player.atGate = true;
-      const roll = rollDice(ctx.rng, ctx.state.bonusDice[player.id] ?? null);
-      ctx.events.push({ type: 'diceRolled', playerId: player.id, purpose: 'gate', roll });
-      if (testGate(ctx, player, roll.total) !== 'passed') return 'turnOver';
+      const outcome = testGate(ctx, player, () => {
+        const roll = rollDice(ctx.rng, ctx.state.bonusDice[player.id] ?? null);
+        ctx.events.push({ type: 'diceRolled', playerId: player.id, purpose: 'gate', roll });
+        return roll.total;
+      });
+      if (outcome !== 'passed') return 'continue';
+      continue;
+    }
+
+    const trap = ctx.state.traps[next];
+    if (trap?.type === 'glue' && trap.owner !== player.id && remaining > 0) {
+      flush();
+      delete ctx.state.traps[next];
+      ctx.events.push({ type: 'trapTriggered', playerId: player.id, spaceId: next, trap: 'glue' });
+      // L'effet n'est appelé que si aucun Bouclier ne l'annule.
+      applyHostile(ctx, player, null, () => {
+        remaining = 0;
+        return 'continue';
+      });
     }
   }
 
   flush();
-  resolveArrival(ctx, player, 'dice');
-  return 'turnOver';
+  return resolveArrival(ctx, player, 'dice');
 }
 
 export type GateOutcome = 'passed' | 'failed' | 'opened';
 
-/** Test de la porte devant laquelle se trouve le joueur, avec le total `total`. */
-export function testGate(ctx: Context, player: PlayerState, total: number): GateOutcome {
+/**
+ * Tente la porte devant laquelle se trouve le joueur. Une Clé ouvre une porte à seuil
+ * sans test. Sinon `rollTotal` donne le total des dés (lancé seulement si nécessaire).
+ */
+export function testGate(ctx: Context, player: PlayerState, rollTotal: () => number): GateOutcome {
   const space = getSpace(ctx.board, player.position);
   const { kind } = space;
   if (kind.type !== 'gate' && kind.type !== 'finalGate') throw new Error('Pas de porte ici');
+
+  if (kind.type === 'gate' && player.inventory.includes('key')) {
+    removeItem(player, 'key');
+    player.atGate = false;
+    ctx.events.push({ type: 'keyUsed', playerId: player.id, spaceId: space.id });
+    return 'passed';
+  }
 
   const failures = player.gateFailures[space.id] ?? 0;
   const threshold =
     kind.type === 'gate'
       ? kind.threshold - Math.max(0, Math.min(failures, kind.threshold - MIN_GATE_THRESHOLD))
       : kind.threshold;
+  const total = rollTotal();
   const success = total >= threshold;
   ctx.events.push({
     type: 'gateTested',
@@ -97,71 +120,4 @@ export function testGate(ctx: Context, player: PlayerState, total: number): Gate
   ctx.state.finalGateOpenedBy.push(player.id);
   ctx.events.push({ type: 'finalGateOpened', playerId: player.id });
   return 'opened';
-}
-
-/**
- * Effet de la case d'arrivée. Arrivée aux dés : l'effet s'applique. Arrivée par un effet :
- * pile ou face, une seule fois par tour, ce qui empêche toute boucle sans fin.
- */
-function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' | 'effect'): void {
-  if (player.atGate) return;
-  const space = getSpace(ctx.board, player.position);
-  const delta = movementOf(space.kind);
-  if (delta === 0) return;
-
-  if (cause === 'effect') {
-    if (ctx.coinFlipUsed) return;
-    ctx.coinFlipUsed = true;
-    const heads = ctx.rng.chance(0.5);
-    ctx.events.push({ type: 'coinFlipped', playerId: player.id, spaceId: space.id, heads });
-    if (!heads) return;
-  }
-
-  ctx.events.push({ type: 'spaceTriggered', playerId: player.id, spaceId: space.id });
-  moveByEffect(ctx, player, delta);
-  resolveArrival(ctx, player, 'effect');
-}
-
-/**
- * Déplacement d'effet : vers l'avant par la voie principale, sans choix ; vers l'arrière
- * par le chemin réellement suivi. Un effet ne franchit jamais une porte : il s'arrête devant.
- */
-function moveByEffect(ctx: Context, player: PlayerState, delta: number): void {
-  const path: SpaceId[] = [];
-  for (let i = 0; i < Math.abs(delta); i++) {
-    if (delta > 0) {
-      if (player.atGate) break;
-      const next = getSpace(ctx.board, player.position).next[0];
-      if (next === undefined) break;
-      stepForward(player, next);
-      player.atGate = isGate(getSpace(ctx.board, next).kind);
-      path.push(next);
-    } else {
-      const previous = player.trail.pop() ?? ctx.board.predecessors.get(player.position)?.[0];
-      if (previous === undefined) break;
-      player.position = previous;
-      player.atGate = isGate(getSpace(ctx.board, previous).kind);
-      path.push(previous);
-    }
-  }
-  if (path.length > 0) {
-    ctx.events.push({ type: 'moved', playerId: player.id, path, cause: 'effect' });
-  }
-}
-
-function stepForward(player: PlayerState, next: SpaceId): void {
-  player.trail.push(player.position);
-  if (player.trail.length > TRAIL_LENGTH) player.trail.shift();
-  player.position = next;
-  player.atGate = false;
-}
-
-function isGate(kind: SpaceKind): boolean {
-  return kind.type === 'gate' || kind.type === 'finalGate';
-}
-
-function movementOf(kind: SpaceKind): number {
-  if (kind.type === 'bonus') return kind.amount;
-  if (kind.type === 'malus') return -kind.amount;
-  return 0;
 }

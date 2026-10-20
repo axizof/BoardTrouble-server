@@ -5,6 +5,12 @@ export type SpaceKind =
   | { type: 'empty' }
   | { type: 'bonus'; amount: number }
   | { type: 'malus'; amount: number }
+  /** Tire un objet, plus souvent rare pour les joueurs loin derrière. */
+  | { type: 'item' }
+  /** Deux coffres : un objet rare ou un piège. */
+  | { type: 'chest' }
+  /** Donne un objet commun à qui n'en a aucun. */
+  | { type: 'rest' }
   /** Porte à seuil : faire `threshold` ou plus aux dés, le seuil baisse à chaque échec. */
   | { type: 'gate'; threshold: number }
   /** Porte finale au sommet : le seuil ne baisse pas. */
