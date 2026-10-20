@@ -1,6 +1,6 @@
 import { type Board, distanceToGoal, getSpace } from '../board/board';
 import type { SpecialDieKind } from '../dice/dice';
-import { getPlayer } from '../game/context';
+import { getPlayer, pendingPlayers } from '../game/context';
 import { progressRanking } from '../game/progress';
 import type { GameState, Intent, PlayerId, PlayerState, TargetedInteraction } from '../game/types';
 import { ITEM_VALUE, type ItemId } from '../items/catalog';
@@ -49,6 +49,10 @@ export function chooseBoardIntent(
 ): Intent | null {
   const { phase } = state;
   const me = getPlayer(state, playerId);
+  if (phase.type === 'intro' || phase.type === 'orderRoll') {
+    if (!pendingPlayers(state)?.includes(playerId)) return null;
+    return { type: phase.type === 'intro' ? 'skipIntro' : 'rollForOrder' };
+  }
   if (phase.type === 'trouble') {
     return phase.chooser === playerId
       ? { type: 'chooseTrouble', event: chooseTrouble(phase.options) }

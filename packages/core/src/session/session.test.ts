@@ -88,6 +88,36 @@ describe('a game session', () => {
     expect(session.nextWakeAt()).toBeGreaterThanOrEqual(now + animationTime(result.events));
   });
 
+  test('opens with the intro and the order roll, bots first, the human with a longer timer', () => {
+    const { session } = start({ ...BOTS, ana: 'human' });
+    // Les bots passent l'intro sans attendre Ana.
+    let now = 0;
+    for (let bot = 0; bot < 3; bot++) {
+      now = session.nextWakeAt() ?? now;
+      session.tick(now);
+    }
+    const intro = session.snapshot({ type: 'player', playerId: 'ana' }, now);
+    expect(intro).toMatchObject({ state: { phase: { type: 'intro', waiting: ['ana'] } } });
+    // Ana a bien plus que le temps d'une décision pour regarder l'intro.
+    expect(intro.type === 'snapshot' && (intro.decisionEndsIn ?? 0) > DECISION_TIME).toBe(true);
+
+    const skipped = session.submit({ type: 'player', playerId: 'ana' }, { type: 'skipIntro' }, now);
+    if (!skipped.ok) throw new Error(skipped.error);
+    expect(skipped.events).toEqual([{ type: 'introEnded' }]);
+    // Puis les bots lancent leur dé pour l'ordre, avant qu'on attende Ana.
+    for (let bot = 0; bot < 3; bot++) {
+      now = session.nextWakeAt() ?? now;
+      expect(session.tick(now)?.map((event) => event.type)).toEqual(['orderRolled']);
+    }
+    const rolled = session.submit(
+      { type: 'player', playerId: 'ana' },
+      { type: 'rollForOrder' },
+      now,
+    );
+    if (!rolled.ok) throw new Error(rolled.error);
+    expect(rolled.events.map((event) => event.type)).toContain('orderDrawn');
+  });
+
   test('sends each client only what it may see', () => {
     const { session, events } = start({ ...BOTS, ana: 'human' });
     const snapshot = session.snapshot({ type: 'player', playerId: 'ana' }, 0);

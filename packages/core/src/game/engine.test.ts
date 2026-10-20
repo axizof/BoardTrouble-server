@@ -9,7 +9,7 @@ import {
   linearBoard,
   rngStateRolling,
 } from '../testing/fixtures';
-import { applyIntent, createGame, whoMustAct } from './engine';
+import { applyIntent, createGame, openGame, whoMustAct } from './engine';
 import type { Actor, GameEvent, GameState, Intent, PlayerId, PlayerState } from './types';
 
 const SYSTEM: Actor = { type: 'system' };
@@ -59,6 +59,11 @@ describe('createGame', () => {
     const { state, events } = setup();
     expect([...state.turnOrder].sort()).toEqual(['ana', 'bob', 'cam', 'dan']);
     expect(events.map((event) => event.type)).toEqual([
+      'introEnded',
+      'orderRolled',
+      'orderRolled',
+      'orderRolled',
+      'orderRolled',
       'orderDrawn',
       'roundStarted',
       'turnStarted',
@@ -69,6 +74,38 @@ describe('createGame', () => {
       step: { type: 'awaitRoll' },
     });
     expect(Object.values(state.bonusDice).every((die) => die === null)).toBe(true);
+  });
+
+  test('opens on the intro, then everyone rolls for the order at the same time', () => {
+    const board = prepareBoard(linearBoard(emptySpaces(40)));
+    let state = openGame(board, { players: FOUR_PLAYERS, tableSize: 4, seed: 1 });
+    expect(state.phase).toEqual({ type: 'intro', waiting: ['ana', 'bob', 'cam', 'dan'] });
+    expect(applyIntent(board, state, player('ana'), { type: 'rollForOrder' })).toEqual({
+      ok: false,
+      error: 'wrongPhase',
+    });
+
+    for (const id of ['dan', 'ana', 'cam']) {
+      state = act(board, state, player(id), { type: 'skipIntro' }).state;
+    }
+    expect(state.phase).toEqual({ type: 'intro', waiting: ['bob'] });
+    const introDone = act(board, state, player('bob'), { type: 'skipIntro' });
+    expect(introDone.events).toEqual([{ type: 'introEnded' }]);
+    state = introDone.state;
+
+    // N'importe qui lance quand il veut, une seule fois.
+    state = act(board, state, player('cam'), { type: 'rollForOrder' }).state;
+    expect(applyIntent(board, state, player('cam'), { type: 'rollForOrder' })).toEqual({
+      ok: false,
+      error: 'notYourTurn',
+    });
+    for (const id of ['ana', 'dan']) {
+      state = act(board, state, player(id), { type: 'rollForOrder' }).state;
+    }
+    const last = act(board, state, player('bob'), { type: 'rollForOrder' });
+    expect(ofType(last.events, 'orderDrawn')).toHaveLength(1);
+    expect(last.state.phase.type).toBe('turn');
+    expect(currentPlayer(last.state)).toBe(last.state.turnOrder[0] ?? '');
   });
 
   test('rejects a table that is not full or has duplicate players', () => {

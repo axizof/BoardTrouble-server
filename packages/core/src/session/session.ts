@@ -1,6 +1,7 @@
 import type { Board } from '../board/board';
 import { type BotLevel, chooseBoardIntent } from '../bots/boardBot';
-import { applyIntent, createGame, whoMustAct } from '../game/engine';
+import { pendingPlayers } from '../game/context';
+import { applyIntent, openGame, whoMustAct } from '../game/engine';
 import type {
   Actor,
   GameConfig,
@@ -34,6 +35,8 @@ const BOT_THINK_TIME = 700;
 const PLACEHOLDER_MINIGAME_TIME = 5000;
 /** Un joueur qui laisse passer son chrono : l'hôte choisit pour lui, comme un bot Normal. */
 const STAND_IN_LEVEL: BotLevel = 'normal';
+/** La présentation du plateau dure moins que ça ; au-delà, l'hôte la passe pour le joueur. */
+const INTRO_TIME = 45_000;
 /** Le hasard des bots est séparé de celui de la partie : il ne change pas les tirages. */
 const BOT_SEED_OFFSET = 0x5eed;
 
@@ -71,7 +74,7 @@ export class GameSession {
     this.#readyAt = readyAt;
   }
 
-  /** Crée la partie ; les événements du tirage de l'ordre sont à envoyer à tous. */
+  /** Crée la partie : elle commence par la présentation du plateau, puis le tirage de l'ordre. */
   static create(
     board: Board,
     config: GameConfig,
@@ -81,11 +84,10 @@ export class GameSession {
   ): { session: GameSession; events: GameEvent[] } {
     const missing = config.players.filter((player) => seats[player.id] === undefined);
     if (missing.length > 0) throw new Error(`Places sans contrôle : ${missing.map((p) => p.id)}`);
-    const { state, events } = createGame(board, config);
-    const readyAt = now + animationTime(events);
+    const state = openGame(board, config);
     return {
-      session: new GameSession(board, state, seats, options, config.seed, readyAt),
-      events,
+      session: new GameSession(board, state, seats, options, config.seed, now),
+      events: [],
     };
   }
 
@@ -104,11 +106,11 @@ export class GameSession {
 
   /** Heure de la prochaine action automatique, ou null si la partie est finie. */
   nextWakeAt(): number | null {
-    const actor = whoMustAct(this.#state);
+    const actor = this.#actor();
     if (actor === null) return null;
     if (actor.type === 'system') return this.#readyAt + PLACEHOLDER_MINIGAME_TIME;
     return this.seats[actor.playerId]?.control === 'human'
-      ? this.#readyAt + this.#options.decisionTime
+      ? this.#readyAt + this.#decisionTime()
       : this.#readyAt + BOT_THINK_TIME;
   }
 
@@ -119,7 +121,7 @@ export class GameSession {
    */
   tick(now: number): GameEvent[] | null {
     const wake = this.nextWakeAt();
-    const actor = whoMustAct(this.#state);
+    const actor = this.#actor();
     if (wake === null || actor === null || now < wake) return null;
     const intent =
       actor.type === 'system'
@@ -167,9 +169,19 @@ export class GameSession {
   }
 
   #decisionEndsIn(now: number): number | null {
-    const actor = whoMustAct(this.#state);
+    const actor = this.#actor();
     if (actor?.type !== 'player' || this.seats[actor.playerId]?.control !== 'human') return null;
-    return this.#readyAt + this.#options.decisionTime - now;
+    return this.#readyAt + this.#decisionTime() - now;
+  }
+
+  /** Qui l'hôte fait jouer ou attend. Quand tout le monde agit en même temps, les bots d'abord. */
+  #actor(): Actor | null {
+    const bot = pendingPlayers(this.#state)?.find((id) => this.seats[id]?.control !== 'human');
+    return bot ? { type: 'player', playerId: bot } : whoMustAct(this.#state);
+  }
+
+  #decisionTime(): number {
+    return this.#state.phase.type === 'intro' ? INTRO_TIME : this.#options.decisionTime;
   }
 
   #levelOf(playerId: PlayerId): BotLevel {

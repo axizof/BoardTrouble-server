@@ -106,6 +106,13 @@ export type TurnStep =
 export type Resume = 'endTurn' | 'roll';
 
 export type Phase =
+  /**
+   * La présentation du plateau, au début de la partie : on attend que chacun l'ait vue ou
+   * passée (01-vision-et-plateau.md, section 4).
+   */
+  | { type: 'intro'; waiting: PlayerId[] }
+  /** Le tirage de l'ordre : chacun lance son dé, en même temps ; `rolls` : ceux déjà lancés. */
+  | { type: 'orderRoll'; rolls: Partial<Record<PlayerId, number>> }
   /** En attente du classement du mini-jeu de manche. */
   | { type: 'minigame'; minigame: MinigameId }
   /** Un joueur choisit le mini-jeu de manche parmi `options`. */
@@ -233,6 +240,10 @@ export type Intent =
   | { type: 'reroll' }
   | { type: 'chooseBranch'; spaceId: SpaceId }
   | { type: 'chooseChest'; chest: 0 | 1 }
+  /** Fin de la présentation du plateau pour ce joueur (vue jusqu'au bout, ou passée). */
+  | { type: 'skipIntro' }
+  /** Lancer son dé au tirage de l'ordre. */
+  | { type: 'rollForOrder' }
   /** `discard` : l'objet à jeter, ou l'objet proposé pour le refuser. */
   | { type: 'resolveItemSwap'; discard: ItemId };
 
@@ -265,6 +276,8 @@ export type RoundEventId = 'bird' | 'hole' | 'foundItem' | 'foundSpecialDie' | '
 
 /** Ce qui s'est passé, dans l'ordre : c'est ce que le client anime. */
 export type GameEvent =
+  | { type: 'introEnded' }
+  | { type: 'orderRolled'; playerId: PlayerId; value: number }
   | {
       type: 'orderDrawn';
       rolls: { playerId: PlayerId; value: number }[];
