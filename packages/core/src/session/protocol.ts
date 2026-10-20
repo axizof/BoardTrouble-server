@@ -1,18 +1,18 @@
 import type { BoardDefinition } from '../board/board';
 import type { GameEvent, GameState, Intent, IntentError, PlayerId } from '../game/types';
-import type { CharacterId } from '../lobby/players';
+import type { Appearance } from '../lobby/players';
 
 // Messages entre un client et l'hôte de la partie : le serveur en multi, un Web Worker en
 // solo. Les deux parlent exactement ce protocole (01-architecture.md, section 5).
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 
 export type ClientMessage = { type: 'intent'; intent: Intent };
 
 /** Qui joue chaque place : un humain, ou un bot. */
 export type SeatKind = 'human' | 'bot';
 
-/** Ce que tout le monde voit d'une place : qui la joue, et avec quel personnage. */
-export type SeatView = { kind: SeatKind; character: CharacterId };
+/** Ce que tout le monde voit d'une place : qui la joue, et avec quelle apparence. */
+export type SeatView = { kind: SeatKind; appearance: Appearance };
 
 /**
  * `decisionEndsIn` : millisecondes restantes, au moment de l'envoi, avant que l'hôte joue le
