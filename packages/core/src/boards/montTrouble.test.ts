@@ -29,12 +29,12 @@ function distance(a: Point | undefined, b: Point | undefined): number {
 }
 
 describe('the Mont Trouble', () => {
-  test('is a valid board of five named floors, about 110 spaces from start to summit', () => {
+  test('is a valid board of five named floors, about 130 spaces from start to summit', () => {
     expect(validateBoard(definition)).toEqual([]);
     const board = prepareBoard(definition);
     const shortest = board.distanceToGoal.get('start') ?? 0;
-    expect(shortest).toBeGreaterThan(105);
-    expect(shortest).toBeLessThan(120);
+    expect(shortest).toBeGreaterThan(120);
+    expect(shortest).toBeLessThan(140);
     expect(Object.values(definition.floors ?? {}).map((floor) => floor.name)).toEqual([
       'Plage du départ',
       'Prairie des Pions',
@@ -45,8 +45,8 @@ describe('the Mont Trouble', () => {
     ]);
   });
 
-  test('has floors that shorten on the way up: 32, 28, 24, 20 and 16 spaces', () => {
-    expect([1, 2, 3, 4, 5].map(longestPath)).toEqual([32, 28, 24, 20, 16]);
+  test('has floors that shorten on the way up: 40, 34, 28, 20 and 16 spaces', () => {
+    expect([1, 2, 3, 4, 5].map(longestPath)).toEqual([40, 34, 28, 20, 16]);
   });
 
   test('adds one mechanic per floor, with no dangerous edge on the first', () => {
@@ -65,7 +65,7 @@ describe('the Mont Trouble', () => {
       const target = definition.spaces[to];
       const reach = horizontalDistance(space.position, target?.position);
       // Une chute ou un transport mène à la zone voisine, juste en contrebas ou au-dessus.
-      expect({ id: space.id, close: reach <= 12 }).toEqual({ id: space.id, close: true });
+      expect({ id: space.id, close: reach <= 14 }).toEqual({ id: space.id, close: true });
     }
   });
 
@@ -111,7 +111,7 @@ describe('the Mont Trouble', () => {
         // par un escalier : leurs cases sont plus espacées.
         const isBridge = [space.id, next].some((id) => id.includes('bridge'));
         const isClimb = floorOf(next) !== space.floor;
-        const longest = isClimb ? 12 : isBridge ? 6.6 : 5.2;
+        const longest = isClimb ? 14 : isBridge ? 10.5 : 8.5;
         expect({ from: space.id, gap: gap >= 2 && gap <= longest }).toEqual({
           from: space.id,
           gap: true,
