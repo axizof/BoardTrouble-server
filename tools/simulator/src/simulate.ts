@@ -17,6 +17,7 @@ import {
 /** Probabilité de bien jouer un mini-jeu, selon le niveau (performance moyenne simulée). */
 const MINIGAME_SKILL: Record<BotLevel, number> = { easy: 0.35, normal: 0.5, expert: 0.7 };
 const MINIGAME_NOISE = 0.35;
+const SKILL_GATE_SUCCESS: Record<BotLevel, number> = { easy: 0.4, normal: 0.6, expert: 0.8 };
 const MAX_INTENTS = 20_000;
 
 export type GameRecord = {
@@ -59,6 +60,12 @@ export function simulateGame(board: Board, levels: BotLevel[], seed: number): Ga
         rng,
       );
       if (intent?.type === 'roll') turns++;
+    } else if (phase.type === 'turn' && phase.step.type === 'awaitSkillGate') {
+      // Défi solo de 10 s : réussi selon le niveau (01-mini-jeux, défis solo).
+      const level = levelOf.get(phase.playerId) ?? 'normal';
+      intent = { type: 'submitSkillGateResult', success: rng.chance(SKILL_GATE_SUCCESS[level]) };
+    } else if (phase.type === 'turn' && phase.step.type === 'awaitWheel') {
+      intent = { type: 'submitWheelResult', segment: rng.int(0, phase.step.segments.length - 1) };
     } else if (phase.type === 'turn' && phase.step.type === 'awaitDuelResult') {
       const [winner] =
         simulateMinigame([phase.playerId, phase.step.opponent], levelOf, rng)[0] ?? [];

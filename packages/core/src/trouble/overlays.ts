@@ -1,4 +1,4 @@
-import { type Board, getSpace, type SpaceId, type SpaceKind } from '../board/board';
+import { type Board, getSpace, isGateKind, type SpaceId, type SpaceKind } from '../board/board';
 import type { GameState } from '../game/types';
 
 /** Recul d'une case spéciale pendant l'Éruption. */
@@ -6,7 +6,7 @@ export const ERUPTION_RECOIL = 3;
 
 /** Cases "spéciales" : tout ce qui n'est ni vide, ni départ, ni porte. */
 export function isSpecial(kind: SpaceKind): boolean {
-  return !['start', 'empty', 'gate', 'finalGate'].includes(kind.type);
+  return !isGateKind(kind) && kind.type !== 'start' && kind.type !== 'empty';
 }
 
 /**

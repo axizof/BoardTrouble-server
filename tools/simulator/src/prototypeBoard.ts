@@ -3,7 +3,24 @@ import { type BoardDefinition, Rng, type Space, type SpaceKind } from '@board-tr
 // Plateau prototype pour mesurer l'équilibrage en attendant le vrai level design du
 // Mont Trouble : 5 anneaux qui raccourcissent en montant (01-vision-et-plateau.md, section 7).
 const RINGS = [32, 28, 24, 20, 16];
-const GATE_THRESHOLDS = [3, 4, 4, 5];
+/** Une sorte de porte par passage d'étage. */
+const GATES: SpaceKind[] = [
+  { type: 'twinGate' },
+  { type: 'skillGate' },
+  { type: 'tollGate', threshold: 4 },
+  { type: 'boulderGate', threshold: 5 },
+];
+const WHEEL: SpaceKind = {
+  type: 'wheel',
+  segments: [
+    { type: 'advance', amount: 4 },
+    { type: 'advance', amount: 2 },
+    { type: 'item' },
+    { type: 'recoil', amount: 3 },
+    { type: 'trouble' },
+    { type: 'nothing' },
+  ],
+};
 const FINAL_THRESHOLD = 6;
 const SHORT_LANE = 3;
 const LONG_LANE = 5;
@@ -53,16 +70,60 @@ export function buildSpiralPrototype(seed = 2026): BoardDefinition {
       previous = merge;
     }
 
-    const threshold = GATE_THRESHOLDS[ringIndex];
+    const gateKind = GATES[ringIndex];
     const gate =
-      threshold === undefined
+      gateKind === undefined
         ? add('summit', { type: 'finalGate', threshold: FINAL_THRESHOLD }, floor)
-        : add(`f${floor}-gate`, { type: 'gate', threshold }, floor);
+        : add(`f${floor}-gate`, gateKind, floor);
     link(previous, gate);
     previous = gate;
   });
 
+  addLinkedSpaces(spaces, rng);
   return { id: 'spiral-prototype', name: 'Spirale prototype', start: 'start', spaces };
+}
+
+/**
+ * Cases reliées à une autre, placées sur des cases vides du tronc : un ascenseur vers
+ * l'étage du dessus, un toboggan vers celui du dessous, une paire de téléporteurs, une
+ * bascule et un monte-charge à certains étages.
+ */
+function addLinkedSpaces(spaces: Record<string, Space>, rng: Rng): void {
+  const emptyTrunk = (floor: number) =>
+    Object.values(spaces)
+      .filter(
+        (space) =>
+          space.floor === floor && /^f\d+-\d+$/.test(space.id) && space.kind.type === 'empty',
+      )
+      .map((space) => space.id);
+  const take = (ids: string[]) => {
+    const id = rng.pick(ids);
+    ids.splice(ids.indexOf(id), 1);
+    return id;
+  };
+  const setKind = (id: string, kind: SpaceKind) => {
+    const space = spaces[id];
+    if (space) space.kind = kind;
+  };
+
+  RINGS.forEach((_, ringIndex) => {
+    const floor = ringIndex + 1;
+    const here = emptyTrunk(floor);
+    if (here.length < 6) return;
+    const above = emptyTrunk(floor + 1);
+    const below = emptyTrunk(floor - 1);
+    if (above.length > 0) setKind(take(here), { type: 'elevator', to: rng.pick(above) });
+    if (below.length > 0) setKind(take(here), { type: 'slide', to: rng.pick(below) });
+    const [a, b] = [take(here), take(here)];
+    setKind(a, { type: 'teleporter', to: b });
+    setKind(b, { type: 'teleporter', to: a });
+    if (floor % 2 === 0) {
+      const [left, right] = [take(here), take(here)];
+      setKind(left, { type: 'seesaw', partner: right });
+      setKind(right, { type: 'seesaw', partner: left });
+      if (above.length > 0) setKind(take(here), { type: 'freightLift', to: rng.pick(above) });
+    }
+  });
 }
 
 /** Chaque case d'interaction avec la même fréquence `rate`. */
@@ -93,6 +154,11 @@ function randomKind(rng: Rng, flavour: 'trunk' | 'short' | 'long'): SpaceKind {
       rest: 0.03,
       trouble: 0.04,
       filous: 0.015,
+      springboard: 0.015,
+      statue: 0.005,
+      giantDie: 0.015,
+      wheel: 0.01,
+      bet: 0.01,
       ...interactions(0.012),
     },
     short: {
@@ -106,7 +172,8 @@ function randomKind(rng: Rng, flavour: 'trunk' | 'short' | 'long'): SpaceKind {
       ...interactions(0.03),
     },
     long: {
-      bonus: 0.33,
+      bonus: 0.3,
+      springboard: 0.03,
       malus: 0.08,
       item: 0.08,
       chest: 0,
@@ -122,6 +189,9 @@ function randomKind(rng: Rng, flavour: 'trunk' | 'short' | 'long'): SpaceKind {
     if (type === 'bonus' || type === 'malus') {
       return { type, amount: rng.chance(0.75) ? 3 : 5 };
     }
+    if (type === 'springboard') return { type, amount: rng.int(8, 12) };
+    if (type === 'statue') return { type, amount: rng.int(10, 14) };
+    if (type === 'wheel') return WHEEL;
     return { type } as SpaceKind;
   }
   return { type: 'empty' };

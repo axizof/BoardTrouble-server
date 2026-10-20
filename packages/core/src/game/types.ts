@@ -1,4 +1,4 @@
-import type { SpaceId, SpaceKind } from '../board/board';
+import type { SpaceId, SpaceKind, WheelSegment } from '../board/board';
 import type { BonusDie, DiceRoll, TableSize, TieBreak } from '../dice/dice';
 import type { ItemId } from '../items/catalog';
 import type { TroubleEventId } from '../trouble/events';
@@ -62,7 +62,23 @@ export type TurnStep =
   /** Au Cachot : avancer sur le chemin intérieur ou tenter la roue. */
   | { type: 'awaitJailChoice' }
   /** Sortie du Cachot : choisir l'une des trois trappes. */
-  | { type: 'awaitTrapdoor' };
+  | { type: 'awaitTrapdoor' }
+  /** Deux portes : choisir un passage. `remaining` : cases restantes après la porte. */
+  | { type: 'awaitDoor'; remaining: number }
+  /**
+   * Péage : payer un objet ou tenter le seuil. `roll` : total déjà lancé ce tour (tentative en
+   * début de tour), ou null (arrivée pendant un déplacement : on relancera).
+   */
+  | { type: 'awaitToll'; remaining: number; roll: number | null }
+  /** Porte d'adresse : en attente du résultat du mini-défi (fourni par le serveur). */
+  | { type: 'awaitSkillGate'; remaining: number }
+  /**
+   * Roue : en attente de l'issue (le serveur la déduit du timing du joueur). Les issues sont
+   * notées au déclenchement : sous le Brouillard, la case n'est pas celle du plateau.
+   */
+  | { type: 'awaitWheel'; segments: WheelSegment[]; resume: Resume }
+  /** Pari : choisir sur qui parier et combien. */
+  | { type: 'awaitBet'; resume: Resume };
 
 /** Après une pause : finir le tour, ou revenir au lancer (pause pendant un objet). */
 export type Resume = 'endTurn' | 'roll';
@@ -128,6 +144,8 @@ export type GameState = {
   overlays: Overlays;
   /** Joueurs qui ont ouvert la porte finale pendant la manche en cours. */
   finalGateOpenedBy: PlayerId[];
+  /** Paris en cours sur le vainqueur du prochain mini-jeu. */
+  bets: { playerId: PlayerId; on: PlayerId; stake: number }[];
   phase: Phase;
   /** État du générateur de hasard. Ne doit jamais être envoyé aux clients. */
   rngState: number;
@@ -155,6 +173,13 @@ export type Intent =
   | { type: 'submitOneVsAllResult'; soloWon: boolean }
   | { type: 'chooseJailAction'; action: 'advance' | 'wheel' }
   | { type: 'chooseTrapdoor'; trapdoor: 0 | 1 | 2 }
+  | { type: 'chooseDoor'; door: 0 | 1 }
+  /** Péage : l'objet à payer, ou null pour tenter le seuil aux dés. */
+  | { type: 'payToll'; item: ItemId | null }
+  | { type: 'submitSkillGateResult'; success: boolean }
+  /** Issue de la roue : l'index du segment où elle s'est arrêtée. */
+  | { type: 'submitWheelResult'; segment: number }
+  | { type: 'placeBet'; on: PlayerId; stake: number }
   | { type: 'useItem'; item: ItemId; target?: PlayerId }
   | { type: 'roll' }
   | { type: 'keepRoll' }
@@ -183,6 +208,12 @@ export type ItemSource =
   | 'steal'
   | 'trouble'
   | 'roundEvent';
+
+/**
+ * Faces du dé géant. La face "dé spécial" remplacera "rien" quand les dés spéciaux
+ * existeront.
+ */
+export type GiantDieFace = 'bird' | 'monster' | 'item' | 'squall' | 'trouble' | 'nothing';
 
 /** Petits événements de fin de manche, sur un joueur au hasard. */
 export type RoundEventId = 'bird' | 'hole' | 'foundItem';
@@ -250,6 +281,22 @@ export type GameEvent =
   | { type: 'jailWheel'; playerId: PlayerId; chance: number; success: boolean }
   | { type: 'trapdoorOpened'; playerId: PlayerId; trapdoor: 0 | 1 | 2; offset: number }
   | { type: 'released'; playerId: PlayerId; spaceId: SpaceId }
+  | { type: 'doorOpened'; playerId: PlayerId; door: 0 | 1; trapped: boolean }
+  | { type: 'tollPaid'; playerId: PlayerId; item: ItemId }
+  | { type: 'skillGateResult'; playerId: PlayerId; success: boolean }
+  | { type: 'boulderRolled'; playerId: PlayerId; spaceId: SpaceId; pushed: PlayerId[]; to: SpaceId }
+  | {
+      type: 'teleported';
+      playerId: PlayerId;
+      from: SpaceId;
+      to: SpaceId;
+      via: 'elevator' | 'freightLift' | 'slide' | 'teleporter';
+    }
+  | { type: 'seesawLaunched'; playerId: PlayerId; launched: PlayerId[] }
+  | { type: 'giantDieRolled'; playerId: PlayerId; face: GiantDieFace }
+  | { type: 'wheelStopped'; playerId: PlayerId; segment: number }
+  | { type: 'betPlaced'; playerId: PlayerId; on: PlayerId; stake: number }
+  | { type: 'betResolved'; playerId: PlayerId; on: PlayerId; stake: number; won: boolean }
   | { type: 'chestOpened'; playerId: PlayerId; chest: 0 | 1; trapped: boolean }
   | { type: 'rerolled'; playerId: PlayerId; previous: DiceRoll; roll: DiceRoll }
   | { type: 'troubleGauge'; value: number; added: number; reason: 'round' | 'double' | 'gap' }

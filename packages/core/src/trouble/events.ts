@@ -1,4 +1,4 @@
-import { type Board, distanceToGoal, getSpace, type SpaceId } from '../board/board';
+import { type Board, distanceToGoal, getSpace, linkedSpace, type SpaceId } from '../board/board';
 import { type Context, type Flow, getPlayer, removeItem } from '../game/context';
 import { advanceByEffect, gainItem, recoil, stepForward, swapPlaces } from '../game/effects';
 import { progressRanking } from '../game/progress';
@@ -133,8 +133,10 @@ export function applyTrouble(
       state.overlays.eruptionUntil = until;
       return 'continue';
     case 'fog': {
-      const specials = Object.values(board.definition.spaces).filter((space) =>
-        isSpecial(space.kind),
+      // Les cases reliées à une autre (ascenseurs, téléporteurs, bascules) ne sont pas
+      // mélangées : déplacées, elles mèneraient n'importe où.
+      const specials = Object.values(board.definition.spaces).filter(
+        (space) => isSpecial(space.kind) && linkedSpace(space.kind) === null,
       );
       const kinds = rng.shuffle(specials.map((space) => space.kind));
       state.overlays.fog = {

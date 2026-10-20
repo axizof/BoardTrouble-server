@@ -93,8 +93,21 @@ export function chooseBoardIntent(
       };
     case 'awaitTrapdoor':
       return { type: 'chooseTrapdoor', trapdoor: rng.pick([0, 1, 2] as const) };
+    case 'awaitDoor':
+      return { type: 'chooseDoor', door: rng.pick([0, 1] as const) };
+    case 'awaitToll':
+      // Payer avec son objet le moins utile plutôt que risquer de rester bloqué.
+      return {
+        type: 'payToll',
+        item: me.inventory.length > 0 ? leastValuable(me.inventory) : null,
+      };
+    case 'awaitBet':
+      // Le bot parie sur lui-même : il connaît mal les autres.
+      return { type: 'placeBet', on: me.id, stake: level === 'expert' ? 3 : 2 };
     case 'awaitDuelResult':
     case 'awaitOneVsAllResult':
+    case 'awaitSkillGate':
+    case 'awaitWheel':
       // Le résultat vient du mini-jeu, pas d'une décision du bot.
       return null;
   }
