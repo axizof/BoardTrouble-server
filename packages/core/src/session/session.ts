@@ -11,13 +11,17 @@ import type {
   PlayerId,
 } from '../game/types';
 import { type Viewer, viewEvents, viewState } from '../game/views';
+import type { CharacterId } from '../lobby/players';
 import { Rng } from '../random/rng';
 import { animationTime } from './pacing';
 import { placeholderSystemIntent } from './placeholder';
-import { type HostMessage, PROTOCOL_VERSION, type SeatKind } from './protocol';
+import { type HostMessage, PROTOCOL_VERSION, type SeatView } from './protocol';
 
 /** Qui contrôle une place : un humain, ou un bot de ce niveau. */
 export type SeatControl = 'human' | BotLevel;
+
+/** Une place de la partie : qui la contrôle, et son personnage. */
+export type Seat = { control: SeatControl; character: CharacterId };
 
 export type SessionOptions = {
   /** Temps pour décider, en millisecondes (20 s par défaut, réglable dans le salon). */
@@ -44,7 +48,7 @@ export type SubmitResult = { ok: true; events: GameEvent[] } | { ok: false; erro
  */
 export class GameSession {
   readonly board: Board;
-  readonly seats: Readonly<Record<PlayerId, SeatControl>>;
+  readonly seats: Readonly<Record<PlayerId, Seat>>;
   readonly #options: SessionOptions;
   readonly #botRng: Rng;
   #state: GameState;
@@ -54,7 +58,7 @@ export class GameSession {
   private constructor(
     board: Board,
     state: GameState,
-    seats: Record<PlayerId, SeatControl>,
+    seats: Record<PlayerId, Seat>,
     options: SessionOptions,
     seed: number,
     readyAt: number,
@@ -71,7 +75,7 @@ export class GameSession {
   static create(
     board: Board,
     config: GameConfig,
-    seats: Record<PlayerId, SeatControl>,
+    seats: Record<PlayerId, Seat>,
     options: SessionOptions,
     now: number,
   ): { session: GameSession; events: GameEvent[] } {
@@ -103,7 +107,7 @@ export class GameSession {
     const actor = whoMustAct(this.#state);
     if (actor === null) return null;
     if (actor.type === 'system') return this.#readyAt + PLACEHOLDER_MINIGAME_TIME;
-    return this.seats[actor.playerId] === 'human'
+    return this.seats[actor.playerId]?.control === 'human'
       ? this.#readyAt + this.#options.decisionTime
       : this.#readyAt + BOT_THINK_TIME;
   }
@@ -142,9 +146,9 @@ export class GameSession {
       board: this.board.definition,
       you: viewer.type === 'player' ? viewer.playerId : null,
       seats: Object.fromEntries(
-        Object.entries(this.seats).map(([id, control]): [PlayerId, SeatKind] => [
+        Object.entries(this.seats).map(([id, { control, character }]): [PlayerId, SeatView] => [
           id,
-          control === 'human' ? 'human' : 'bot',
+          { kind: control === 'human' ? 'human' : 'bot', character },
         ]),
       ),
       state: viewState(this.#state, viewer),
@@ -164,12 +168,12 @@ export class GameSession {
 
   #decisionEndsIn(now: number): number | null {
     const actor = whoMustAct(this.#state);
-    if (actor?.type !== 'player' || this.seats[actor.playerId] !== 'human') return null;
+    if (actor?.type !== 'player' || this.seats[actor.playerId]?.control !== 'human') return null;
     return this.#readyAt + this.#options.decisionTime - now;
   }
 
   #levelOf(playerId: PlayerId): BotLevel {
-    const control = this.seats[playerId];
+    const control = this.seats[playerId]?.control;
     return control === undefined || control === 'human' ? STAND_IN_LEVEL : control;
   }
 }
