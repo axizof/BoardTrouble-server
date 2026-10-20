@@ -21,6 +21,11 @@ export type PlayerState = {
   mirrorArmed: boolean;
   /** Dernier joueur qui l'a fait reculer, et de combien de cases (pour la Vendetta). */
   lastAttack: { by: PlayerId; spaces: number } | null;
+  /**
+   * Au Cachot des Filous : tours passés, avancée sur le chemin intérieur, et case de
+   * l'enlèvement (`position` y reste, le pion n'est plus sur le plateau). null : libre.
+   */
+  jail: { turns: number; progress: number } | null;
 };
 
 /** Interactions qui demandent de choisir un adversaire. */
@@ -53,7 +58,11 @@ export type TurnStep =
   /** Duel ou Vendetta en cours : en attente du résultat du mini-jeu. */
   | { type: 'awaitDuelResult'; opponent: PlayerId; kind: 'duel' | 'vendetta'; resume: Resume }
   /** 1 contre tous en cours : en attente du résultat du mini-jeu. */
-  | { type: 'awaitOneVsAllResult'; resume: Resume };
+  | { type: 'awaitOneVsAllResult'; resume: Resume }
+  /** Au Cachot : avancer sur le chemin intérieur ou tenter la roue. */
+  | { type: 'awaitJailChoice' }
+  /** Sortie du Cachot : choisir l'une des trois trappes. */
+  | { type: 'awaitTrapdoor' };
 
 /** Après une pause : finir le tour, ou revenir au lancer (pause pendant un objet). */
 export type Resume = 'endTurn' | 'roll';
@@ -144,6 +153,8 @@ export type Intent =
   /** Résultat d'un duel : le gagnant, ou null en cas d'égalité. */
   | { type: 'submitDuelResult'; winner: PlayerId | null }
   | { type: 'submitOneVsAllResult'; soloWon: boolean }
+  | { type: 'chooseJailAction'; action: 'advance' | 'wheel' }
+  | { type: 'chooseTrapdoor'; trapdoor: 0 | 1 | 2 }
   | { type: 'useItem'; item: ItemId; target?: PlayerId }
   | { type: 'roll' }
   | { type: 'keepRoll' }
@@ -233,6 +244,12 @@ export type GameEvent =
   | { type: 'duelEnded'; winner: PlayerId | null }
   | { type: 'oneVsAllStarted'; solo: PlayerId }
   | { type: 'oneVsAllEnded'; solo: PlayerId; soloWon: boolean }
+  | { type: 'kidnapped'; playerId: PlayerId; spaceId: SpaceId }
+  | { type: 'jailTurn'; playerId: PlayerId; turn: number; automaticExit: boolean }
+  | { type: 'jailAdvanced'; playerId: PlayerId; progress: number; length: number }
+  | { type: 'jailWheel'; playerId: PlayerId; chance: number; success: boolean }
+  | { type: 'trapdoorOpened'; playerId: PlayerId; trapdoor: 0 | 1 | 2; offset: number }
+  | { type: 'released'; playerId: PlayerId; spaceId: SpaceId }
   | { type: 'chestOpened'; playerId: PlayerId; chest: 0 | 1; trapped: boolean }
   | { type: 'rerolled'; playerId: PlayerId; previous: DiceRoll; roll: DiceRoll }
   | { type: 'troubleGauge'; value: number; added: number; reason: 'round' | 'double' | 'gap' }

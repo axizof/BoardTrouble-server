@@ -5,8 +5,8 @@ import type { Rng } from '../random/rng';
 
 export type Rarity = 'common' | 'uncommon' | 'rare' | 'veryRare' | 'legendary';
 
-// La Boîte mystère, le Parachute, le Porte-bonheur, le Joker et le Sceau du Plateau
-// arrivent avec leur système (TROUBLE, chutes, Cachot, choix du mini-jeu).
+// La Boîte mystère, le Parachute, le Joker et le Sceau du Plateau arrivent avec leur
+// système (petit TROUBLE sur soi, chutes, choix du mini-jeu).
 export type ItemId =
   | 'turboDie'
   | 'rocket'
@@ -19,6 +19,7 @@ export type ItemId =
   | 'pickpocket'
   | 'mirror'
   | 'grapple'
+  | 'luckyCharm'
   | 'key';
 
 export type ItemDefinition = {
@@ -39,6 +40,8 @@ export const ITEMS: Record<ItemId, ItemDefinition> = {
   pickpocket: { rarity: 'uncommon', use: 'target' },
   mirror: { rarity: 'rare', use: 'self' },
   grapple: { rarity: 'rare', use: 'target' },
+  /** Porte-bonheur : la roue du Cachot passe à 60 %. Il se déclenche seul. */
+  luckyCharm: { rarity: 'rare', use: 'passive' },
   key: { rarity: 'veryRare', use: 'passive' },
 };
 
@@ -57,6 +60,7 @@ export const ITEM_VALUE: Record<ItemId, number> = {
   hourglass: 4,
   mirror: 5,
   grapple: 6,
+  luckyCharm: 4,
   key: 6,
 };
 export const INVENTORY_SIZE = 3;

@@ -28,6 +28,8 @@ export type SpaceKind =
   | { type: 'oneVsAll' }
   /** Duel automatique contre le dernier joueur qui nous a fait reculer. */
   | { type: 'vendetta' }
+  /** Les Filous enlèvent le joueur et l'enferment dans leur Cachot. */
+  | { type: 'filous' }
   /** Porte à seuil : faire `threshold` ou plus aux dés, le seuil baisse à chaque échec. */
   | { type: 'gate'; threshold: number }
   /** Porte finale au sommet : le seuil ne baisse pas. */

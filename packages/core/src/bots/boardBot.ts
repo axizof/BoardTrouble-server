@@ -85,6 +85,14 @@ export function chooseBoardIntent(
         type: 'chooseTarget',
         playerId: chooseInteractionTarget(board, state, step.interaction, step.options),
       };
+    case 'awaitJailChoice':
+      // Avancer sort en deux tours environ ; la roue ne vaut le coup qu'avec un Porte-bonheur.
+      return {
+        type: 'chooseJailAction',
+        action: me.inventory.includes('luckyCharm') ? 'wheel' : 'advance',
+      };
+    case 'awaitTrapdoor':
+      return { type: 'chooseTrapdoor', trapdoor: rng.pick([0, 1, 2] as const) };
     case 'awaitDuelResult':
     case 'awaitOneVsAllResult':
       // Le résultat vient du mini-jeu, pas d'une décision du bot.

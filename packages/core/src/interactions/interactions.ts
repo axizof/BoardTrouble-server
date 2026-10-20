@@ -22,10 +22,16 @@ export function isInteraction(type: string): type is InteractionKind {
   return ['squall', 'swap', 'magnet', 'steal', 'duel', 'oneVsAll', 'vendetta'].includes(type);
 }
 
-/** Adversaires possibles : tous les autres, sauf ceux qui ont ouvert la porte finale. */
+/**
+ * Adversaires possibles : tous les autres, sauf les intouchables (porte finale ouverte,
+ * Cachot des Filous).
+ */
 function opponents(state: GameState, playerId: PlayerId): PlayerState[] {
   return state.players.filter(
-    (player) => player.id !== playerId && !state.finalGateOpenedBy.includes(player.id),
+    (player) =>
+      player.id !== playerId &&
+      player.jail === null &&
+      !state.finalGateOpenedBy.includes(player.id),
   );
 }
 

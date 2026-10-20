@@ -25,9 +25,11 @@ export function validTargets(
 ): PlayerId[] {
   const user = getPlayer(state, userId);
   const userDistance = distanceToGoal(board, user.position);
-  // Un joueur qui a ouvert la porte finale est intouchable jusqu'à la fin de la manche.
+  // Intouchables : un joueur qui a ouvert la porte finale (jusqu'à la fin de la manche) et
+  // un joueur au Cachot des Filous.
   const others = state.players.filter(
-    (player) => player.id !== userId && !state.finalGateOpenedBy.includes(player.id),
+    (player) =>
+      player.id !== userId && player.jail === null && !state.finalGateOpenedBy.includes(player.id),
   );
   const distanceOf = (player: PlayerState) => distanceToGoal(board, player.position);
 

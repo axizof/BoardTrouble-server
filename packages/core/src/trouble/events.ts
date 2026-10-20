@@ -93,11 +93,13 @@ export function drawSpaceEvent(board: Board, state: GameState, rng: Rng): Troubl
 }
 
 /**
- * Le dernier et le premier selon le TROUBLE : classement du plateau, sans les joueurs qui
- * ont ouvert la porte finale (intouchables).
+ * Le dernier et le premier selon le TROUBLE : classement du plateau, sans les intouchables
+ * (porte finale ouverte, Cachot des Filous).
  */
 export function troubleRanking(board: Board, state: GameState): PlayerId[] {
-  return progressRanking(board, state).filter((id) => !state.finalGateOpenedBy.includes(id));
+  return progressRanking(board, state).filter(
+    (id) => !state.finalGateOpenedBy.includes(id) && getPlayer(state, id).jail === null,
+  );
 }
 
 /**
@@ -159,7 +161,8 @@ export function applyTrouble(
       return 'continue';
     }
     case 'itemRain':
-      for (const id of [...ranking].reverse()) {
+      // Événement sans position : les joueurs au Cachot reçoivent aussi leur objet.
+      for (const id of [...ranking].reverse().concat(jailedPlayers(state))) {
         const player = getPlayer(state, id);
         gainItem(ctx, player, drawItem(rng, catchUpFactor(board, state, id)), 'trouble');
       }
@@ -184,7 +187,7 @@ export function applyTrouble(
       if (!subject) return 'continue';
       const origin = distanceToGoal(board, subject.position);
       for (const other of state.players) {
-        if (other === subject || state.finalGateOpenedBy.includes(other.id)) continue;
+        if (other === subject || other.jail || state.finalGateOpenedBy.includes(other.id)) continue;
         if (Math.abs(distanceToGoal(board, other.position) - origin) <= GUST_RANGE) {
           recoil(ctx, other, GUST_PUSH);
         }
@@ -192,6 +195,10 @@ export function applyTrouble(
       return 'continue';
     }
   }
+}
+
+function jailedPlayers(state: GameState): PlayerId[] {
+  return state.players.filter((player) => player.jail !== null).map((player) => player.id);
 }
 
 /** Vainqueur du Mini-jeu bonus : il avance. */
