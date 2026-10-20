@@ -1,5 +1,12 @@
 import type { SpaceId, SpaceKind, WheelSegment } from '../board/board';
-import type { BonusDie, DiceRoll, TableSize, TieBreak } from '../dice/dice';
+import type {
+  BonusDie,
+  DiceRoll,
+  SpecialDieKind,
+  SpecialDieUse,
+  TableSize,
+  TieBreak,
+} from '../dice/dice';
 import type { ItemId } from '../items/catalog';
 import type { TroubleEventId } from '../trouble/events';
 
@@ -26,6 +33,8 @@ export type PlayerState = {
    * l'enlèvement (`position` y reste, le pion n'est plus sur le plateau). null : libre.
    */
   jail: { turns: number; progress: number } | null;
+  /** Bourse à dés : 3 dés spéciaux au plus, séparés des objets. */
+  specialDice: SpecialDieKind[];
 };
 
 /** Interactions qui demandent de choisir un adversaire. */
@@ -78,7 +87,9 @@ export type TurnStep =
    */
   | { type: 'awaitWheel'; segments: WheelSegment[]; resume: Resume }
   /** Pari : choisir sur qui parier et combien. */
-  | { type: 'awaitBet'; resume: Resume };
+  | { type: 'awaitBet'; resume: Resume }
+  /** Bourse à dés pleine : jeter un dé pour prendre le nouveau, ou le refuser. */
+  | { type: 'awaitSpecialDieSwap'; offered: SpecialDieKind; resume: Resume };
 
 /** Après une pause : finir le tour, ou revenir au lancer (pause pendant un objet). */
 export type Resume = 'endTurn' | 'roll';
@@ -106,6 +117,8 @@ export type TurnModifiers = {
   shortNormalDie: boolean;
   /** Joueurs qui ont déjà eu leur pile ou face pendant ce tour. */
   coinFlipped: PlayerId[];
+  /** Dé spécial joué ce tour (la Relance relance avec le même dé). */
+  special: SpecialDieUse | null;
 };
 
 export type Trap = { type: 'glue' | 'firecracker'; owner: PlayerId };
@@ -180,8 +193,14 @@ export type Intent =
   /** Issue de la roue : l'index du segment où elle s'est arrêtée. */
   | { type: 'submitWheelResult'; segment: number }
   | { type: 'placeBet'; on: PlayerId; stake: number }
+  /** `discard` : le dé à jeter, ou le dé proposé pour le refuser. */
+  | { type: 'resolveSpecialDieSwap'; discard: SpecialDieKind }
   | { type: 'useItem'; item: ItemId; target?: PlayerId }
-  | { type: 'roll' }
+  /**
+   * Lancer. `specialDie` : jouer un dé de sa bourse à la place du dé normal ; `call` : le
+   * chiffre annoncé pour le Dé Piégé.
+   */
+  | { type: 'roll'; specialDie?: SpecialDieKind; call?: number }
   | { type: 'keepRoll' }
   | { type: 'reroll' }
   | { type: 'chooseBranch'; spaceId: SpaceId }
@@ -209,14 +228,11 @@ export type ItemSource =
   | 'trouble'
   | 'roundEvent';
 
-/**
- * Faces du dé géant. La face "dé spécial" remplacera "rien" quand les dés spéciaux
- * existeront.
- */
-export type GiantDieFace = 'bird' | 'monster' | 'item' | 'squall' | 'trouble' | 'nothing';
+/** Faces du dé géant. */
+export type GiantDieFace = 'bird' | 'monster' | 'item' | 'squall' | 'trouble' | 'specialDie';
 
 /** Petits événements de fin de manche, sur un joueur au hasard. */
-export type RoundEventId = 'bird' | 'hole' | 'foundItem';
+export type RoundEventId = 'bird' | 'hole' | 'foundItem' | 'foundSpecialDie';
 
 /** Ce qui s'est passé, dans l'ordre : c'est ce que le client anime. */
 export type GameEvent =
@@ -297,6 +313,10 @@ export type GameEvent =
   | { type: 'wheelStopped'; playerId: PlayerId; segment: number }
   | { type: 'betPlaced'; playerId: PlayerId; on: PlayerId; stake: number }
   | { type: 'betResolved'; playerId: PlayerId; on: PlayerId; stake: number; won: boolean }
+  | { type: 'specialDieGained'; playerId: PlayerId; die: SpecialDieKind }
+  | { type: 'specialDieRefused'; playerId: PlayerId; die: SpecialDieKind }
+  | { type: 'specialDieDiscarded'; playerId: PlayerId; die: SpecialDieKind }
+  | { type: 'specialDieTrapped'; playerId: PlayerId }
   | { type: 'chestOpened'; playerId: PlayerId; chest: 0 | 1; trapped: boolean }
   | { type: 'rerolled'; playerId: PlayerId; previous: DiceRoll; roll: DiceRoll }
   | { type: 'troubleGauge'; value: number; added: number; reason: 'round' | 'double' | 'gap' }

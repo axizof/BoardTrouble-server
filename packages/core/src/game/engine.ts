@@ -1,5 +1,12 @@
 import { type Board, distanceToGoal } from '../board/board';
-import { bonusDieForRank, breakTies, type DiceRoll, rollDice } from '../dice/dice';
+import {
+  bonusDieForRank,
+  breakTies,
+  type DiceRoll,
+  rollDice,
+  SPECIAL_DICE,
+  type SpecialDieKind,
+} from '../dice/dice';
 import { resolveDuel, resolveOneVsAll, resolveTarget } from '../interactions/interactions';
 import { drawItem, type ItemId } from '../items/catalog';
 import { itemUseError, useItem } from '../items/useItem';
@@ -7,6 +14,7 @@ import { advanceInJail, openTrapdoor, spinWheel, startJailTurn } from '../jail/j
 import { Rng } from '../random/rng';
 import {
   applyTrouble,
+  drawSpaceEvent,
   drawTroubleOptions,
   rewardBonusMinigame,
   type TroubleEventId,
@@ -21,7 +29,7 @@ import {
   ROUND_GAIN,
 } from '../trouble/gauge';
 import { type Context, type Flow, getPlayer, removeItem } from './context';
-import { advanceByEffect, gainItem, openChest, recoil } from './effects';
+import { advanceByEffect, gainItem, gainSpecialDie, openChest, recoil } from './effects';
 import { attemptGate, chooseDoor, payToll, resolveSkillGate } from './gates';
 import { moveWithDice } from './movement';
 import { applyWheelSegment, MAX_BET, placeBet, settleBets } from './spaces';
@@ -80,6 +88,7 @@ export function createGame(
       mirrorArmed: false,
       lastAttack: null,
       jail: null,
+      specialDice: [],
     })),
     round: 1,
     turnOrder: order,
@@ -169,7 +178,7 @@ export function applyIntent(
       afterAction(ctx, useItem(ctx, activePlayer(ctx), intent.item, intent.target), 'roll');
       break;
     case 'roll':
-      roll(ctx);
+      roll(ctx, intent);
       break;
     case 'keepRoll':
     case 'reroll':
@@ -216,6 +225,13 @@ export function applyIntent(
       break;
     case 'placeBet':
       resolvePause(ctx, (player) => placeBet(ctx, player, intent.on, intent.stake));
+      break;
+    case 'resolveSpecialDieSwap':
+      resolvePause(ctx, (player, step) =>
+        step.type === 'awaitSpecialDieSwap'
+          ? swapSpecialDie(ctx, player, step.offered, intent.discard)
+          : 'continue',
+      );
       break;
     case 'chooseTrapdoor':
       openTrapdoor(ctx, activePlayer(ctx), intent.trapdoor);
@@ -302,8 +318,21 @@ function checkIntent(
     case 'useItem':
       if (step.type !== 'awaitRoll') return 'wrongPhase';
       return itemUseError(board, state, actor.playerId, intent.item, intent.target);
-    case 'roll':
-      return step.type === 'awaitRoll' ? null : 'wrongPhase';
+    case 'roll': {
+      if (step.type !== 'awaitRoll') return 'wrongPhase';
+      const { specialDie, call } = intent;
+      if (specialDie === undefined) return call === undefined ? null : 'invalidChoice';
+      if (!getPlayer(state, actor.playerId).specialDice.includes(specialDie)) return 'itemNotOwned';
+      const validCall = call !== undefined && Number.isInteger(call) && call >= 1 && call <= 6;
+      return (specialDie === 'trapped') === validCall ? null : 'invalidChoice';
+    }
+    case 'resolveSpecialDieSwap': {
+      if (step.type !== 'awaitSpecialDieSwap') return 'wrongPhase';
+      const pouch = getPlayer(state, actor.playerId).specialDice;
+      return intent.discard === step.offered || pouch.includes(intent.discard)
+        ? null
+        : 'invalidChoice';
+    }
     case 'keepRoll':
     case 'reroll':
       return step.type === 'awaitRerollChoice' ? null : 'wrongPhase';
@@ -409,11 +438,17 @@ function freshTurn(): TurnModifiers {
     rerollArmed: false,
     shortNormalDie: false,
     coinFlipped: [],
+    special: null,
   };
 }
 
-function roll(ctx: Context): void {
+function roll(ctx: Context, intent: Extract<Intent, { type: 'roll' }>): void {
   const player = activePlayer(ctx);
+  if (intent.specialDie !== undefined) {
+    // Le dé spécial est consommé ; la Relance relancera avec le même dé.
+    player.specialDice.splice(player.specialDice.indexOf(intent.specialDie), 1);
+    ctx.state.turn.special = { kind: intent.specialDie, call: intent.call ?? null };
+  }
   const dice = rollForTurn(ctx, player);
   ctx.events.push({
     type: 'diceRolled',
@@ -460,7 +495,26 @@ function rollForTurn(ctx: Context, player: PlayerState): DiceRoll {
   return rollDice(ctx.rng, ctx.state.bonusDice[player.id] ?? null, {
     normalFaces: turn.shortNormalDie ? 4 : 6,
     turbo: turn.extraDie,
+    special: turn.special,
   });
+}
+
+/** Bourse à dés pleine : jeter `discard` pour prendre le dé proposé, ou refuser ce dernier. */
+function swapSpecialDie(
+  ctx: Context,
+  player: PlayerState,
+  offered: SpecialDieKind,
+  discard: SpecialDieKind,
+): Flow {
+  if (discard === offered) {
+    ctx.events.push({ type: 'specialDieRefused', playerId: player.id, die: offered });
+    return 'continue';
+  }
+  player.specialDice.splice(player.specialDice.indexOf(discard), 1);
+  player.specialDice.push(offered);
+  ctx.events.push({ type: 'specialDieDiscarded', playerId: player.id, die: discard });
+  ctx.events.push({ type: 'specialDieGained', playerId: player.id, die: offered });
+  return 'continue';
 }
 
 function purposeOf(player: PlayerState): 'move' | 'gate' {
@@ -472,6 +526,13 @@ function purposeOf(player: PlayerState): 'move' | 'gate' {
  * passe, il avance du même total au-delà de la porte.
  */
 function playRoll(ctx: Context, player: PlayerState, dice: DiceRoll): void {
+  // Dé Piégé tombé sur une face piégée : on n'avance pas, et le Plateau joue un petit tour.
+  if (dice.trapped) {
+    ctx.events.push({ type: 'specialDieTrapped', playerId: player.id });
+    const event = drawSpaceEvent(ctx.board, ctx.state, ctx.rng);
+    afterAction(ctx, event ? applyTrouble(ctx, event, null, player) : 'continue', 'endTurn');
+    return;
+  }
   if (player.atGate) {
     const outcome = attemptGate(ctx, player, dice.total, dice.total);
     if (outcome === 'paused') return;
@@ -531,7 +592,8 @@ type PausedStep = Extract<
       | 'awaitDuelResult'
       | 'awaitOneVsAllResult'
       | 'awaitWheel'
-      | 'awaitBet';
+      | 'awaitBet'
+      | 'awaitSpecialDieSwap';
   }
 >;
 
@@ -561,6 +623,7 @@ function isPausedStep(step: TurnStep): step is PausedStep {
     'awaitOneVsAllResult',
     'awaitWheel',
     'awaitBet',
+    'awaitSpecialDieSwap',
   ].includes(step.type);
 }
 
@@ -654,11 +717,12 @@ function playRoundEvent(ctx: Context): void {
   const free = ctx.state.players.filter((candidate) => candidate.jail === null);
   if (free.length === 0) return;
   const player = ctx.rng.pick(free);
-  const event = ctx.rng.pick(['bird', 'hole', 'foundItem'] as const);
+  const event = ctx.rng.pick(['bird', 'hole', 'foundItem', 'foundSpecialDie'] as const);
   ctx.events.push({ type: 'roundEvent', event, playerId: player.id });
   if (event === 'bird') advanceByEffect(ctx, player, BIRD_STEPS);
   else if (event === 'hole') recoil(ctx, player, HOLE_STEPS);
-  else gainItem(ctx, player, drawItem(ctx.rng, 0), 'roundEvent');
+  else if (event === 'foundItem') gainItem(ctx, player, drawItem(ctx.rng, 0), 'roundEvent');
+  else gainSpecialDie(ctx, player, ctx.rng.pick(SPECIAL_DICE));
 }
 
 function gapBetweenFirstAndLast(ctx: Context): number {

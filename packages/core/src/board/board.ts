@@ -47,6 +47,8 @@ export type SpaceKind =
   | { type: 'seesaw'; partner: SpaceId }
   /** Un dé géant à faces illustrées décide. */
   | { type: 'giantDie' }
+  /** Donne un dé spécial au hasard (surtout au Marais aux Dés). */
+  | { type: 'specialDie' }
   /** Une roue que le joueur arrête lui-même (test de timing) ; issues propres à la case. */
   | { type: 'wheel'; segments: WheelSegment[] }
   /** Parier de 1 à 5 cases sur le vainqueur du prochain mini-jeu. */

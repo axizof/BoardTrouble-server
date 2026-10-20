@@ -1,4 +1,5 @@
 import { getSpace, isGateKind, type SpaceId, type SpaceKind } from '../board/board';
+import { SPECIAL_DICE, SPECIAL_DICE_POUCH_SIZE, type SpecialDieKind } from '../dice/dice';
 import { startInteraction } from '../interactions/interactions';
 import {
   catchUpFactor,
@@ -109,6 +110,8 @@ export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' 
       });
     case 'bet':
       return pauseFor(ctx, player, { type: 'awaitBet', resume: ctx.resume });
+    case 'specialDie':
+      return gainSpecialDie(ctx, player, ctx.rng.pick(SPECIAL_DICE));
     case 'item':
       return gainItem(
         ctx,
@@ -164,6 +167,7 @@ function hasEffect(
     case 'giantDie':
     case 'wheel':
     case 'bet':
+    case 'specialDie':
       return isActive;
     case 'item':
     case 'chest':
@@ -228,6 +232,23 @@ export function gainItem(
     return 'paused';
   }
   ctx.events.push({ type: 'itemRefused', playerId: player.id, item });
+  return 'continue';
+}
+
+/**
+ * Donne un dé spécial. Bourse pleine : le joueur dont c'est le tour choisit quoi jeter ; un
+ * joueur hors de son tour refuse automatiquement le dé.
+ */
+export function gainSpecialDie(ctx: Context, player: PlayerState, die: SpecialDieKind): Flow {
+  if (player.specialDice.length < SPECIAL_DICE_POUCH_SIZE) {
+    player.specialDice.push(die);
+    ctx.events.push({ type: 'specialDieGained', playerId: player.id, die });
+    return 'continue';
+  }
+  if (activePlayerId(ctx.state) === player.id) {
+    return pauseFor(ctx, player, { type: 'awaitSpecialDieSwap', offered: die, resume: ctx.resume });
+  }
+  ctx.events.push({ type: 'specialDieRefused', playerId: player.id, die });
   return 'continue';
 }
 
