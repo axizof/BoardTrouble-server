@@ -1,5 +1,4 @@
 import {
-  type Actor,
   applyIntent,
   type Board,
   type BotLevel,
@@ -12,6 +11,7 @@ import {
   progressRanking,
   Rng,
   type TableSize,
+  whoMustAct,
 } from '@board-trouble/core';
 
 /** Probabilité de bien jouer un mini-jeu, selon le niveau (performance moyenne simulée). */
@@ -47,29 +47,35 @@ export function simulateGame(board: Board, levels: BotLevel[], seed: number): Ga
 
   for (let i = 0; i < MAX_INTENTS && state.phase.type !== 'finished'; i++) {
     const { phase } = state;
-    let intent: Intent;
-    let actor: Actor = { type: 'system' };
-
-    if (phase.type === 'minigame') {
-      intent = {
-        type: 'submitMinigameResult',
-        ranking: simulateMinigame(state.turnOrder, levelOf, rng),
-      };
+    const actor = whoMustAct(state);
+    if (!actor) break;
+    let intent: Intent | null;
+    if (actor.type === 'player') {
+      intent = chooseBoardIntent(
+        board,
+        state,
+        actor.playerId,
+        levelOf.get(actor.playerId) ?? 'normal',
+        rng,
+      );
+      if (intent?.type === 'roll') turns++;
     } else if (phase.type === 'finale') {
       intent = {
         type: 'submitFinaleResult',
         ranking: simulateMinigame(phase.contenders, levelOf, rng),
       };
-    } else if (phase.type === 'turn') {
-      const level = levelOf.get(phase.playerId) ?? 'normal';
-      const choice = chooseBoardIntent(board, state, phase.playerId, level, rng);
-      if (!choice) throw new Error('Le bot ne sait pas quoi jouer');
-      intent = choice;
-      actor = { type: 'player', playerId: phase.playerId };
-      if (choice.type === 'roll') turns++;
     } else {
-      break;
+      const ranking = simulateMinigame(
+        state.players.map((player) => player.id),
+        levelOf,
+        rng,
+      );
+      intent =
+        phase.type === 'bonusMinigame'
+          ? { type: 'submitBonusMinigameResult', ranking }
+          : { type: 'submitMinigameResult', ranking };
     }
+    if (!intent) throw new Error(`Aucune décision possible (phase ${phase.type})`);
 
     const result = applyIntent(board, state, actor, intent);
     if (!result.ok) throw new Error(`Intention refusée par le moteur : ${result.error}`);

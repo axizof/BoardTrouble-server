@@ -1,6 +1,7 @@
-import type { SpaceId } from '../board/board';
+import type { SpaceId, SpaceKind } from '../board/board';
 import type { BonusDie, DiceRoll, TableSize, TieBreak } from '../dice/dice';
 import type { ItemId } from '../items/catalog';
+import type { TroubleEventId } from '../trouble/events';
 
 export type PlayerId = string;
 
@@ -24,7 +25,17 @@ export type TurnStep =
   | { type: 'awaitRoll' }
   /** Relance activée : garder le lancer ou relancer. */
   | { type: 'awaitRerollChoice'; roll: DiceRoll }
-  | { type: 'awaitBranch'; remaining: number; options: SpaceId[] }
+  /**
+   * Embranchement. `mode` : déplacement aux dés ou par un effet (case bonus, Fusée), qui ne
+   * se poursuivent pas pareil.
+   */
+  | {
+      type: 'awaitBranch';
+      remaining: number;
+      options: SpaceId[];
+      mode: 'dice' | 'effect';
+      resume: Resume;
+    }
   /** Case Coffre : choisir l'un des deux coffres. */
   | { type: 'awaitChest'; resume: Resume }
   /** Inventaire plein : échanger l'objet proposé contre un des siens, ou le refuser. */
@@ -39,6 +50,12 @@ export type Phase =
   | { type: 'turn'; playerId: PlayerId; step: TurnStep }
   /** Plusieurs joueurs ont ouvert la porte finale : en attente du classement de la finale. */
   | { type: 'finale'; contenders: PlayerId[] }
+  /** Le Plateau se réveille : le dernier choisit un événement parmi `options`. */
+  | { type: 'trouble'; chooser: PlayerId; options: TroubleEventId[] }
+  /** Objets reçus hors des tours avec un inventaire plein : chacun choisit, dans l'ordre. */
+  | { type: 'itemChoices'; queue: { playerId: PlayerId; offered: ItemId }[] }
+  /** Événement Mini-jeu bonus : en attente de son classement. */
+  | { type: 'bonusMinigame' }
   | { type: 'finished'; winner: PlayerId };
 
 /** Modificateurs du tour en cours, remis à zéro à chaque nouveau tour. */
@@ -54,6 +71,23 @@ export type TurnModifiers = {
 
 export type Trap = { type: 'glue' | 'firecracker'; owner: PlayerId };
 
+/** Vitesse de la jauge TROUBLE, réglée dans le salon. */
+export type ChaosLevel = 'calm' | 'normal' | 'trouble';
+
+/**
+ * Modifications temporaires du plateau par le TROUBLE, actives jusqu'à la fin de la manche
+ * indiquée (comprise).
+ */
+export type Overlays = {
+  inversionUntil: number | null;
+  eruptionUntil: number | null;
+  /**
+   * Brouillard : les cases spéciales ont échangé leurs effets en secret. `kinds` donne
+   * l'effet réel de chaque case ; il n'est jamais envoyé aux clients.
+   */
+  fog: { until: number; kinds: Record<SpaceId, SpaceKind> } | null;
+};
+
 /** État complet d'une partie : du JSON pur, sauvegardable tel quel. */
 export type GameState = {
   version: 1;
@@ -67,6 +101,8 @@ export type GameState = {
   turn: TurnModifiers;
   /** Pièges posés, visibles de tous. Un seul par case. */
   traps: Record<SpaceId, Trap>;
+  trouble: { gauge: number; chaos: ChaosLevel };
+  overlays: Overlays;
   /** Joueurs qui ont ouvert la porte finale pendant la manche en cours. */
   finalGateOpenedBy: PlayerId[];
   phase: Phase;
@@ -78,6 +114,7 @@ export type GameConfig = {
   players: { id: PlayerId; name: string }[];
   tableSize: TableSize;
   seed: number;
+  chaos?: ChaosLevel;
 };
 
 /** Qui envoie l'intention : un joueur, ou le serveur lui-même (résultats de mini-jeux). */
@@ -87,6 +124,8 @@ export type Intent =
   /** Classement du mini-jeu, du meilleur au moins bon ; chaque groupe contient des ex aequo. */
   | { type: 'submitMinigameResult'; ranking: PlayerId[][] }
   | { type: 'submitFinaleResult'; ranking: PlayerId[][] }
+  | { type: 'submitBonusMinigameResult'; ranking: PlayerId[][] }
+  | { type: 'chooseTrouble'; event: TroubleEventId }
   | { type: 'useItem'; item: ItemId; target?: PlayerId }
   | { type: 'roll' }
   | { type: 'keepRoll' }
@@ -107,7 +146,10 @@ export type IntentError =
   | 'itemNotUsable'
   | 'invalidTarget';
 
-export type ItemSource = 'itemSpace' | 'chest' | 'rest' | 'pickpocket';
+export type ItemSource = 'itemSpace' | 'chest' | 'rest' | 'pickpocket' | 'trouble' | 'roundEvent';
+
+/** Petits événements de fin de manche, sur un joueur au hasard. */
+export type RoundEventId = 'bird' | 'hole' | 'foundItem';
 
 /** Ce qui s'est passé, dans l'ordre : c'est ce que le client anime. */
 export type GameEvent =
@@ -157,6 +199,12 @@ export type GameEvent =
   | { type: 'swapped'; playerId: PlayerId; with: PlayerId }
   | { type: 'chestOpened'; playerId: PlayerId; chest: 0 | 1; trapped: boolean }
   | { type: 'rerolled'; playerId: PlayerId; previous: DiceRoll; roll: DiceRoll }
+  | { type: 'troubleGauge'; value: number; added: number; reason: 'round' | 'double' | 'gap' }
+  | { type: 'troubleAwakened'; chooser: PlayerId; options: TroubleEventId[] }
+  | { type: 'troubleApplied'; event: TroubleEventId; chooser: PlayerId | null }
+  | { type: 'overlayEnded'; overlay: 'inversion' | 'eruption' | 'fog' }
+  | { type: 'roundEvent'; event: RoundEventId; playerId: PlayerId }
+  | { type: 'bonusMinigameStarted' }
   | { type: 'turnEnded'; playerId: PlayerId }
   | { type: 'roundEnded'; round: number }
   | { type: 'finaleStarted'; contenders: PlayerId[] }

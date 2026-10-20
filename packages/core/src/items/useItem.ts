@@ -1,6 +1,6 @@
 import { type Board, distanceToGoal, getSpace } from '../board/board';
 import { type Context, type Flow, getPlayer, removeItem } from '../game/context';
-import { applyHostile, isGate, moveByEffect, recoil, resolveArrival } from '../game/effects';
+import { advanceByEffect, applyHostile, isGate, recoil, swapPlaces } from '../game/effects';
 import type { GameState, IntentError, PlayerId, PlayerState } from '../game/types';
 import { INVENTORY_SIZE, ITEMS, type ItemId } from './catalog';
 
@@ -108,8 +108,7 @@ export function useItem(ctx: Context, user: PlayerState, item: ItemId, targetId?
       return 'continue';
     case 'rocket':
       state.bonusDice[user.id] = null;
-      moveByEffect(ctx, user, ROCKET_STEPS);
-      return resolveArrival(ctx, user, 'effect');
+      return advanceByEffect(ctx, user, ROCKET_STEPS);
     case 'glue':
     case 'firecracker':
       state.traps[user.position] = { type: item, owner: user.id };
@@ -165,12 +164,4 @@ function useOnTarget(ctx: Context, user: PlayerState, item: ItemId, target: Play
     default:
       throw new Error(`Objet sans cible : ${item}`);
   }
-}
-
-/** Échange de places : aucune case ne s'active (01-vision-et-plateau.md, section 8). */
-function swapPlaces(ctx: Context, a: PlayerState, b: PlayerState): void {
-  [a.position, b.position] = [b.position, a.position];
-  [a.atGate, b.atGate] = [b.atGate, a.atGate];
-  [a.trail, b.trail] = [b.trail, a.trail];
-  ctx.events.push({ type: 'swapped', playerId: a.id, with: b.id });
 }

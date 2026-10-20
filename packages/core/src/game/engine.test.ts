@@ -9,7 +9,7 @@ import {
   linearBoard,
   rngStateRolling,
 } from '../testing/fixtures';
-import { applyIntent, createGame } from './engine';
+import { applyIntent, createGame, whoMustAct } from './engine';
 import type { Actor, GameEvent, GameState, Intent, PlayerId, PlayerState } from './types';
 
 const SYSTEM: Actor = { type: 'system' };
@@ -159,7 +159,13 @@ describe('branches', () => {
     expect(paused.state.phase).toEqual({
       type: 'turn',
       playerId: roller,
-      step: { type: 'awaitBranch', remaining: 3, options: ['a1', 'b1'] },
+      step: {
+        type: 'awaitBranch',
+        remaining: 3,
+        options: ['a1', 'b1'],
+        mode: 'dice',
+        resume: 'endTurn',
+      },
     });
     expect(
       applyIntent(board, paused.state, player(roller), { type: 'chooseBranch', spaceId: 'm1' }),
@@ -174,6 +180,31 @@ describe('branches', () => {
     });
     expect(positionOf(chosen.state, roller)).toBe('merge');
     expect(currentPlayer(chosen.state)).not.toBe(roller);
+  });
+});
+
+describe('branches during effect moves', () => {
+  test('lets the active player choose a lane when a rocket goes through a fork', () => {
+    const { board, state: initial } = setup(forkBoard());
+    const roller = currentPlayer(initial);
+    const state = patchPlayer(initial, roller, { inventory: ['rocket'] });
+
+    const paused = act(board, state, player(roller), { type: 'useItem', item: 'rocket' });
+    expect(paused.state.phase).toMatchObject({
+      step: {
+        type: 'awaitBranch',
+        remaining: 5,
+        options: ['a1', 'b1'],
+        mode: 'effect',
+        resume: 'roll',
+      },
+    });
+    const chosen = act(board, paused.state, player(roller), {
+      type: 'chooseBranch',
+      spaceId: 'b1',
+    });
+    expect(positionOf(chosen.state, roller)).toBe('m2');
+    expect(chosen.state.phase).toMatchObject({ playerId: roller, step: { type: 'awaitRoll' } });
   });
 });
 
@@ -315,19 +346,21 @@ describe('determinism and full games', () => {
     );
     let { state } = createGame(board, { players: FOUR_PLAYERS, tableSize: 4, seed });
     const botRng = new Rng(seed);
-    for (let step = 0; step < 2000 && state.phase.type !== 'finished'; step++) {
+    for (let step = 0; step < 3000 && state.phase.type !== 'finished'; step++) {
+      const actor = whoMustAct(state);
+      if (!actor) break;
+      const everyone = FOUR_PLAYERS.map(({ id }) => [id]);
       const { phase } = state;
-      if (phase.type === 'minigame') {
-        const ranking = botRng.shuffle(FOUR_PLAYERS.map(({ id }) => [id]));
-        state = act(board, state, SYSTEM, { type: 'submitMinigameResult', ranking }).state;
-      } else if (phase.type === 'finale') {
-        const ranking = phase.contenders.map((id) => [id]);
-        state = act(board, state, SYSTEM, { type: 'submitFinaleResult', ranking }).state;
-      } else if (phase.type === 'turn') {
-        const intent = chooseBoardIntent(board, state, phase.playerId, 'normal', botRng);
-        if (!intent) throw new Error('Le bot ne sait pas quoi jouer');
-        state = act(board, state, player(phase.playerId), intent).state;
-      }
+      const intent: Intent | null =
+        actor.type === 'player'
+          ? chooseBoardIntent(board, state, actor.playerId, 'normal', botRng)
+          : phase.type === 'finale'
+            ? { type: 'submitFinaleResult', ranking: phase.contenders.map((id) => [id]) }
+            : phase.type === 'bonusMinigame'
+              ? { type: 'submitBonusMinigameResult', ranking: botRng.shuffle(everyone) }
+              : { type: 'submitMinigameResult', ranking: botRng.shuffle(everyone) };
+      if (!intent) throw new Error(`Aucune décision possible (phase ${phase.type})`);
+      state = act(board, state, actor, intent).state;
     }
     return state;
   }

@@ -4,11 +4,13 @@ export type Viewer = { type: 'player'; playerId: PlayerId } | { type: 'spectator
 
 /**
  * Ce qu'un client a le droit de savoir de l'état. Le serveur n'envoie jamais l'état brut :
- * ni le hasard, ni le Miroir activé d'un autre joueur.
+ * ni le hasard, ni le Miroir activé d'un autre joueur, ni le mélange secret du Brouillard
+ * (le client affiche un point d'interrogation sur les cases spéciales).
  */
 export function viewState(state: GameState, viewer: Viewer): GameState {
   const view = structuredClone(state);
   view.rngState = 0;
+  if (view.overlays.fog) view.overlays.fog.kinds = {};
   for (const player of view.players) {
     if (!isSelf(viewer, player.id)) player.mirrorArmed = false;
   }

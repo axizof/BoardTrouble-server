@@ -43,6 +43,22 @@ export const ITEMS: Record<ItemId, ItemDefinition> = {
 };
 
 export const ITEM_IDS = Object.keys(ITEMS) as ItemId[];
+
+/** Valeur d'un objet : le "meilleur objet" (Taxe du Plateau), ce qu'un bot jette en premier. */
+export const ITEM_VALUE: Record<ItemId, number> = {
+  firecracker: 2,
+  turboDie: 3,
+  rocket: 3,
+  glue: 3,
+  reroll: 3,
+  pickpocket: 3,
+  shield: 4,
+  blower: 4,
+  hourglass: 4,
+  mirror: 5,
+  grapple: 6,
+  key: 6,
+};
 export const INVENTORY_SIZE = 3;
 
 const RARITIES: Rarity[] = ['common', 'uncommon', 'rare', 'veryRare', 'legendary'];

@@ -2,9 +2,10 @@ import { type Board, distanceToGoal } from '../board/board';
 import { getPlayer } from '../game/context';
 import { progressRanking } from '../game/progress';
 import type { GameState, Intent, PlayerId, PlayerState } from '../game/types';
-import type { ItemId } from '../items/catalog';
+import { ITEM_VALUE, type ItemId } from '../items/catalog';
 import { itemUseError, validTargets } from '../items/useItem';
 import type { Rng } from '../random/rng';
+import type { TroubleEventId } from '../trouble/events';
 
 export type BotLevel = 'easy' | 'normal' | 'expert';
 
@@ -14,22 +15,6 @@ const RANDOM_CHOICE_RATE: Record<BotLevel, number> = { easy: 0.5, normal: 0.15, 
 const FORGET_ITEM_RATE: Record<BotLevel, number> = { easy: 0.6, normal: 0.2, expert: 0 };
 /** Distance jusqu'à laquelle un piège posé a des chances d'être traversé par un adversaire. */
 const TRAP_REACH = 8;
-
-/** Valeur d'un objet pour le bot, quand il faut en jeter un. */
-const ITEM_VALUE: Record<ItemId, number> = {
-  firecracker: 2,
-  turboDie: 3,
-  rocket: 3,
-  glue: 3,
-  reroll: 3,
-  pickpocket: 3,
-  shield: 4,
-  blower: 4,
-  hourglass: 4,
-  mirror: 5,
-  grapple: 6,
-  key: 6,
-};
 
 /** Ordre dans lequel le bot envisage ses objets : les plus décisifs d'abord. */
 const ITEM_PRIORITY: ItemId[] = [
@@ -58,8 +43,18 @@ export function chooseBoardIntent(
   rng: Rng,
 ): Intent | null {
   const { phase } = state;
-  if (phase.type !== 'turn' || phase.playerId !== playerId) return null;
   const me = getPlayer(state, playerId);
+  if (phase.type === 'trouble') {
+    return phase.chooser === playerId
+      ? { type: 'chooseTrouble', event: chooseTrouble(phase.options) }
+      : null;
+  }
+  if (phase.type === 'itemChoices') {
+    const [next] = phase.queue;
+    if (next?.playerId !== playerId) return null;
+    return { type: 'resolveItemSwap', discard: leastValuable([...me.inventory, next.offered]) };
+  }
+  if (phase.type !== 'turn' || phase.playerId !== playerId) return null;
   const { step } = phase;
 
   switch (step.type) {
@@ -83,11 +78,40 @@ export function chooseBoardIntent(
     }
     case 'awaitChest':
       return { type: 'chooseChest', chest: rng.chance(0.5) ? 0 : 1 };
-    case 'awaitItemSwap': {
-      const [worst] = [...me.inventory, step.offered].sort((a, b) => ITEM_VALUE[a] - ITEM_VALUE[b]);
-      return worst === undefined ? null : { type: 'resolveItemSwap', discard: worst };
-    }
+    case 'awaitItemSwap':
+      return { type: 'resolveItemSwap', discard: leastValuable([...me.inventory, step.offered]) };
   }
+}
+
+/**
+ * Le bot qui choisit le TROUBLE est le dernier : il prend ce qui le rapproche le plus vite
+ * du premier.
+ */
+const TROUBLE_PREFERENCE: TroubleEventId[] = [
+  'grandExchange',
+  'expressElevator',
+  'tax',
+  'itemRain',
+  'bonusMinigame',
+  'rotation',
+  'inversion',
+  'eruption',
+  'fog',
+];
+
+function chooseTrouble(options: TroubleEventId[]): TroubleEventId {
+  const ranked = [...options].sort(
+    (a, b) => TROUBLE_PREFERENCE.indexOf(a) - TROUBLE_PREFERENCE.indexOf(b),
+  );
+  const [best] = ranked;
+  if (best === undefined) throw new Error('Aucun TROUBLE proposé');
+  return best;
+}
+
+function leastValuable(items: ItemId[]): ItemId {
+  const [worst] = [...items].sort((a, b) => ITEM_VALUE[a] - ITEM_VALUE[b]);
+  if (worst === undefined) throw new Error('Aucun objet à comparer');
+  return worst;
 }
 
 function chooseItem(
