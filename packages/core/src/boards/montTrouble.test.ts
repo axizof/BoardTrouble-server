@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { type Point, prepareBoard, type Space, validateBoard } from '../board/board';
 import { buildMontTrouble } from './montTrouble';
+import { horizontalDistance } from './route';
 
 const definition = buildMontTrouble();
 const spaces = Object.values(definition.spaces);
@@ -44,7 +45,7 @@ describe('the Mont Trouble', () => {
     ]);
   });
 
-  test('has rings that shorten on the way up: 32, 28, 24, 20 and 16 spaces', () => {
+  test('has floors that shorten on the way up: 32, 28, 24, 20 and 16 spaces', () => {
     expect([1, 2, 3, 4, 5].map(longestPath)).toEqual([32, 28, 24, 20, 16]);
   });
 
@@ -55,6 +56,30 @@ describe('the Mont Trouble', () => {
     expect(kindsOn(3)).toEqual(expect.arrayContaining(['conveyor', 'drawbridge']));
     expect(kindsOn(4)).toContain('ice');
     expect(definition.floors?.[5]).toMatchObject({ muddy: true, windy: true });
+  });
+
+  test('lands falls and transports just below or above, on the next floor', () => {
+    for (const space of spaces) {
+      const to = space.fallsTo ?? ('to' in space.kind ? space.kind.to : undefined);
+      if (!to || space.kind.type === 'teleporter') continue;
+      const target = definition.spaces[to];
+      const reach = horizontalDistance(space.position, target?.position);
+      // Une chute ou un transport mène à la zone voisine, juste en contrebas ou au-dessus.
+      expect({ id: space.id, close: reach <= 12 }).toEqual({ id: space.id, close: true });
+    }
+  });
+
+  test('never stacks two floors: there is room for a cliff between them', () => {
+    for (const [index, a] of spaces.entries()) {
+      for (const b of spaces.slice(index + 1)) {
+        if (a.floor === b.floor || a.next.includes(b.id) || b.next.includes(a.id)) continue;
+        const gap = horizontalDistance(a.position, b.position);
+        expect({ pair: `${a.id}/${b.id}`, apart: gap >= 3.3 }).toEqual({
+          pair: `${a.id}/${b.id}`,
+          apart: true,
+        });
+      }
+    }
   });
 
   test('links floors vertically: elevators go one floor up, slides and falls one floor down', () => {
@@ -77,14 +102,17 @@ describe('the Mont Trouble', () => {
     }
   });
 
-  test('places every space in the scene, neither crammed nor too far from the next', () => {
+  test('places every space in the scene, a few steps from the next', () => {
     for (const space of spaces) {
       expect(space.position).toBeDefined();
       for (const next of space.next) {
-        const gap = distance(space.position, definition.spaces[next]?.position);
-        // Le pont-levis enjambe un vide : ses cases sont plus espacées.
+        const gap = horizontalDistance(space.position, definition.spaces[next]?.position);
+        // Le pont-levis enjambe un vide, et le passage d'un étage au suivant monte la falaise
+        // par un escalier : leurs cases sont plus espacées.
         const isBridge = [space.id, next].some((id) => id.includes('bridge'));
-        expect({ from: space.id, gap: gap >= 1.4 && gap <= (isBridge ? 6.5 : 4) }).toEqual({
+        const isClimb = floorOf(next) !== space.floor;
+        const longest = isClimb ? 12 : isBridge ? 6.6 : 5.2;
+        expect({ from: space.id, gap: gap >= 2 && gap <= longest }).toEqual({
           from: space.id,
           gap: true,
         });
@@ -92,12 +120,10 @@ describe('the Mont Trouble', () => {
     }
     for (const [index, a] of spaces.entries()) {
       for (const b of spaces.slice(index + 1)) {
-        expect({ pair: `${a.id}/${b.id}`, apart: distance(a.position, b.position) >= 1.4 }).toEqual(
-          {
-            pair: `${a.id}/${b.id}`,
-            apart: true,
-          },
-        );
+        expect({ pair: `${a.id}/${b.id}`, apart: distance(a.position, b.position) >= 2 }).toEqual({
+          pair: `${a.id}/${b.id}`,
+          apart: true,
+        });
       }
     }
   });

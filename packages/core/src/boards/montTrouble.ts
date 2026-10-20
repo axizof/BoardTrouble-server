@@ -6,23 +6,24 @@ import type {
   SpaceKind,
   WheelSegment,
 } from '../board/board';
-import { laneOffset, pointOnSpiral, type Spiral } from './spiral';
+import {
+  type Curve,
+  type FloorRoute,
+  horizontalDistance,
+  laneCurve,
+  routeCurve,
+  spacedAlong,
+} from './route';
 
-// Le Mont Trouble (01-vision-et-plateau.md, section 7) : l'île, sa montagne et le chemin
-// qui monte en spirale, un étage par tour. Chaque étage ajoute une mécanique et a son propre
-// embranchement. Les destinations "à la verticale" (ascenseurs, monte-charge, toboggans,
-// chutes) sont calculées sur la géométrie : elles tombent vraiment au-dessus ou en dessous.
+// Le Mont Trouble (01-vision-et-plateau.md, section 7 ; 04-carte.md) : l'île, sa montagne
+// et le chemin qui la contourne en montant, en grands lacets : chaque étage repasse
+// au-dessus du précédent, dans l'autre sens. Chaque étage ajoute une mécanique et a son
+// propre embranchement. Les destinations "à la verticale" (ascenseurs, monte-charge,
+// toboggans, chutes) sont calculées sur la géométrie : la case la plus proche de l'étage
+// voisin, juste au-dessus ou en contrebas.
 
-const SPIRAL: Spiral = {
-  baseRadius: 17,
-  radiusPerTurn: 2.2,
-  baseHeight: 0.8,
-  heightPerTurn: 3.2,
-  startAngle: Math.PI / 2,
-};
-/** Les voies qui longent la paroi s'écartent du bord d'autant. */
-const WALL_LANE_DEPTH = 1.9;
-const BEACH_OFFSET = 2.2;
+/** La case départ, sur la plage : à quelques pas de la première case, côté mer. */
+const START_FROM_SHORE = 4;
 
 /** Destinations résolues sur la géométrie, une fois toutes les cases posées. */
 const ABOVE = '@above';
@@ -77,9 +78,16 @@ type Branch = {
   from: number;
   to: number;
   kinds: SpaceKind[];
+  /**
+   * Le tracé de la voie, de l'embranchement à la jonction : bombée de `bow` mètres sur le
+   * côté (positif vers l'extérieur, négatif vers la paroi), montée de `rise` mètres. Sans
+   * bosse, c'est un raccourci en ligne droite (le pont-levis à travers la boucle).
+   */
+  lane: { bow: number; rise?: number };
 };
 
 type FloorPlan = FloorDefinition & {
+  route: FloorRoute;
   /** Le chemin principal de l'étage, de sa première case à sa porte comprise. */
   line: SpaceKind[];
   /** Cases du chemin principal au bord du vide, sans garde-fou (indices). */
@@ -96,6 +104,24 @@ type FloorPlan = FloorDefinition & {
 const FLOORS: FloorPlan[] = [
   {
     name: 'Prairie des Pions',
+    route: {
+      // De la plage, côté droit, de grands S vers la gauche au pied de la montagne ; le
+      // chemin rentre vers la paroi là où la voie tentante s'écarte vers la plage.
+      waypoints: [
+        { turn: -0.15, radius: 46 },
+        { turn: -0.11, radius: 42.5 },
+        { turn: -0.07, radius: 46.5 },
+        { turn: -0.03, radius: 43.5 },
+        { turn: 0, radius: 41.5 },
+        { turn: 0.03, radius: 43.5 },
+        { turn: 0.08, radius: 47 },
+        { turn: 0.13, radius: 43 },
+        { turn: 0.18, radius: 46.5 },
+        { turn: 0.22, radius: 43 },
+        { turn: 0.27, radius: 45 },
+      ],
+      height: [1, 5],
+    },
     // Les bases : bonus, malus, objets. Pas de bord dangereux. Embranchement "calme contre
     // tentant" : deux voies de même longueur, l'une tranquille, l'autre avec un gros bonus,
     // un coffre... et un -5. Un monte-charge plutôt qu'un ascenseur : tout le monde passe
@@ -103,115 +129,199 @@ const FLOORS: FloorPlan[] = [
     line: [
       _, bonus(3), _, ITEM, _, malus(3), teleporter('f1-19'), bonus(3),
       _, _, REST, _, _, _, ITEM, SQUALL,
-      _, bonus(3), malus(3), teleporter('f1-6'), springboard(8), ITEM, bonus(3), DUEL,
-      _, FREIGHT_LIFT, malus(3), TROUBLE, _, bonus(3), _, { type: 'twinGate' },
+      _, bonus(3), FREIGHT_LIFT, teleporter('f1-6'), springboard(8), ITEM, bonus(3), DUEL,
+      malus(3), _, malus(3), TROUBLE, _, bonus(3), _, { type: 'twinGate' },
     ],
     edges: [],
-    branches: [{ name: 'tempting', from: 8, to: 13, kinds: [bonus(5), CHEST, malus(5), bonus(3)] }],
+    branches: [
+      { name: 'tempting', from: 8, to: 13, kinds: [bonus(5), CHEST, malus(5), bonus(3)], lane: { bow: 7 } },
+    ],
   },
   {
     name: 'Marais aux Dés',
+    route: {
+      // Retour vers la droite, au-dessus de la Prairie, en méandres entre les mares ; la voie
+      // exposée bombe vers le vide, la voie sûre longe la paroi.
+      waypoints: [
+        { turn: 0.27, radius: 34.5 },
+        { turn: 0.21, radius: 31.5 },
+        { turn: 0.15, radius: 35 },
+        { turn: 0.09, radius: 36.5 },
+        { turn: 0.03, radius: 37 },
+        { turn: -0.03, radius: 33.5 },
+        { turn: -0.09, radius: 31.5 },
+        { turn: -0.15, radius: 35 },
+        { turn: -0.21, radius: 32 },
+        { turn: -0.27, radius: 34 },
+      ],
+      height: [9, 13],
+    },
     // Dés géants et dés spéciaux. Premier "court et exposé contre long et sûr" : la voie
     // courte longe le vide (objets, coffre, mais un Échange), la longue longe la paroi.
     line: [
-      _, SPECIAL_DIE, bonus(3), _, GIANT_DIE, malus(3), seesaw('f2-12'), ITEM,
-      _, bonus(3), SLIDE, BET, seesaw('f2-6'), GIANT_DIE, _, ITEM,
-      SWAP, CHEST, _, FILOUS, ONE_VS_ALL, ELEVATOR, malus(3), bonus(3),
+      _, SPECIAL_DIE, bonus(3), _, GIANT_DIE, malus(3), seesaw('f2-17'), ITEM,
+      SLIDE, _, ITEM, SWAP, CHEST, _, ELEVATOR, BET,
+      bonus(3), seesaw('f2-6'), _, FILOUS, ONE_VS_ALL, GIANT_DIE, malus(3), bonus(3),
       TROUBLE, { type: 'skillGate' },
     ],
-    edges: [15, 16, 17],
-    branches: [{ name: 'wall', from: 14, to: 18, kinds: [bonus(3), _, bonus(5), _, ITEM] }],
+    edges: [10, 11, 12],
+    branches: [
+      { name: 'wall', from: 9, to: 13, kinds: [bonus(3), _, bonus(5), _, ITEM], lane: { bow: -2.5, rise: 1 } },
+    ],
   },
   {
     name: 'Ateliers',
+    route: {
+      // Vers la gauche : la voie exposée bombe vers le vide, puis une grande boucle autour
+      // des machines, que le pont-levis coupe en ligne droite.
+      waypoints: [
+        { turn: -0.27, radius: 24 },
+        { turn: -0.21, radius: 21.5 },
+        { turn: -0.15, radius: 25 },
+        { turn: -0.09, radius: 26.5 },
+        { turn: -0.03, radius: 26.5 },
+        { turn: 0.02, radius: 23 },
+        { turn: 0.06, radius: 25.5 },
+        { turn: 0.085, radius: 22.5 },
+        { turn: 0.1, radius: 20 },
+        { turn: 0.16, radius: 20 },
+        { turn: 0.175, radius: 22.5 },
+        { turn: 0.2, radius: 25.5 },
+        { turn: 0.24, radius: 23.5 },
+        { turn: 0.27, radius: 24 },
+      ],
+      height: [17, 21],
+    },
     // Tapis roulants et pont-levis : le raccourci par le pont n'est ouvert qu'une manche sur
     // deux. Le monte-charge mène au Glacier les manches paires.
     line: [
       { type: 'wheel', segments: WORKSHOP_WHEEL }, conveyor('forward', 3), ITEM, malus(3),
-      teleporter('f3-12'), _, bonus(3), conveyor('backward', 2),
-      MAGNET, bonus(3), _, FREIGHT_LIFT, teleporter('f3-4'), malus(3), conveyor('forward', 3), _,
-      TROUBLE, ITEM, FILOUS, _, SLIDE, { type: 'tollGate', threshold: 4 },
+      teleporter('f3-12'), SLIDE, _, TROUBLE,
+      ITEM, FILOUS, FREIGHT_LIFT, _, teleporter('f3-4'), bonus(3), conveyor('backward', 2), MAGNET,
+      bonus(3), _, malus(3), conveyor('forward', 3), _, { type: 'tollGate', threshold: 4 },
     ],
-    edges: [16, 17, 18],
+    edges: [7, 8, 9],
     branches: [
-      { name: 'bridge', from: 5, to: 10, kinds: [DRAWBRIDGE, _] },
-      { name: 'wall', from: 15, to: 19, kinds: [bonus(3), _, REST, bonus(5), _] },
+      { name: 'wall', from: 6, to: 10, kinds: [bonus(3), _, REST, bonus(5), _], lane: { bow: -2.5, rise: 1 } },
+      { name: 'bridge', from: 13, to: 18, kinds: [DRAWBRIDGE, _], lane: { bow: 2 } },
     ],
   },
   {
     name: 'Glacier',
+    route: {
+      // Vers la droite, en lacets entre séracs et crevasses, jusque derrière la montagne ; la
+      // voie glacée bombe vers le vide.
+      waypoints: [
+        { turn: 0.27, radius: 14 },
+        { turn: 0.2, radius: 12.5 },
+        { turn: 0.13, radius: 15 },
+        { turn: 0.06, radius: 16 },
+        { turn: -0.01, radius: 16 },
+        { turn: -0.08, radius: 16 },
+        { turn: -0.15, radius: 13 },
+        { turn: -0.22, radius: 15 },
+        { turn: -0.29, radius: 12.5 },
+        { turn: -0.36, radius: 15 },
+        { turn: -0.43, radius: 12.5 },
+        { turn: -0.5, radius: 14 },
+      ],
+      height: [25, 29],
+    },
     // Cases gelées : on glisse jusqu'à la prochaine case non gelée. Embranchement "gauche ou
-    // droite" : deux voies de même longueur, l'une glacée au bord du vide, l'autre sûre.
+    // droite" : deux voies de même longueur, l'une glacée qui mène au bord du vide (on glisse
+    // jusqu'au +5... ou au -3), l'autre sûre.
     line: [
-      _, _, ICE, ICE, bonus(5), malus(3), _, ITEM,
-      ICE, ICE, ITEM, SQUALL, ELEVATOR, _, statue(10), ICE,
-      ICE, TROUBLE, SLIDE, { type: 'boulderGate', threshold: 5 },
+      _, ITEM, ICE, ICE, SQUALL, _, ICE, ICE,
+      bonus(5), malus(3), ELEVATOR, SLIDE, _, _, statue(10), ICE,
+      ICE, TROUBLE, ITEM, { type: 'boulderGate', threshold: 5 },
     ],
-    edges: [4, 5],
-    branches: [{ name: 'wall', from: 1, to: 6, kinds: [ITEM, _, bonus(3), _] }],
+    edges: [8, 9],
+    branches: [
+      { name: 'wall', from: 5, to: 10, kinds: [ITEM, _, bonus(3), _], lane: { bow: -1, rise: 1 } },
+    ],
   },
   {
     name: 'Crête des Nuages',
+    route: {
+      // Repart au-dessus du Glacier, puis s'enroule en colimaçon jusqu'au sommet, à l'arrière
+      // de la montagne.
+      waypoints: [
+        { turn: -0.5, radius: 8 },
+        { turn: -0.38, radius: 7 },
+        { turn: -0.26, radius: 8 },
+        { turn: -0.14, radius: 7.5 },
+        { turn: -0.02, radius: 8 },
+        { turn: 0.1, radius: 7 },
+        { turn: 0.22, radius: 7.5 },
+        { turn: 0.34, radius: 6.5 },
+        { turn: 0.45, radius: 5 },
+        { turn: 0.54, radius: 3.5 },
+        { turn: 0.6, radius: 1 },
+      ],
+      height: [33, 37],
+    },
     muddy: true,
     windy: true,
-    // Boue et coups de vent, et une crête exposée jusqu'au sommet. Pas de toboggan : à deux
-    // pas de la porte finale, redescendre d'un étage décidait trop de parties au hasard.
+    // Boue et coups de vent, et une crête exposée au-dessus du Glacier. Pas de toboggan : à
+    // deux pas de la porte finale, redescendre d'un étage décidait trop de parties au hasard.
     line: [
-      _, bonus(3), JOSTLE, ITEM, VENDETTA, _, CHEST, _,
-      TROUBLE, _, malus(3), bonus(3), _, { type: 'finalGate', threshold: 6 },
+      _, bonus(3), _, CHEST, _, TROUBLE, JOSTLE, ITEM,
+      VENDETTA, _, malus(3), bonus(3), _, { type: 'finalGate', threshold: 6 },
     ],
-    edges: [6, 7, 8, 10, 11],
-    branches: [{ name: 'wall', from: 5, to: 9, kinds: [bonus(3), _, ITEM, _, _] }],
+    // La crête est exposée là où elle passe au-dessus du Glacier ; le colimaçon final, qui
+    // dépasse le Glacier, n'a pas de bord (on y tomberait trop loin).
+    edges: [3, 4, 5, 6],
+    branches: [
+      { name: 'wall', from: 2, to: 6, kinds: [bonus(3), _, ITEM, _, _], lane: { bow: -1.5, rise: 1 } },
+    ],
   },
 ];
 
 export function buildMontTrouble(): BoardDefinition {
   const spaces: Record<SpaceId, Space> = {};
-  const turnOf = new Map<SpaceId, number>();
-  const add = (space: Space, turn: number) => {
+  const add = (space: Space) => {
     spaces[space.id] = space;
-    turnOf.set(space.id, turn);
   };
 
-  add(
-    {
-      id: 'start',
-      kind: { type: 'start' },
-      floor: 0,
-      next: [],
-      position: { ...pointOnSpiral(SPIRAL, 0, BEACH_OFFSET), y: 0 },
+  const shore = FLOORS[0] ? routeCurve(FLOORS[0].route)(0) : { x: 0, y: 0, z: 0 };
+  const out = Math.hypot(shore.x, shore.z) || 1;
+  add({
+    id: 'start',
+    kind: { type: 'start' },
+    floor: 0,
+    next: [],
+    position: {
+      x: shore.x + (shore.x / out) * START_FROM_SHORE,
+      y: 0,
+      z: shore.z + (shore.z / out) * START_FROM_SHORE,
     },
-    -1,
-  );
+  });
   let previous = 'start';
   FLOORS.forEach((plan, index) => {
     const floor = index + 1;
+    const curve = routeCurve(plan.route);
     const lineIds = plan.line.map((_kind, i) => lineId(floor, i, plan.line.length));
-    const turnAt = (i: number) => floor - 1 + (i + 0.5) / plan.line.length;
+    const at = (i: number) => i / (plan.line.length - 1);
+    const positions = spacedAlong(curve, plan.line.length);
 
     plan.line.forEach((kind, i) => {
       const id = lineIds[i] ?? '';
-      add({ id, kind, floor, next: [], position: pointOnSpiral(SPIRAL, turnAt(i)) }, turnAt(i));
+      add({ id, kind, floor, next: [], position: positions[i] ?? curve(at(i)) });
       spaces[previous]?.next.push(id);
       previous = id;
     });
 
     for (const branch of plan.branches) {
       const ids = branch.kinds.map((_kind, j) => `f${floor}-${branch.name}-${j}`);
+      const lanePositions = laneTiles(curve, at(branch.from), at(branch.to), branch);
       branch.kinds.forEach((kind, j) => {
-        const progress = (j + 1) / (branch.kinds.length + 1);
-        const turn = turnAt(branch.from) + (turnAt(branch.to) - turnAt(branch.from)) * progress;
-        const position = pointOnSpiral(SPIRAL, turn, laneOffset(WALL_LANE_DEPTH, progress));
-        add(
-          {
-            id: ids[j] ?? '',
-            kind,
-            floor,
-            next: [ids[j + 1] ?? lineIds[branch.to] ?? ''],
-            position,
-          },
-          turn,
-        );
+        add({
+          id: ids[j] ?? '',
+          kind,
+          floor,
+          next: [ids[j + 1] ?? lineIds[branch.to] ?? ''],
+          position: lanePositions[j] ?? curve(at(branch.from)),
+        });
       });
       spaces[lineIds[branch.from] ?? '']?.next.push(ids[0] ?? '');
     }
@@ -222,7 +332,7 @@ export function buildMontTrouble(): BoardDefinition {
     }
   });
 
-  resolveVerticalLinks(spaces, turnOf);
+  resolveVerticalLinks(spaces);
   return {
     id: 'mont-trouble',
     name: 'Mont Trouble',
@@ -231,13 +341,21 @@ export function buildMontTrouble(): BoardDefinition {
     floors: {
       0: { name: 'Plage du départ' },
       ...Object.fromEntries(
-        FLOORS.map(({ line: _line, edges: _edges, branches: _branches, ...floor }, index) => [
-          index + 1,
-          floor,
-        ]),
+        FLOORS.map(
+          ({ line: _line, edges: _edges, branches: _branches, route: _route, ...floor }, index) => [
+            index + 1,
+            floor,
+          ],
+        ),
       ),
     },
   };
+}
+
+/** Les cases d'une voie annexe, sans ses deux bouts (l'embranchement et la jonction). */
+function laneTiles(curve: Curve, from: number, to: number, branch: Branch) {
+  const lane = laneCurve(curve(from), curve(to), branch.lane.bow, branch.lane.rise);
+  return spacedAlong(lane, branch.kinds.length + 2).slice(1, -1);
 }
 
 function lineId(floor: number, index: number, length: number): SpaceId {
@@ -247,20 +365,21 @@ function lineId(floor: number, index: number, length: number): SpaceId {
 
 /**
  * Remplace les destinations "au-dessus" et "en dessous" par la case de l'étage voisin la plus
- * proche à la verticale, sur son chemin principal, en évitant les portes et la glace (on ne
- * s'arrête jamais sur une case gelée).
+ * proche à l'horizontale, sur son chemin principal, en évitant les portes et la glace (on ne
+ * s'arrête jamais sur une case gelée). Le tracé fait passer chaque étage au-dessus du
+ * précédent : la destination est juste en contrebas, ou juste au-dessus.
  */
-function resolveVerticalLinks(spaces: Record<SpaceId, Space>, turnOf: Map<SpaceId, number>) {
+function resolveVerticalLinks(spaces: Record<SpaceId, Space>) {
   const landings = Object.values(spaces).filter(
     (space) => /^f\d+-\d+$/.test(space.id) && space.kind.type !== 'ice',
   );
   const vertical = (from: Space, direction: 1 | -1): SpaceId => {
-    const target = (turnOf.get(from.id) ?? 0) + direction;
     const [closest] = landings
       .filter((space) => space.floor === from.floor + direction)
       .sort(
         (a, b) =>
-          Math.abs((turnOf.get(a.id) ?? 0) - target) - Math.abs((turnOf.get(b.id) ?? 0) - target),
+          horizontalDistance(a.position, from.position) -
+          horizontalDistance(b.position, from.position),
       );
     if (!closest) throw new Error(`Pas d'étage ${from.floor + direction} sous ou sur ${from.id}`);
     return closest.id;
