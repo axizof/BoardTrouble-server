@@ -16,6 +16,10 @@ Le serveur fait autorité : il applique toutes les règles, tire les dés et ne 
 
 En conception. Le code arrive après la validation des documents de conception.
 
+## Licence
+
+[GNU AGPL-3.0](LICENSE) : tu peux héberger, modifier et redistribuer ce serveur librement. Si tu mets en ligne une version modifiée, tu dois publier son code source sous la même licence.
+
 ## Contenu prévu
 
 ```
