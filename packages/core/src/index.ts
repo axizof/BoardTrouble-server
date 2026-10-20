@@ -12,4 +12,8 @@ export * from './interactions/interactions';
 export * from './items/catalog';
 export * from './items/useItem';
 export * from './jail/jail';
+export * from './minigames/catalog';
 export * from './random/rng';
+export * from './session/pacing';
+export * from './session/protocol';
+export * from './session/session';
