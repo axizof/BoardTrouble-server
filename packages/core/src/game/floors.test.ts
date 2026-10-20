@@ -262,8 +262,8 @@ describe('wind', () => {
       checked = true;
     }
     expect(checked).toBe(true);
-    expect(gusts / rounds).toBeGreaterThan(0.15);
-    expect(gusts / rounds).toBeLessThan(0.35);
+    expect(gusts / rounds).toBeGreaterThan(0.08);
+    expect(gusts / rounds).toBeLessThan(0.24);
   });
 });
 

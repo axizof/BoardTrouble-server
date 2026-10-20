@@ -91,7 +91,8 @@ export function rarityWeights(catchUp: number): Record<Rarity, number> {
     uncommon: 30,
     rare: 14 + 12 * catchUp,
     veryRare: 5 + 8 * catchUp,
-    legendary: 1 + 3 * catchUp,
+    // Environ un objet légendaire toutes les huit parties à 4 joueurs (mesure 10).
+    legendary: 0.3 + 1.2 * catchUp,
   };
 }
 

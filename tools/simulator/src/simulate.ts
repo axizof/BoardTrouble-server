@@ -7,6 +7,7 @@ import {
   distanceToGoal,
   type GameState,
   type Intent,
+  ITEMS,
   type PlayerId,
   progressRanking,
   Rng,
@@ -29,6 +30,9 @@ export type GameRecord = {
   /** Premier au classement quand le leader a parcouru les trois quarts du chemin. */
   leaderAtThreeQuarters: PlayerId | null;
   falls: number;
+  troubleWakes: number;
+  grandExchanges: number;
+  legendaryItems: number;
 };
 
 export function simulateGame(board: Board, levels: BotLevel[], seed: number): GameRecord {
@@ -47,6 +51,9 @@ export function simulateGame(board: Board, levels: BotLevel[], seed: number): Ga
   let leaderChanges = 0;
   let leaderAtThreeQuarters: PlayerId | null = null;
   let falls = 0;
+  let troubleWakes = 0;
+  let grandExchanges = 0;
+  let legendaryItems = 0;
 
   for (let i = 0; i < MAX_INTENTS && state.phase.type !== 'finished'; i++) {
     const { phase } = state;
@@ -97,7 +104,12 @@ export function simulateGame(board: Board, levels: BotLevel[], seed: number): Ga
     const result = applyIntent(board, state, actor, intent);
     if (!result.ok) throw new Error(`Intention refusée par le moteur : ${result.error}`);
     state = result.state;
-    falls += result.events.filter((event) => event.type === 'fell').length;
+    for (const event of result.events) {
+      if (event.type === 'fell') falls++;
+      if (event.type === 'troubleAwakened') troubleWakes++;
+      if (event.type === 'troubleApplied' && event.event === 'grandExchange') grandExchanges++;
+      if (event.type === 'itemGained' && ITEMS[event.item].rarity === 'legendary') legendaryItems++;
+    }
 
     if (result.events.some((event) => event.type === 'roundEnded')) {
       const [newLeader] = progressRanking(board, state);
@@ -120,6 +132,9 @@ export function simulateGame(board: Board, levels: BotLevel[], seed: number): Ga
     leaderChanges,
     leaderAtThreeQuarters,
     falls,
+    troubleWakes,
+    grandExchanges,
+    legendaryItems,
   };
 }
 

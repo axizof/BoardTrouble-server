@@ -44,8 +44,11 @@ export const TROUBLE_CATEGORY: Record<TroubleEventId, TroubleCategory> = {
 const EVENTS = Object.keys(TROUBLE_CATEGORY) as TroubleEventId[];
 /** Événements possibles sur une case TROUBLE : petits et sans pause de jeu. */
 const SPACE_EVENTS: TroubleEventId[] = ['shake', 'gust', 'tax', 'fog'];
-/** L'option violente n'est proposée qu'une fois sur cinq : le Grand Échange reste rare. */
-const VIOLENT_OPTION_CHANCE = 0.2;
+/**
+ * L'option violente n'est proposée qu'une fois sur vingt : le Grand Échange reste très rare
+ * (environ une partie sur cinq, Sceau du Plateau compris). Réglé au simulateur (mesure 10).
+ */
+const VIOLENT_OPTION_CHANCE = 0.05;
 const OVERLAY_ROUNDS = 2;
 const BONUS_MINIGAME_REWARD = 8;
 const GUST_RANGE = 4;
