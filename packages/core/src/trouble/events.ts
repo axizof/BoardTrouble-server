@@ -1,6 +1,7 @@
 import { type Board, distanceToGoal, getSpace, linkedSpace, type SpaceId } from '../board/board';
 import { type Context, type Flow, getPlayer, removeItem } from '../game/context';
 import { advanceByEffect, gainItem, recoil, stepForward, swapPlaces } from '../game/effects';
+import { fallFromEdge, isOnEdge, push } from '../game/floors';
 import { progressRanking } from '../game/progress';
 import type { GameState, PlayerId, PlayerState } from '../game/types';
 import { catchUpFactor, drawItem, ITEM_VALUE } from '../items/catalog';
@@ -9,6 +10,7 @@ import { isSpecial } from './overlays';
 
 export type TroubleEventId =
   | 'grandExchange'
+  | 'earthquake'
   | 'inversion'
   | 'eruption'
   | 'rotation'
@@ -23,9 +25,9 @@ export type TroubleEventId =
 
 export type TroubleCategory = 'mild' | 'medium' | 'violent' | 'small';
 
-// Le Séisme (violent) arrive avec les cases de bord et les chutes.
 export const TROUBLE_CATEGORY: Record<TroubleEventId, TroubleCategory> = {
   grandExchange: 'violent',
+  earthquake: 'violent',
   inversion: 'medium',
   eruption: 'medium',
   rotation: 'medium',
@@ -59,6 +61,8 @@ export function isApplicable(board: Board, state: GameState, event: TroubleEvent
   switch (event) {
     case 'grandExchange':
       return first !== undefined && last !== undefined && first !== last;
+    case 'earthquake':
+      return ranking.some((id) => isOnEdge(board, getPlayer(state, id)));
     case 'expressElevator':
       return last !== undefined && nextFloorPath(board, getPlayer(state, last).position) !== null;
     case 'tax':
@@ -126,6 +130,9 @@ export function applyTrouble(
     case 'grandExchange':
       if (first && last) swapPlaces(ctx, first, last);
       return 'continue';
+    case 'earthquake':
+      for (const id of ranking) fallFromEdge(ctx, getPlayer(state, id));
+      return 'continue';
     case 'inversion':
       state.overlays.inversionUntil = until;
       return 'continue';
@@ -191,7 +198,7 @@ export function applyTrouble(
       for (const other of state.players) {
         if (other === subject || other.jail || state.finalGateOpenedBy.includes(other.id)) continue;
         if (Math.abs(distanceToGoal(board, other.position) - origin) <= GUST_RANGE) {
-          recoil(ctx, other, GUST_PUSH);
+          push(ctx, other, GUST_PUSH);
         }
       }
       return 'continue';
@@ -209,8 +216,9 @@ export function rewardBonusMinigame(ctx: Context, winner: PlayerState): void {
 }
 
 /**
- * Chemin par la voie principale jusqu'à la première case de l'étage suivant (Ascenseur
- * express), ou null s'il n'y a pas d'étage au-dessus.
+ * Chemin par la voie principale jusqu'à la première case de l'étage suivant où l'on peut
+ * s'arrêter (pas une case gelée), pour l'Ascenseur express. null s'il n'y a pas d'étage
+ * au-dessus.
  */
 export function nextFloorPath(board: Board, from: SpaceId): SpaceId[] | null {
   const floor = getSpace(board, from).floor;
@@ -221,7 +229,7 @@ export function nextFloorPath(board: Board, from: SpaceId): SpaceId[] | null {
     if (next === undefined) return null;
     current = getSpace(board, next);
     path.push(next);
-    if (current.floor > floor) return path;
+    if (current.floor > floor && current.kind.type !== 'ice') return path;
   }
   return null;
 }

@@ -30,6 +30,7 @@ import {
 } from '../trouble/gauge';
 import { type Context, type Flow, getPlayer, removeItem } from './context';
 import { advanceByEffect, gainItem, gainSpecialDie, openChest, recoil } from './effects';
+import { blowWind, runConveyors } from './floors';
 import { attemptGate, chooseDoor, payToll, resolveSkillGate } from './gates';
 import { moveWithDice } from './movement';
 import { applyWheelSegment, MAX_BET, placeBet, settleBets } from './spaces';
@@ -671,8 +672,9 @@ function endTurn(ctx: Context): void {
 
 /**
  * Fin de manche : la victoire se décide ici. Un seul joueur a ouvert la porte finale : il
- * gagne. Plusieurs : finale en mini-jeu. Personne : petit événement de manche, jauge
- * TROUBLE, réveil du Plateau si elle est pleine, puis nouvelle manche.
+ * gagne. Plusieurs : finale en mini-jeu. Personne : tapis roulants, coups de vent, petit
+ * événement de manche, jauge TROUBLE, réveil du Plateau si elle est pleine, puis nouvelle
+ * manche.
  */
 function endRound(ctx: Context): void {
   const { state } = ctx;
@@ -693,6 +695,8 @@ function endRound(ctx: Context): void {
   // Les effets de fin de manche ont leur propre pile ou face, hors de tout tour.
   state.phase = { type: 'minigame' };
   state.turn = freshTurn();
+  runConveyors(ctx);
+  blowWind(ctx);
   playRoundEvent(ctx);
   addGauge(ctx, ROUND_GAIN, 'round');
   if (gapBetweenFirstAndLast(ctx) > GAP_THRESHOLD) addGauge(ctx, GAP_GAIN, 'gap');

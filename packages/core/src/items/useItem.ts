@@ -5,10 +5,10 @@ import {
   applyHostile,
   isGate,
   opponentOf,
-  recoil,
   stealRandomItem,
   swapPlaces,
 } from '../game/effects';
+import { push } from '../game/floors';
 import type { GameState, IntentError, PlayerId, PlayerState } from '../game/types';
 import { ITEMS, type ItemId } from './catalog';
 
@@ -141,7 +141,7 @@ function useOnTarget(ctx: Context, user: PlayerState, item: ItemId, target: Play
   switch (item) {
     case 'blower':
       return applyHostile(ctx, target, source, (victim) =>
-        recoil(ctx, victim, BLOWER_PUSH, opponentOf(victim, user, target).id),
+        push(ctx, victim, BLOWER_PUSH, opponentOf(victim, user, target).id),
       );
     case 'hourglass':
       return applyHostile(ctx, target, source, (victim) => {

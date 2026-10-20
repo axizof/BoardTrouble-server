@@ -317,6 +317,11 @@ export type GameEvent =
   | { type: 'specialDieRefused'; playerId: PlayerId; die: SpecialDieKind }
   | { type: 'specialDieDiscarded'; playerId: PlayerId; die: SpecialDieKind }
   | { type: 'specialDieTrapped'; playerId: PlayerId }
+  | { type: 'fell'; playerId: PlayerId; from: SpaceId; to: SpaceId }
+  | { type: 'parachuteOpened'; playerId: PlayerId }
+  | { type: 'jostled'; playerId: PlayerId; players: PlayerId[] }
+  | { type: 'conveyorMoved'; playerId: PlayerId; spaceId: SpaceId }
+  | { type: 'windBlew'; floor: number; strength: number; pushed: PlayerId[] }
   | { type: 'chestOpened'; playerId: PlayerId; chest: 0 | 1; trapped: boolean }
   | { type: 'rerolled'; playerId: PlayerId; previous: DiceRoll; roll: DiceRoll }
   | { type: 'troubleGauge'; value: number; added: number; reason: 'round' | 'double' | 'gap' }

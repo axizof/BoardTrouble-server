@@ -131,6 +131,7 @@ const TROUBLE_PREFERENCE: TroubleEventId[] = [
   'tax',
   'itemRain',
   'bonusMinigame',
+  'earthquake',
   'rotation',
   'inversion',
   'eruption',

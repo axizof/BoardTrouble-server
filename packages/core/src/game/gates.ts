@@ -3,6 +3,7 @@ import { rollDice } from '../dice/dice';
 import type { ItemId } from '../items/catalog';
 import { type Context, type Flow, removeItem } from './context';
 import { applyHostile, isGate, recoil } from './effects';
+import { fallFromEdge, isIce } from './floors';
 import { moveWithDice } from './movement';
 import type { PlayerState } from './types';
 
@@ -107,12 +108,13 @@ function thresholdTest(
 
 /**
  * Le rocher dévale 15 cases depuis la porte : tous les joueurs sur sa trajectoire, celui qui
- * l'a lâché compris, sont poussés jusqu'au bas de sa course (pas au-delà). Le Bouclier
- * protège ; les joueurs intouchables (Cachot, porte finale ouverte) sont épargnés.
+ * l'a lâché compris, sont poussés jusqu'au bas de sa course (pas au-delà, ni sur une case
+ * gelée). C'est une poussée : un joueur sur une case de bord tombe. Le Bouclier protège ;
+ * les joueurs intouchables (Cachot, porte finale ouverte) sont épargnés.
  */
 function rollBoulder(ctx: Context, trigger: PlayerState, gateId: SpaceId): void {
   let bottom = gateId;
-  for (let i = 0; i < BOULDER_COURSE; i++) {
+  for (let i = 0; i < BOULDER_COURSE || isIce(ctx.board, bottom); i++) {
     const previous = ctx.board.predecessors.get(bottom)?.[0];
     if (previous === undefined) break;
     bottom = previous;
@@ -125,6 +127,7 @@ function rollBoulder(ctx: Context, trigger: PlayerState, gateId: SpaceId): void 
     const distance = distanceToGoal(ctx.board, player.position);
     if (distance < top || distance >= floor) continue;
     applyHostile(ctx, player, null, (victim) => {
+      if (fallFromEdge(ctx, victim)) return 'continue';
       victim.position = bottom;
       victim.trail = [];
       victim.atGate = isGate(getSpace(ctx.board, bottom).kind);

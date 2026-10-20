@@ -1,4 +1,4 @@
-import { type Board, distanceToGoal, getSpace } from '../board/board';
+import { type Board, distanceToGoal, getSpace, type SpaceId } from '../board/board';
 import { type Context, type Flow, getPlayer } from '../game/context';
 import {
   advanceByEffect,
@@ -8,18 +8,29 @@ import {
   stealRandomItem,
   swapPlaces,
 } from '../game/effects';
+import { push } from '../game/floors';
 import type { GameState, PlayerId, PlayerState, TargetedInteraction } from '../game/types';
 
-export type InteractionKind = TargetedInteraction | 'squall' | 'swap' | 'oneVsAll' | 'vendetta';
+export type InteractionKind =
+  | TargetedInteraction
+  | 'squall'
+  | 'swap'
+  | 'oneVsAll'
+  | 'vendetta'
+  | 'jostle';
 
 const SQUALL_MIN = 4;
 const SQUALL_MAX = 6;
 const MAGNET_PULL = 4;
 const DUEL_STAKE = 6;
 const ONE_VS_ALL_REWARD = 10;
+const JOSTLE_REACH = 2;
+const JOSTLE_PUSH = 1;
 
 export function isInteraction(type: string): type is InteractionKind {
-  return ['squall', 'swap', 'magnet', 'steal', 'duel', 'oneVsAll', 'vendetta'].includes(type);
+  return ['squall', 'swap', 'magnet', 'steal', 'duel', 'oneVsAll', 'vendetta', 'jostle'].includes(
+    type,
+  );
 }
 
 /**
@@ -80,7 +91,22 @@ export function startInteraction(ctx: Context, player: PlayerState, kind: Intera
         interaction: 'squall',
       });
       ctx.events.push({ type: 'squallHit', playerId: target.id, spaces });
-      return applyHostile(ctx, target, null, (victim) => recoil(ctx, victim, spaces));
+      return applyHostile(ctx, target, null, (victim) => push(ctx, victim, spaces));
+    }
+    case 'jostle': {
+      const around = spacesAround(ctx.board, player.position, JOSTLE_REACH);
+      const jostled = opponents(state, player.id).filter((other) => around.has(other.position));
+      if (jostled.length === 0) return 'continue';
+      ctx.events.push({
+        type: 'jostled',
+        playerId: player.id,
+        players: jostled.map((other) => other.id),
+      });
+      // Effet venu d'une case, comme la Bourrasque : le Bouclier protège, pas le Miroir.
+      const flows = jostled.map((other) =>
+        applyHostile(ctx, other, null, (victim) => push(ctx, victim, JOSTLE_PUSH)),
+      );
+      return flows.includes('paused') ? 'paused' : 'continue';
     }
     case 'swap': {
       const candidates = opponents(state, player.id).filter(
@@ -133,6 +159,19 @@ export function startInteraction(ctx: Context, player: PlayerState, kind: Intera
       return 'paused';
     }
   }
+}
+
+/** Cases à `radius` pas ou moins de `origin` sur le chemin, devant comme derrière. */
+function spacesAround(board: Board, origin: SpaceId, radius: number): Set<SpaceId> {
+  const seen = new Set([origin]);
+  let frontier = [origin];
+  for (let step = 0; step < radius; step++) {
+    frontier = frontier
+      .flatMap((id) => [...getSpace(board, id).next, ...(board.predecessors.get(id) ?? [])])
+      .filter((id) => !seen.has(id));
+    for (const id of frontier) seen.add(id);
+  }
+  return seen;
 }
 
 /** Le joueur a choisi sa cible. */
