@@ -1,7 +1,7 @@
 import {
   type Board,
   distanceToGoal,
-  floorRules,
+  getFloor,
   getSpace,
   type Space,
   type SpaceId,
@@ -29,7 +29,7 @@ const WIND_MAX = 2;
 export function push(ctx: Context, player: PlayerState, amount: number, attacker?: PlayerId): Flow {
   if (fallFromEdge(ctx, player, attacker)) return 'continue';
   const { floor } = getSpace(ctx.board, player.position);
-  const mud = floorRules(ctx.board, floor).muddy ? MUD_EXTRA : 0;
+  const mud = getFloor(ctx.board, floor).muddy ? MUD_EXTRA : 0;
   return recoil(ctx, player, amount + mud, attacker);
 }
 
@@ -106,7 +106,7 @@ export function blowWind(ctx: Context): void {
   // Du bas vers le haut : un joueur tombé d'un étage venteux ne subit pas un second coup.
   const floors = [...new Set(free.map(floorOf))].sort((a, b) => a - b);
   for (const floor of floors) {
-    if (!floorRules(ctx.board, floor).windy || !ctx.rng.chance(WIND_CHANCE)) continue;
+    if (!getFloor(ctx.board, floor).windy || !ctx.rng.chance(WIND_CHANCE)) continue;
     const exposed = free.filter((player) => floorOf(player) === floor);
     const strength = ctx.rng.int(WIND_MIN, WIND_MAX);
     ctx.events.push({

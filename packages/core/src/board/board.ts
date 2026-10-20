@@ -118,10 +118,15 @@ export type Space = {
    * verticale sur l'étage du dessous.
    */
   fallsTo?: SpaceId;
+  /** Position dans la scène 3D (1 unité = la taille d'un personnage), pour l'affichage. */
+  position?: Point;
 };
 
-/** Mécaniques propres à un étage entier. */
-export type FloorRules = {
+export type Point = { x: number; y: number; z: number };
+
+/** Un étage entier : son nom affiché et ses mécaniques propres. */
+export type FloorDefinition = {
+  name?: string;
   /** Boue : toute poussée va 2 cases plus loin. */
   muddy?: boolean;
   /** Coups de vent occasionnels en fin de manche. */
@@ -133,8 +138,8 @@ export type BoardDefinition = {
   name: string;
   start: SpaceId;
   spaces: Record<SpaceId, Space>;
-  /** Règles par numéro d'étage ; un étage absent n'a rien de particulier. */
-  floors?: Record<number, FloorRules>;
+  /** Étages par numéro ; un étage absent n'a ni nom ni mécanique propre. */
+  floors?: Record<number, FloorDefinition>;
 };
 
 /** Plateau validé, avec les données calculées une fois pour toutes. */
@@ -264,7 +269,7 @@ export function getSpace(board: Board, id: SpaceId): Space {
   return space;
 }
 
-export function floorRules(board: Board, floor: number): FloorRules {
+export function getFloor(board: Board, floor: number): FloorDefinition {
   return board.definition.floors?.[floor] ?? {};
 }
 
