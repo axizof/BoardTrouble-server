@@ -7,10 +7,22 @@ import {
   SPECIAL_DICE,
   type SpecialDieKind,
 } from '../dice/dice';
-import { resolveDuel, resolveOneVsAll, resolveTarget } from '../interactions/interactions';
+import {
+  resolveDuel,
+  resolveOneVsAll,
+  resolveTarget,
+  startOneVsAll,
+} from '../interactions/interactions';
 import { drawItem, type ItemId } from '../items/catalog';
 import { itemUseError, useItem } from '../items/useItem';
 import { advanceInJail, openTrapdoor, spinWheel, startJailTurn } from '../jail/jail';
+import type { MinigameId } from '../minigames/catalog';
+import {
+  chooseMinigame,
+  drawMinigame,
+  grantMinigameChoice,
+  startRoundMinigame,
+} from '../minigames/selection';
 import { Rng } from '../random/rng';
 import {
   applyTrouble,
@@ -45,6 +57,7 @@ import type {
   PlayerId,
   PlayerState,
   Resume,
+  RoundEventId,
   TurnModifiers,
   TurnStep,
 } from './types';
@@ -101,7 +114,8 @@ export function createGame(
     overlays: { inversionUntil: null, eruptionUntil: null, fog: null },
     finalGateOpenedBy: [],
     bets: [],
-    phase: { type: 'minigame' },
+    minigames: { played: {}, last: null, nextChooser: null },
+    phase: { type: 'transition' },
     rngState: 0,
   };
   const ctx = newContext(board, state, rng);
@@ -134,6 +148,7 @@ export function whoMustAct(state: GameState): Actor | null {
       }
       return { type: 'player', playerId: phase.playerId };
     case 'trouble':
+    case 'minigameChoice':
       return { type: 'player', playerId: phase.chooser };
     case 'itemChoices': {
       const [next] = phase.queue;
@@ -141,6 +156,8 @@ export function whoMustAct(state: GameState): Actor | null {
     }
     case 'finished':
       return null;
+    case 'transition':
+      throw new Error("Phase transitoire : elle n'est jamais en attente");
   }
 }
 
@@ -171,7 +188,12 @@ export function applyIntent(
       finishBonusMinigame(ctx, intent.ranking);
       break;
     case 'chooseTrouble':
-      chooseTrouble(ctx, intent.event);
+      if (ctx.state.phase.type === 'trouble') chooseTrouble(ctx, intent.event);
+      else resolvePause(ctx, (player) => applyTrouble(ctx, intent.event, player.id, null));
+      break;
+    case 'chooseMinigame':
+      if (ctx.state.phase.type === 'minigameChoice') chooseRoundMinigame(ctx, intent.minigame);
+      else resolvePause(ctx, (player) => startOneVsAll(ctx, player, intent.minigame));
       break;
     case 'useItem':
       // Une pause pendant l'objet (coffre atteint par la Fusée...) ramène ensuite au lancer.
@@ -269,10 +291,15 @@ function checkIntent(
       if (phase.type !== 'finale') return 'wrongPhase';
       return isCompleteRanking(intent.ranking, phase.contenders) ? null : 'invalidRanking';
     case 'chooseTrouble':
+      if (phase.type !== 'trouble') break;
       if (actor.type !== 'player') return 'notAllowed';
-      if (phase.type !== 'trouble') return 'wrongPhase';
       if (phase.chooser !== actor.playerId) return 'notYourTurn';
       return phase.options.includes(intent.event) ? null : 'invalidChoice';
+    case 'chooseMinigame':
+      if (phase.type !== 'minigameChoice') break;
+      if (actor.type !== 'player') return 'notAllowed';
+      if (phase.chooser !== actor.playerId) return 'notYourTurn';
+      return phase.options.includes(intent.minigame) ? null : 'invalidChoice';
     case 'submitSkillGateResult':
       if (actor.type !== 'system') return 'notAllowed';
       return phase.type === 'turn' && phase.step.type === 'awaitSkillGate' ? null : 'wrongPhase';
@@ -346,6 +373,12 @@ function checkIntent(
     case 'chooseTarget':
       if (step.type !== 'awaitTarget') return 'wrongPhase';
       return step.options.includes(intent.playerId) ? null : 'invalidChoice';
+    case 'chooseMinigame':
+      if (step.type !== 'awaitOneVsAllChoice') return 'wrongPhase';
+      return step.options.includes(intent.minigame) ? null : 'invalidChoice';
+    case 'chooseTrouble':
+      if (step.type !== 'awaitTroubleChoice') return 'wrongPhase';
+      return step.options.includes(intent.event) ? null : 'invalidChoice';
     case 'chooseJailAction':
       if (step.type !== 'awaitJailChoice') return 'wrongPhase';
       return intent.action === 'advance' || intent.action === 'wheel' ? null : 'invalidChoice';
@@ -594,7 +627,9 @@ type PausedStep = Extract<
       | 'awaitOneVsAllResult'
       | 'awaitWheel'
       | 'awaitBet'
-      | 'awaitSpecialDieSwap';
+      | 'awaitSpecialDieSwap'
+      | 'awaitOneVsAllChoice'
+      | 'awaitTroubleChoice';
   }
 >;
 
@@ -625,6 +660,8 @@ function isPausedStep(step: TurnStep): step is PausedStep {
     'awaitWheel',
     'awaitBet',
     'awaitSpecialDieSwap',
+    'awaitOneVsAllChoice',
+    'awaitTroubleChoice',
   ].includes(step.type);
 }
 
@@ -687,13 +724,14 @@ function endRound(ctx: Context): void {
     return;
   }
   if (openers.length > 1) {
-    state.phase = { type: 'finale', contenders: [...openers] };
+    const minigame = drawMinigame(ctx, 'finale', openers.length);
+    state.phase = { type: 'finale', contenders: [...openers], minigame };
     ctx.events.push({ type: 'finaleStarted', contenders: [...openers] });
     return;
   }
 
   // Les effets de fin de manche ont leur propre pile ou face, hors de tout tour.
-  state.phase = { type: 'minigame' };
+  state.phase = { type: 'transition' };
   state.turn = freshTurn();
   runConveyors(ctx);
   blowWind(ctx);
@@ -721,12 +759,16 @@ function playRoundEvent(ctx: Context): void {
   const free = ctx.state.players.filter((candidate) => candidate.jail === null);
   if (free.length === 0) return;
   const player = ctx.rng.pick(free);
-  const event = ctx.rng.pick(['bird', 'hole', 'foundItem', 'foundSpecialDie'] as const);
+  const events: RoundEventId[] = ['bird', 'hole', 'foundItem', 'foundSpecialDie'];
+  // Un seul joueur à la fois a le droit de choisir le prochain mini-jeu.
+  if (ctx.state.minigames.nextChooser === null) events.push('minigameChoice');
+  const event = ctx.rng.pick(events);
   ctx.events.push({ type: 'roundEvent', event, playerId: player.id });
   if (event === 'bird') advanceByEffect(ctx, player, BIRD_STEPS);
   else if (event === 'hole') recoil(ctx, player, HOLE_STEPS);
   else if (event === 'foundItem') gainItem(ctx, player, drawItem(ctx.rng, 0), 'roundEvent');
-  else gainSpecialDie(ctx, player, ctx.rng.pick(SPECIAL_DICE));
+  else if (event === 'foundSpecialDie') gainSpecialDie(ctx, player, ctx.rng.pick(SPECIAL_DICE));
+  else grantMinigameChoice(ctx, player);
 }
 
 function gapBetweenFirstAndLast(ctx: Context): number {
@@ -793,7 +835,6 @@ function proceedToNextRound(ctx: Context): void {
   }
 
   state.round++;
-  state.phase = { type: 'minigame' };
   const { overlays } = state;
   if (overlays.inversionUntil !== null && overlays.inversionUntil < state.round) {
     overlays.inversionUntil = null;
@@ -807,6 +848,15 @@ function proceedToNextRound(ctx: Context): void {
     overlays.fog = null;
     ctx.events.push({ type: 'overlayEnded', overlay: 'fog' });
   }
+  startRoundMinigame(ctx);
+}
+
+/** Le joueur qui en avait le droit a choisi le mini-jeu de manche. */
+function chooseRoundMinigame(ctx: Context, minigame: MinigameId): void {
+  const { phase } = ctx.state;
+  if (phase.type !== 'minigameChoice') throw new Error('Pas de choix de mini-jeu en attente');
+  chooseMinigame(ctx, getPlayer(ctx.state, phase.chooser), minigame);
+  ctx.state.phase = { type: 'minigame', minigame };
 }
 
 function finishFinale(ctx: Context, ranking: PlayerId[][]): void {

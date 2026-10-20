@@ -124,7 +124,7 @@ describe('turns', () => {
     for (let turn = 0; turn < 4; turn++) {
       state = act(board, state, player(currentPlayer(state)), { type: 'roll' }).state;
     }
-    expect(state.phase).toEqual({ type: 'minigame' });
+    expect(state.phase).toMatchObject({ type: 'minigame' });
     expect(state.round).toBe(2);
 
     expect(

@@ -316,7 +316,10 @@ describe('movement spaces', () => {
     }).state;
     expect(placed.bets).toEqual([{ playerId: 'ana', on: 'bob', stake: 3 }]);
 
-    const minigame = { ...placed, phase: { type: 'minigame' as const } };
+    const minigame = {
+      ...placed,
+      phase: { type: 'minigame' as const, minigame: 'stacker' as const },
+    };
     const won = act(board, minigame, SYSTEM, {
       type: 'submitMinigameResult',
       ranking: [['bob'], ['ana'], ['cam'], ['dan']],

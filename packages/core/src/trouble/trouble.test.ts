@@ -297,20 +297,20 @@ describe('TROUBLE events', () => {
       type: 'resolveItemSwap',
       discard: bobChoice.offered,
     }).state;
-    expect(afterBob.phase).toEqual({ type: 'minigame' });
+    expect(afterBob.phase).toMatchObject({ type: 'minigame' });
     expect(get(afterBob, 'bob').inventory).toEqual(['turboDie', 'rocket', 'glue']);
   });
 
   test('Bonus minigame: its winner moves forward 8 spaces', () => {
     const { board, state } = ranked();
     const started = troubleChosen(board, state, 'bonusMinigame').state;
-    expect(started.phase).toEqual({ type: 'bonusMinigame' });
+    expect(started.phase).toMatchObject({ type: 'bonusMinigame' });
     const { state: after } = act(board, started, SYSTEM, {
       type: 'submitBonusMinigameResult',
       ranking: [['cam'], ['ana'], ['bob'], ['dan']],
     });
     expect(get(after, 'cam').position).toBe('s28');
-    expect(after.phase).toEqual({ type: 'minigame' });
+    expect(after.phase).toMatchObject({ type: 'minigame' });
   });
 });
 

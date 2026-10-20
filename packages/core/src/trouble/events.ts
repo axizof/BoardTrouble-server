@@ -5,6 +5,7 @@ import { fallFromEdge, isOnEdge, push } from '../game/floors';
 import { progressRanking } from '../game/progress';
 import type { GameState, PlayerId, PlayerState } from '../game/types';
 import { catchUpFactor, drawItem, ITEM_VALUE } from '../items/catalog';
+import { drawMinigame } from '../minigames/selection';
 import type { Rng } from '../random/rng';
 import { isSpecial } from './overlays';
 
@@ -85,6 +86,23 @@ export function drawTroubleOptions(board: Board, state: GameState, rng: Rng): Tr
   return categories.flatMap((category) => {
     const candidates = EVENTS.filter(
       (event) => TROUBLE_CATEGORY[event] === category && isApplicable(board, state, event),
+    );
+    return candidates.length > 0 ? [rng.pick(candidates)] : [];
+  });
+}
+
+/**
+ * Sceau du Plateau : un événement de chaque violence (doux, moyen, violent). Pas de Mini-jeu
+ * bonus : il couperait le tour en cours.
+ */
+export function drawSealOptions(board: Board, state: GameState, rng: Rng): TroubleEventId[] {
+  const categories: TroubleCategory[] = ['mild', 'medium', 'violent'];
+  return categories.flatMap((category) => {
+    const candidates = EVENTS.filter(
+      (event) =>
+        TROUBLE_CATEGORY[event] === category &&
+        event !== 'bonusMinigame' &&
+        isApplicable(board, state, event),
     );
     return candidates.length > 0 ? [rng.pick(candidates)] : [];
   });
@@ -177,7 +195,10 @@ export function applyTrouble(
       }
       return 'continue';
     case 'bonusMinigame':
-      state.phase = { type: 'bonusMinigame' };
+      state.phase = {
+        type: 'bonusMinigame',
+        minigame: drawMinigame(ctx, 'round', state.tableSize),
+      };
       ctx.events.push({ type: 'bonusMinigameStarted' });
       return 'continue';
     case 'tax': {

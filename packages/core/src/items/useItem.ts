@@ -3,6 +3,7 @@ import { type Context, type Flow, getPlayer, removeItem } from '../game/context'
 import {
   advanceByEffect,
   applyHostile,
+  gainItem,
   isGate,
   opponentOf,
   stealRandomItem,
@@ -10,11 +11,15 @@ import {
 } from '../game/effects';
 import { push } from '../game/floors';
 import type { GameState, IntentError, PlayerId, PlayerState } from '../game/types';
-import { ITEMS, type ItemId } from './catalog';
+import { grantMinigameChoice } from '../minigames/selection';
+import { applyTrouble, drawSealOptions, drawSpaceEvent } from '../trouble/events';
+import { catchUpFactor, drawItem, ITEMS, type ItemId } from './catalog';
 
 const ROCKET_STEPS = 6;
 const BLOWER_RANGE = 6;
 const BLOWER_PUSH = 4;
+/** Boîte mystère : un objet le plus souvent, sinon un petit TROUBLE sur soi. */
+const MYSTERY_ITEM_CHANCE = 0.6;
 
 /** Cibles valides d'un objet ciblé. Sert au moteur (validation), aux bots et à l'interface. */
 export function validTargets(
@@ -75,6 +80,8 @@ export function itemUseError(
   const { use } = ITEMS[item];
   if (use === 'passive') return 'itemNotUsable';
   if (item === 'mirror' && user.mirrorArmed) return 'itemNotUsable';
+  // Un seul joueur à la fois a le droit de choisir le prochain mini-jeu.
+  if (item === 'joker' && state.minigames.nextChooser !== null) return 'itemNotUsable';
   if (item === 'glue' || item === 'firecracker') {
     const space = getSpace(board, user.position);
     const blocked = space.kind.type === 'start' || isGate(space.kind) || state.traps[space.id];
@@ -119,6 +126,22 @@ export function useItem(ctx: Context, user: PlayerState, item: ItemId, targetId?
     case 'rocket':
       state.bonusDice[user.id] = null;
       return advanceByEffect(ctx, user, ROCKET_STEPS);
+    case 'joker':
+      grantMinigameChoice(ctx, user);
+      return 'continue';
+    case 'mysteryBox':
+      return openMysteryBox(ctx, user);
+    case 'boardSeal':
+      state.phase = {
+        type: 'turn',
+        playerId: user.id,
+        step: {
+          type: 'awaitTroubleChoice',
+          options: drawSealOptions(ctx.board, state, ctx.rng),
+          resume: ctx.resume,
+        },
+      };
+      return 'paused';
     case 'glue':
     case 'firecracker':
       state.traps[user.position] = { type: item, owner: user.id };
@@ -134,6 +157,25 @@ export function useItem(ctx: Context, user: PlayerState, item: ItemId, targetId?
       if (targetId === undefined) throw new Error(`Cible manquante pour ${item}`);
       return useOnTarget(ctx, user, item, getPlayer(state, targetId));
   }
+}
+
+/**
+ * Boîte mystère : un objet (le coup de pouce des derniers compris), ou le petit TROUBLE d'une
+ * case TROUBLE, avec soi-même comme joueur concerné.
+ */
+function openMysteryBox(ctx: Context, user: PlayerState): Flow {
+  const isItem = ctx.rng.chance(MYSTERY_ITEM_CHANCE);
+  ctx.events.push({
+    type: 'mysteryBoxOpened',
+    playerId: user.id,
+    outcome: isItem ? 'item' : 'trouble',
+  });
+  if (isItem) {
+    const catchUp = catchUpFactor(ctx.board, ctx.state, user.id);
+    return gainItem(ctx, user, drawItem(ctx.rng, catchUp), 'mysteryBox');
+  }
+  const event = drawSpaceEvent(ctx.board, ctx.state, ctx.rng);
+  return event === null ? 'continue' : applyTrouble(ctx, event, null, user);
 }
 
 function useOnTarget(ctx: Context, user: PlayerState, item: ItemId, target: PlayerState): Flow {
