@@ -5,6 +5,11 @@ import { type GameRecord, simulateGame } from './simulate';
 
 // Estimation de durée réelle : mini-jeu avec sa présentation, et un tour animé.
 const MINIGAME_SECONDS = 110;
+/**
+ * Même avantage à 4 et à 6 : l'Expert gagne 2 à 3,7 fois plus souvent que chaque Normal
+ * (03-equilibrage.md, mesure 10).
+ */
+const EXPERT_TARGET: Record<TableSize, string> = { 4: '40 à 55 %', 6: '30 à 42 %' };
 const TURN_SECONDS = 15;
 
 const args = new Map<string, string>();
@@ -61,9 +66,15 @@ function report(title: string, records: GameRecord[]): void {
   console.log(
     `  Chutes         : ${average(records.map((record) => record.falls)).toFixed(1)} par partie`,
   );
+  console.log(
+    `  TROUBLE        : ${average(records.map((record) => record.troubleWakes)).toFixed(1)} réveils par partie, Grand Échange dans ${percent(records.filter((record) => record.grandExchanges > 0).length, records.length)} des parties`,
+  );
+  console.log(
+    `  Objets         : ${average(records.map((record) => record.legendaryItems)).toFixed(2)} objet légendaire par partie`,
+  );
   if (expertGames > 0) {
     console.log(
-      `  Expert         : gagne ${percent(expertGames, records.length)} des parties (cible : 40 à 55 %)`,
+      `  Expert         : gagne ${percent(expertGames, records.length)} des parties (cible : ${EXPERT_TARGET[tableSize]})`,
     );
   }
   console.log('');
