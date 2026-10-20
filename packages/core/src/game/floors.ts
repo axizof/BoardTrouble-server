@@ -12,8 +12,11 @@ import type { GameState, PlayerId, PlayerState } from './types';
 
 // Mécaniques d'étage (01-vision-et-plateau.md, section 7).
 const MUD_EXTRA = 2;
-// Proportions à régler au simulateur.
-export const WIND_CHANCE = 0.25;
+/**
+ * Environ une manche sur sept : plus souvent, le vent de la Crête décidait trop de fins de
+ * partie (mesure 10).
+ */
+export const WIND_CHANCE = 0.15;
 const WIND_MIN = 1;
 const WIND_MAX = 2;
 
