@@ -105,54 +105,65 @@ const FLOORS: FloorPlan[] = [
   {
     name: 'Prairie des Pions',
     route: {
-      // De la plage, côté droit, de grands S vers la gauche au pied de la montagne ; le
-      // chemin rentre vers la paroi là où la voie tentante s'écarte vers la plage.
+      // De la plage, devant, la Prairie fait presque tout le tour de la montagne vers la
+      // gauche, en grands S, avec un détour vers la plage au début.
       waypoints: [
-        { turn: -0.15, radius: 46 },
-        { turn: -0.11, radius: 42.5 },
-        { turn: -0.07, radius: 46.5 },
-        { turn: -0.03, radius: 43.5 },
-        { turn: 0, radius: 41.5 },
-        { turn: 0.03, radius: 43.5 },
-        { turn: 0.08, radius: 47 },
-        { turn: 0.13, radius: 43 },
-        { turn: 0.18, radius: 46.5 },
-        { turn: 0.22, radius: 43 },
-        { turn: 0.27, radius: 45 },
+        { turn: 0.0, radius: 47.51 },
+        { turn: 0.0531, radius: 50.1 },
+        { turn: 0.1062, radius: 48.67 },
+        { turn: 0.1594, radius: 49.78 },
+        { turn: 0.2125, radius: 45.7 },
+        { turn: 0.2656, radius: 49.3 },
+        { turn: 0.3187, radius: 45.7 },
+        { turn: 0.3719, radius: 49.3 },
+        { turn: 0.425, radius: 45.7 },
+        { turn: 0.4781, radius: 49.3 },
+        { turn: 0.5312, radius: 45.7 },
+        { turn: 0.5844, radius: 49.3 },
+        { turn: 0.6375, radius: 45.7 },
+        { turn: 0.6906, radius: 49.3 },
+        { turn: 0.7438, radius: 45.7 },
+        { turn: 0.7969, radius: 49.3 },
+        { turn: 0.85, radius: 47.5 },
       ],
       height: [1, 5],
     },
     // Les bases : bonus, malus, objets. Pas de bord dangereux. Embranchement "calme contre
     // tentant" : deux voies de même longueur, l'une tranquille, l'autre avec un gros bonus,
-    // un coffre... et un -5. Un monte-charge plutôt qu'un ascenseur : tout le monde passe
-    // par la Prairie, un ascenseur toujours en marche y raccourcissait trop les parties.
+    // un coffre... et un -5. Un vrai ascenseur : sur ce plateau qui fait le tour de la
+    // montagne, le monte-charge (une manche sur deux) laissait les parties trop longues.
     line: [
       _, bonus(3), _, ITEM, _, malus(3), teleporter('f1-19'), bonus(3),
       _, _, REST, _, _, _, ITEM, SQUALL,
-      _, bonus(3), FREIGHT_LIFT, teleporter('f1-6'), springboard(8), ITEM, bonus(3), DUEL,
-      malus(3), _, malus(3), TROUBLE, _, bonus(3), _, { type: 'twinGate' },
+      _, bonus(3), _, teleporter('f1-6'), springboard(8), ITEM, _, bonus(3),
+      _, malus(3), _, ELEVATOR, bonus(3), DUEL, _, ITEM,
+      _, malus(3), TROUBLE, _, bonus(3), _, _, { type: 'twinGate' },
     ],
     edges: [],
     branches: [
-      { name: 'tempting', from: 8, to: 13, kinds: [bonus(5), CHEST, malus(5), bonus(3)], lane: { bow: 7 } },
+      { name: 'tempting', from: 8, to: 13, kinds: [bonus(5), CHEST, malus(5), bonus(3)], lane: { bow: 11 } },
     ],
   },
   {
     name: 'Marais aux Dés',
     route: {
-      // Retour vers la droite, au-dessus de la Prairie, en méandres entre les mares ; la voie
-      // exposée bombe vers le vide, la voie sûre longe la paroi.
+      // Le Marais repasse au-dessus de la Prairie dans l'autre sens, en méandres entre les mares.
       waypoints: [
-        { turn: 0.27, radius: 34.5 },
-        { turn: 0.21, radius: 31.5 },
-        { turn: 0.15, radius: 35 },
-        { turn: 0.09, radius: 36.5 },
-        { turn: 0.03, radius: 37 },
-        { turn: -0.03, radius: 33.5 },
-        { turn: -0.09, radius: 31.5 },
-        { turn: -0.15, radius: 35 },
-        { turn: -0.21, radius: 32 },
-        { turn: -0.27, radius: 34 },
+        { turn: 0.85, radius: 37.5 },
+        { turn: 0.7893, radius: 39.1 },
+        { turn: 0.7286, radius: 35.9 },
+        { turn: 0.6679, radius: 39.1 },
+        { turn: 0.6071, radius: 35.9 },
+        { turn: 0.5464, radius: 39.1 },
+        { turn: 0.4857, radius: 35.9 },
+        { turn: 0.425, radius: 39.1 },
+        { turn: 0.3643, radius: 35.9 },
+        { turn: 0.3036, radius: 39.1 },
+        { turn: 0.2429, radius: 35.9 },
+        { turn: 0.1821, radius: 39.1 },
+        { turn: 0.1214, radius: 35.9 },
+        { turn: 0.0607, radius: 39.1 },
+        { turn: 0.0, radius: 37.5 },
       ],
       height: [9, 13],
     },
@@ -160,35 +171,34 @@ const FLOORS: FloorPlan[] = [
     // courte longe le vide (objets, coffre, mais un Échange), la longue longe la paroi.
     line: [
       _, SPECIAL_DIE, bonus(3), _, GIANT_DIE, malus(3), seesaw('f2-17'), ITEM,
-      SLIDE, _, ITEM, SWAP, CHEST, _, ELEVATOR, BET,
-      bonus(3), seesaw('f2-6'), _, FILOUS, ONE_VS_ALL, GIANT_DIE, malus(3), bonus(3),
-      TROUBLE, { type: 'skillGate' },
+      _, SLIDE, _, ITEM, SWAP, CHEST, _, BET,
+      bonus(3), seesaw('f2-6'), _, ITEM, _, ELEVATOR, FILOUS, ONE_VS_ALL,
+      _, GIANT_DIE, malus(3), _, bonus(3), _, TROUBLE, { type: 'skillGate' },
     ],
-    edges: [10, 11, 12],
+    edges: [11, 12, 13],
     branches: [
-      { name: 'wall', from: 9, to: 13, kinds: [bonus(3), _, bonus(5), _, ITEM], lane: { bow: -2.5, rise: 1 } },
+      { name: 'wall', from: 10, to: 14, kinds: [bonus(3), _, bonus(5), _, ITEM], lane: { bow: -1.8, rise: 1 } },
     ],
   },
   {
     name: 'Ateliers',
     route: {
-      // Vers la gauche : la voie exposée bombe vers le vide, puis une grande boucle autour
-      // des machines, que le pont-levis coupe en ligne droite.
+      // Les Ateliers repartent vers la gauche, avec une grande boucle autour des machines
+      // que le pont-levis coupe en ligne droite.
       waypoints: [
-        { turn: -0.27, radius: 24 },
-        { turn: -0.21, radius: 21.5 },
-        { turn: -0.15, radius: 25 },
-        { turn: -0.09, radius: 26.5 },
-        { turn: -0.03, radius: 26.5 },
-        { turn: 0.02, radius: 23 },
-        { turn: 0.06, radius: 25.5 },
-        { turn: 0.085, radius: 22.5 },
-        { turn: 0.1, radius: 20 },
-        { turn: 0.16, radius: 20 },
-        { turn: 0.175, radius: 22.5 },
-        { turn: 0.2, radius: 25.5 },
-        { turn: 0.24, radius: 23.5 },
-        { turn: 0.27, radius: 24 },
+        { turn: 0.0, radius: 28.0 },
+        { turn: 0.0708, radius: 29.3 },
+        { turn: 0.1417, radius: 26.7 },
+        { turn: 0.2125, radius: 29.3 },
+        { turn: 0.2833, radius: 26.7 },
+        { turn: 0.3542, radius: 29.3 },
+        { turn: 0.425, radius: 26.7 },
+        { turn: 0.4958, radius: 29.3 },
+        { turn: 0.5667, radius: 26.61 },
+        { turn: 0.6375, radius: 26.42 },
+        { turn: 0.7083, radius: 26.35 },
+        { turn: 0.7792, radius: 29.3 },
+        { turn: 0.85, radius: 28.0 },
       ],
       height: [17, 21],
     },
@@ -197,33 +207,32 @@ const FLOORS: FloorPlan[] = [
     line: [
       { type: 'wheel', segments: WORKSHOP_WHEEL }, conveyor('forward', 3), ITEM, malus(3),
       teleporter('f3-12'), SLIDE, _, TROUBLE,
-      ITEM, FILOUS, FREIGHT_LIFT, _, teleporter('f3-4'), bonus(3), conveyor('backward', 2), MAGNET,
-      bonus(3), _, malus(3), conveyor('forward', 3), _, { type: 'tollGate', threshold: 4 },
+      ITEM, FILOUS, _, bonus(3), teleporter('f3-4'), _, bonus(3), conveyor('backward', 2),
+      FREIGHT_LIFT, MAGNET, _, bonus(3), _, malus(3), conveyor('forward', 3), ITEM,
+      _, { type: 'tollGate', threshold: 4 },
     ],
     edges: [7, 8, 9],
     branches: [
-      { name: 'wall', from: 6, to: 10, kinds: [bonus(3), _, REST, bonus(5), _], lane: { bow: -2.5, rise: 1 } },
-      { name: 'bridge', from: 13, to: 18, kinds: [DRAWBRIDGE, _], lane: { bow: 2 } },
+      { name: 'wall', from: 6, to: 10, kinds: [bonus(3), _, REST, bonus(5), _], lane: { bow: -1.8, rise: 1 } },
+      { name: 'bridge', from: 17, to: 22, kinds: [DRAWBRIDGE, _], lane: { bow: 0 } },
     ],
   },
   {
     name: 'Glacier',
     route: {
-      // Vers la droite, en lacets entre séracs et crevasses, jusque derrière la montagne ; la
-      // voie glacée bombe vers le vide.
+      // Le Glacier revient vers la droite, en lacets entre séracs et crevasses.
       waypoints: [
-        { turn: 0.27, radius: 14 },
-        { turn: 0.2, radius: 12.5 },
-        { turn: 0.13, radius: 15 },
-        { turn: 0.06, radius: 16 },
-        { turn: -0.01, radius: 16 },
-        { turn: -0.08, radius: 16 },
-        { turn: -0.15, radius: 13 },
-        { turn: -0.22, radius: 15 },
-        { turn: -0.29, radius: 12.5 },
-        { turn: -0.36, radius: 15 },
-        { turn: -0.43, radius: 12.5 },
-        { turn: -0.5, radius: 14 },
+        { turn: 0.85, radius: 19.5 },
+        { turn: 0.765, radius: 20.7 },
+        { turn: 0.68, radius: 18.3 },
+        { turn: 0.595, radius: 20.7 },
+        { turn: 0.51, radius: 18.3 },
+        { turn: 0.425, radius: 20.7 },
+        { turn: 0.34, radius: 18.3 },
+        { turn: 0.255, radius: 20.7 },
+        { turn: 0.17, radius: 18.3 },
+        { turn: 0.085, radius: 20.7 },
+        { turn: 0.0, radius: 19.5 },
       ],
       height: [25, 29],
     },
@@ -232,31 +241,29 @@ const FLOORS: FloorPlan[] = [
     // jusqu'au +5... ou au -3), l'autre sûre.
     line: [
       _, ITEM, ICE, ICE, SQUALL, _, ICE, ICE,
-      bonus(5), malus(3), ELEVATOR, SLIDE, _, _, statue(10), ICE,
+      bonus(5), malus(3), _, SLIDE, ELEVATOR, _, statue(10), ICE,
       ICE, TROUBLE, ITEM, { type: 'boulderGate', threshold: 5 },
     ],
     edges: [8, 9],
     branches: [
-      { name: 'wall', from: 5, to: 10, kinds: [ITEM, _, bonus(3), _], lane: { bow: -1, rise: 1 } },
+      { name: 'wall', from: 5, to: 10, kinds: [ITEM, _, bonus(3), _], lane: { bow: -1.5, rise: 1 } },
     ],
   },
   {
     name: 'Crête des Nuages',
     route: {
-      // Repart au-dessus du Glacier, puis s'enroule en colimaçon jusqu'au sommet, à l'arrière
-      // de la montagne.
+      // La Crête repart de devant et s'enroule en colimaçon jusqu'au sommet.
       waypoints: [
-        { turn: -0.5, radius: 8 },
-        { turn: -0.38, radius: 7 },
-        { turn: -0.26, radius: 8 },
-        { turn: -0.14, radius: 7.5 },
-        { turn: -0.02, radius: 8 },
-        { turn: 0.1, radius: 7 },
-        { turn: 0.22, radius: 7.5 },
-        { turn: 0.34, radius: 6.5 },
-        { turn: 0.45, radius: 5 },
-        { turn: 0.54, radius: 3.5 },
-        { turn: 0.6, radius: 1 },
+        { turn: 0, radius: 12.5 },
+        { turn: 0.12, radius: 12 },
+        { turn: 0.24, radius: 12.5 },
+        { turn: 0.36, radius: 11.5 },
+        { turn: 0.48, radius: 10.5 },
+        { turn: 0.6, radius: 9 },
+        { turn: 0.7, radius: 7 },
+        { turn: 0.78, radius: 5 },
+        { turn: 0.84, radius: 3 },
+        { turn: 0.88, radius: 1 },
       ],
       height: [33, 37],
     },
@@ -272,7 +279,7 @@ const FLOORS: FloorPlan[] = [
     // dépasse le Glacier, n'a pas de bord (on y tomberait trop loin).
     edges: [3, 4, 5, 6],
     branches: [
-      { name: 'wall', from: 2, to: 6, kinds: [bonus(3), _, ITEM, _, _], lane: { bow: -1.5, rise: 1 } },
+      { name: 'wall', from: 2, to: 6, kinds: [bonus(3), _, ITEM, _, _], lane: { bow: -2, rise: 1 } },
     ],
   },
 ];
