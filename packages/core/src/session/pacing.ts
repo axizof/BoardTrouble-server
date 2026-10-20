@@ -12,7 +12,8 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
   orderDrawn: 3500,
   roundStarted: 1200,
   minigameRanked: 2500,
-  turnStarted: 800,
+  // Le bandeau "Au tour de" et la caméra qui rejoint le joueur.
+  turnStarted: 1800,
   diceRolled: 1800,
   // Par case parcourue : voir `MOVE_STEP_TIME`.
   moved: 0,
