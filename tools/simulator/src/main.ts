@@ -1,6 +1,10 @@
 // Simulateur d'équilibrage : bun run simulate -- [--games 2000] [--table 4|6] [--seed 1]
-import { type BotLevel, prepareBoard, type TableSize } from '@board-trouble/core';
-import { buildSpiralPrototype } from './prototypeBoard';
+import {
+  type BotLevel,
+  buildSpiralPrototype,
+  prepareBoard,
+  type TableSize,
+} from '@board-trouble/core';
 import { type GameRecord, simulateGame } from './simulate';
 
 // Estimation de durée réelle : mini-jeu avec sa présentation, et un tour animé.
