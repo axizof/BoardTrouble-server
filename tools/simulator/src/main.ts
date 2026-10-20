@@ -58,6 +58,9 @@ function report(title: string, records: GameRecord[]): void {
   console.log(
     `  Leader aux 3/4 : gagne ${percent(leaderWins.length, withLeader.length)} des parties (cible : 50 à 65 %)`,
   );
+  console.log(
+    `  Chutes         : ${average(records.map((record) => record.falls)).toFixed(1)} par partie`,
+  );
   if (expertGames > 0) {
     console.log(
       `  Expert         : gagne ${percent(expertGames, records.length)} des parties (cible : 40 à 55 %)`,

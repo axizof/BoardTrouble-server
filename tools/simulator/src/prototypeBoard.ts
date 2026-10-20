@@ -1,4 +1,10 @@
-import { type BoardDefinition, Rng, type Space, type SpaceKind } from '@board-trouble/core';
+import {
+  type BoardDefinition,
+  linkedSpace,
+  Rng,
+  type Space,
+  type SpaceKind,
+} from '@board-trouble/core';
 
 // Plateau prototype pour mesurer l'équilibrage en attendant le vrai level design du
 // Mont Trouble : 5 anneaux qui raccourcissent en montant (01-vision-et-plateau.md, section 7).
@@ -24,6 +30,13 @@ const WHEEL: SpaceKind = {
 const FINAL_THRESHOLD = 6;
 const SHORT_LANE = 3;
 const LONG_LANE = 5;
+// Une mécanique en plus par étage (01-vision-et-plateau.md, section 7).
+const WORKSHOP_FLOOR = 3;
+const GLACIER_FLOOR = 4;
+const CLOUD_FLOOR = 5;
+const ICE_PATCHES = 3;
+/** Raccourci du pont-levis : 2 cases au lieu de 4 sur le tronc. */
+const BRIDGE_SKIP = 5;
 
 /**
  * Chaque anneau : un tronc commun, un embranchement (voie courte et exposée, voie longue
@@ -41,8 +54,7 @@ export function buildSpiralPrototype(seed = 2026): BoardDefinition {
   let previous = add('start', { type: 'start' }, 0);
   RINGS.forEach((length, ringIndex) => {
     const floor = ringIndex + 1;
-    const trunk = length - LONG_LANE - 1;
-    const forkAt = Math.floor(trunk / 3);
+    const { trunk, forkAt } = ringShape(length);
 
     for (let i = 0; i < trunk; i++) {
       const id = add(`f${floor}-${i}`, randomKind(rng, 'trunk'), floor);
@@ -80,7 +92,95 @@ export function buildSpiralPrototype(seed = 2026): BoardDefinition {
   });
 
   addLinkedSpaces(spaces, rng);
-  return { id: 'spiral-prototype', name: 'Spirale prototype', start: 'start', spaces };
+  // Hasard à part : le reste du plateau ne change pas quand on règle ces mécaniques.
+  addFloorMechanics(spaces, new Rng(seed + 1));
+  return {
+    id: 'spiral-prototype',
+    name: 'Spirale prototype',
+    start: 'start',
+    spaces,
+    floors: { [CLOUD_FLOOR]: { muddy: true, windy: true } },
+  };
+}
+
+function ringShape(length: number): { trunk: number; forkAt: number } {
+  const trunk = length - LONG_LANE - 1;
+  return { trunk, forkAt: Math.floor(trunk / 3) };
+}
+
+/**
+ * Glace sur le Glacier, tapis roulants et pont-levis aux Ateliers, et cases de bord sur les
+ * voies courtes à partir de l'étage 2 (la Prairie n'a pas de bord dangereux).
+ */
+function addFloorMechanics(spaces: Record<string, Space>, rng: Rng): void {
+  const targets = new Set(Object.values(spaces).flatMap((space) => linkedSpace(space.kind) ?? []));
+  const trunkId = (floor: number, index: number) => `f${floor}-${index}`;
+  const isFree = (id: string) => spaces[id]?.kind.type === 'empty' && !targets.has(id);
+  const setKind = (id: string, kind: SpaceKind) => {
+    const space = spaces[id];
+    if (space) space.kind = kind;
+  };
+
+  const glacier = ringShape(RINGS[GLACIER_FLOOR - 1] ?? 0);
+  const iceStarts = Array.from({ length: glacier.trunk - 1 }, (_, index) => index).filter(
+    (index) =>
+      index !== glacier.forkAt &&
+      index + 1 !== glacier.forkAt &&
+      isFree(trunkId(GLACIER_FLOOR, index)) &&
+      isFree(trunkId(GLACIER_FLOOR, index + 1)),
+  );
+  for (let patch = 0; patch < ICE_PATCHES && iceStarts.length > 0; patch++) {
+    const start = rng.pick(iceStarts);
+    for (const index of [start, start + 1]) setKind(trunkId(GLACIER_FLOOR, index), { type: 'ice' });
+    iceStarts.splice(0, iceStarts.length, ...iceStarts.filter((i) => Math.abs(i - start) > 2));
+  }
+
+  const workshop = ringShape(RINGS[WORKSHOP_FLOOR - 1] ?? 0);
+  const belts = Array.from({ length: workshop.trunk }, (_, index) =>
+    trunkId(WORKSHOP_FLOOR, index),
+  ).filter(isFree);
+  const conveyors: SpaceKind[] = [
+    { type: 'conveyor', direction: 'forward', amount: 3 },
+    { type: 'conveyor', direction: 'forward', amount: 3 },
+    { type: 'conveyor', direction: 'backward', amount: 2 },
+  ];
+  for (const kind of conveyors) {
+    const id = rng.pick(belts);
+    belts.splice(belts.indexOf(id), 1);
+    setKind(id, kind);
+  }
+  const bridgeFrom = workshop.forkAt + 4;
+  const bridgeTo = trunkId(WORKSHOP_FLOOR, bridgeFrom + BRIDGE_SKIP);
+  spaces[`f${WORKSHOP_FLOOR}-bridge`] = {
+    id: `f${WORKSHOP_FLOOR}-bridge`,
+    kind: { type: 'drawbridge' },
+    floor: WORKSHOP_FLOOR,
+    next: [`f${WORKSHOP_FLOOR}-bridge-end`],
+  };
+  spaces[`f${WORKSHOP_FLOOR}-bridge-end`] = {
+    id: `f${WORKSHOP_FLOOR}-bridge-end`,
+    kind: { type: 'empty' },
+    floor: WORKSHOP_FLOOR,
+    next: [bridgeTo],
+  };
+  spaces[trunkId(WORKSHOP_FLOOR, bridgeFrom)]?.next.push(`f${WORKSHOP_FLOOR}-bridge`);
+
+  RINGS.forEach((length, ringIndex) => {
+    const floor = ringIndex + 1;
+    if (floor === 1) return;
+    const { forkAt } = ringShape(length);
+    const below = ringShape(RINGS[ringIndex - 1] ?? 0);
+    const landings = Array.from({ length: below.trunk }, (_, index) =>
+      trunkId(floor - 1, index),
+    ).filter((id) => spaces[id]?.kind.type !== 'ice');
+    laneIds(floor, 'short', SHORT_LANE).forEach((id, index) => {
+      // À la verticale : même proportion du tour de l'anneau, sur l'anneau du dessous.
+      const turn = (forkAt + 1 + index) / length;
+      const space = spaces[id];
+      const landing = landings[Math.round(turn * (landings.length - 1))];
+      if (space && landing) space.fallsTo = landing;
+    });
+  });
 }
 
 /**
@@ -133,6 +233,7 @@ function interactions(rate: number) {
     swap: rate,
     magnet: rate,
     steal: rate,
+    jostle: rate,
     duel: rate,
     oneVsAll: rate,
     vendetta: rate,
