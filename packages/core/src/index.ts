@@ -1,5 +1,5 @@
 export * from './board/board';
-export * from './boards/spiralPrototype';
+export * from './boards/montTrouble';
 export * from './bots/boardBot';
 export * from './dice/dice';
 export * from './game/engine';
