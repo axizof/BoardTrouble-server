@@ -4,6 +4,7 @@ import { bonusDieForRank, breakTies, type DiceRoll, rollDice } from '../dice/dic
 import { resolveDuel, resolveOneVsAll, resolveTarget } from '../interactions/interactions';
 import { drawItem, type ItemId } from '../items/catalog';
 import { itemUseError, useItem } from '../items/useItem';
+import { advanceInJail, openTrapdoor, spinWheel, startJailTurn } from '../jail/jail';
 import { Rng } from '../random/rng';
 import {
   applyTrouble,
@@ -77,6 +78,7 @@ export function createGame(
       inventory: [],
       mirrorArmed: false,
       lastAttack: null,
+      jail: null,
     })),
     round: 1,
     turnOrder: order,
@@ -190,6 +192,13 @@ export function applyIntent(
     case 'submitOneVsAllResult':
       resolvePause(ctx, (player) => resolveOneVsAll(ctx, player, intent.soloWon));
       break;
+    case 'chooseJailAction':
+      playJailAction(ctx, intent.action);
+      break;
+    case 'chooseTrapdoor':
+      openTrapdoor(ctx, activePlayer(ctx), intent.trapdoor);
+      endTurn(ctx);
+      break;
     case 'resolveItemSwap':
       if (ctx.state.phase.type === 'itemChoices') resolveQueuedChoice(ctx, intent.discard);
       else resolvePause(ctx, (player) => swapItem(ctx, player, intent.discard));
@@ -274,6 +283,12 @@ function checkIntent(
     case 'chooseTarget':
       if (step.type !== 'awaitTarget') return 'wrongPhase';
       return step.options.includes(intent.playerId) ? null : 'invalidChoice';
+    case 'chooseJailAction':
+      if (step.type !== 'awaitJailChoice') return 'wrongPhase';
+      return intent.action === 'advance' || intent.action === 'wheel' ? null : 'invalidChoice';
+    case 'chooseTrapdoor':
+      if (step.type !== 'awaitTrapdoor') return 'wrongPhase';
+      return [0, 1, 2].includes(intent.trapdoor) ? null : 'invalidChoice';
     case 'resolveItemSwap': {
       if (step.type !== 'awaitItemSwap') return 'wrongPhase';
       const player = getPlayer(state, actor.playerId);
@@ -322,6 +337,20 @@ function startTurn(ctx: Context): void {
     removeItem(player, 'mirror');
     ctx.events.push({ type: 'mirrorExpired', playerId });
   }
+  if (player.jail) startJailTurn(ctx, player);
+}
+
+/** Au Cachot : avancer avec ses dés sur le chemin intérieur, ou tenter la roue. */
+function playJailAction(ctx: Context, action: 'advance' | 'wheel'): void {
+  const player = activePlayer(ctx);
+  if (action === 'wheel') {
+    afterAction(ctx, spinWheel(ctx, player), 'endTurn');
+    return;
+  }
+  const dice = rollForTurn(ctx, player);
+  ctx.events.push({ type: 'diceRolled', playerId: player.id, purpose: 'move', roll: dice });
+  noteDouble(ctx, dice);
+  afterAction(ctx, advanceInJail(ctx, player, dice), 'endTurn');
 }
 
 function freshTurn(): TurnModifiers {
@@ -482,7 +511,8 @@ function swapItem(ctx: Context, player: PlayerState, discard: string): Flow {
  */
 function afterAction(ctx: Context, flow: Flow, then: Resume): void {
   if (flow === 'paused' || ctx.state.phase.type !== 'turn') return;
-  if (then === 'roll') {
+  // Enlevé par les Filous pendant un objet (une Fusée...) : son tour s'arrête là.
+  if (then === 'roll' && !activePlayer(ctx).jail) {
     ctx.state.phase = { type: 'turn', playerId: activePlayer(ctx).id, step: { type: 'awaitRoll' } };
     return;
   }
@@ -541,7 +571,10 @@ function endRound(ctx: Context): void {
 /** Environ une manche sur sept, un petit événement sur un joueur au hasard. */
 function playRoundEvent(ctx: Context): void {
   if (!ctx.rng.chance(ROUND_EVENT_CHANCE)) return;
-  const player = ctx.rng.pick(ctx.state.players);
+  // Les joueurs au Cachot ne sont pas sur le plateau : ils sont épargnés.
+  const free = ctx.state.players.filter((candidate) => candidate.jail === null);
+  if (free.length === 0) return;
+  const player = ctx.rng.pick(free);
   const event = ctx.rng.pick(['bird', 'hole', 'foundItem'] as const);
   ctx.events.push({ type: 'roundEvent', event, playerId: player.id });
   if (event === 'bird') advanceByEffect(ctx, player, BIRD_STEPS);

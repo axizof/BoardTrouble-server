@@ -8,4 +8,5 @@ export * from './game/views';
 export * from './interactions/interactions';
 export * from './items/catalog';
 export * from './items/useItem';
+export * from './jail/jail';
 export * from './random/rng';

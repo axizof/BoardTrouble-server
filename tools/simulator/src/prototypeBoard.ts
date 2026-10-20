@@ -92,6 +92,7 @@ function randomKind(rng: Rng, flavour: 'trunk' | 'short' | 'long'): SpaceKind {
       chest: 0.02,
       rest: 0.03,
       trouble: 0.04,
+      filous: 0.015,
       ...interactions(0.012),
     },
     short: {
@@ -101,6 +102,7 @@ function randomKind(rng: Rng, flavour: 'trunk' | 'short' | 'long'): SpaceKind {
       chest: 0.08,
       rest: 0,
       trouble: 0.08,
+      filous: 0.04,
       ...interactions(0.03),
     },
     long: {

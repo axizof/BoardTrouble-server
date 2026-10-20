@@ -8,6 +8,7 @@ import {
   ITEMS,
   type ItemId,
 } from '../items/catalog';
+import { kidnap } from '../jail/jail';
 import { applyTrouble, drawSpaceEvent } from '../trouble/events';
 import { effectiveKind } from '../trouble/overlays';
 import { activePlayerId, type Context, type Flow, removeItem } from './context';
@@ -27,7 +28,7 @@ const MAX_ERUPTION_CHAIN = 3;
  * le tour ; un joueur déplacé pendant le tour d'un autre n'y gagne rien.
  */
 export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' | 'effect'): Flow {
-  if (player.atGate) return 'continue';
+  if (player.atGate || player.jail) return 'continue';
   const space = getSpace(ctx.board, player.position);
 
   const trap = ctx.state.traps[space.id];
@@ -80,6 +81,8 @@ export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' 
     case 'oneVsAll':
     case 'vendetta':
       return startInteraction(ctx, player, kind.type);
+    case 'filous':
+      return applyHostile(ctx, player, null, (victim) => kidnap(ctx, victim));
     case 'item':
       return gainItem(
         ctx,
@@ -111,6 +114,7 @@ function hasEffect(kind: SpaceKind, player: PlayerState, isActive: boolean): boo
     case 'bonus':
     case 'malus':
     case 'trouble':
+    case 'filous':
       return true;
     case 'item':
     case 'chest':
