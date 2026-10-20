@@ -1,5 +1,5 @@
 import { type Board, getSpace, isGateKind, type SpaceId, type SpaceKind } from '../board/board';
-import type { GameState } from '../game/types';
+import type { GameState, Overlays } from '../game/types';
 
 /** Recul d'une case spéciale pendant l'Éruption. */
 export const ERUPTION_RECOIL = 3;
@@ -24,7 +24,14 @@ export function isSpecial(kind: SpaceKind): boolean {
  */
 export function effectiveKind(board: Board, state: GameState, spaceId: SpaceId): SpaceKind {
   const { overlays } = state;
-  const kind = overlays.fog?.kinds[spaceId] ?? getSpace(board, spaceId).kind;
+  return kindUnderOverlays(overlays.fog?.kinds[spaceId] ?? getSpace(board, spaceId).kind, overlays);
+}
+
+/**
+ * Ce que devient une case sous l'Éruption et l'Inversion. Sert aussi aux clients, qui ne
+ * connaissent pas le mélange secret du Brouillard mais affichent les deux autres.
+ */
+export function kindUnderOverlays(kind: SpaceKind, overlays: Overlays): SpaceKind {
   if (overlays.eruptionUntil !== null && isSpecial(kind)) {
     return { type: 'malus', amount: ERUPTION_RECOIL };
   }
