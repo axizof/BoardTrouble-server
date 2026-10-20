@@ -1,13 +1,9 @@
-import {
-  type BoardDefinition,
-  linkedSpace,
-  Rng,
-  type Space,
-  type SpaceKind,
-} from '@board-trouble/core';
+import { type BoardDefinition, linkedSpace, type Space, type SpaceKind } from '../board/board';
+import { Rng } from '../random/rng';
 
-// Plateau prototype pour mesurer l'équilibrage en attendant le vrai level design du
-// Mont Trouble : 5 anneaux qui raccourcissent en montant (01-vision-et-plateau.md, section 7).
+// Plateau prototype, en attendant le vrai level design du Mont Trouble : 5 anneaux qui
+// raccourcissent en montant (01-vision-et-plateau.md, section 7). Il sert au simulateur
+// d'équilibrage et au solo.
 const RINGS = [32, 28, 24, 20, 16];
 /** Une sorte de porte par passage d'étage. */
 const GATES: SpaceKind[] = [

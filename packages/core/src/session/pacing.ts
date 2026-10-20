@@ -1,0 +1,99 @@
+import type { GameEvent } from '../game/types';
+import { viewEvents } from '../game/views';
+
+// Durée d'animation de chaque événement, en millisecondes : l'hôte n'ouvre la décision
+// suivante (bot, chrono) qu'une fois les animations jouées, pour que tout le monde voie la
+// même chose au même moment (01-architecture.md, section 5). Valeurs de départ, à recaler
+// sur les vraies animations du plateau.
+const EVENT_TIME: Record<GameEvent['type'], number> = {
+  orderDrawn: 3500,
+  roundStarted: 1200,
+  minigameRanked: 2500,
+  turnStarted: 800,
+  diceRolled: 1800,
+  // Par case parcourue : voir `MOVE_STEP_TIME`.
+  moved: 0,
+  branchReached: 300,
+  gateTested: 1500,
+  keyUsed: 1200,
+  finalGateOpened: 2500,
+  coinFlipped: 1500,
+  spaceTriggered: 600,
+  itemGained: 1200,
+  itemRefused: 600,
+  itemDiscarded: 600,
+  itemUsed: 1200,
+  // Privés : jamais comptés (voir `animationTime`).
+  mirrorArmed: 0,
+  mirrorExpired: 0,
+  mirrorReflected: 1500,
+  shieldBlocked: 1200,
+  trapPlaced: 1000,
+  trapTriggered: 1200,
+  itemStolen: 1500,
+  bonusDieLost: 1000,
+  swapped: 2000,
+  squallHit: 1200,
+  targetChosen: 1000,
+  duelStarted: 2000,
+  duelEnded: 1500,
+  oneVsAllStarted: 2000,
+  oneVsAllEnded: 1500,
+  kidnapped: 2500,
+  jailTurn: 1000,
+  jailAdvanced: 1200,
+  jailWheel: 3000,
+  trapdoorOpened: 2000,
+  released: 1500,
+  doorOpened: 1800,
+  tollPaid: 1200,
+  skillGateResult: 1500,
+  boulderRolled: 3000,
+  teleported: 1800,
+  seesawLaunched: 1500,
+  giantDieRolled: 2500,
+  wheelStopped: 1500,
+  betPlaced: 1000,
+  betResolved: 1200,
+  specialDieGained: 1200,
+  specialDieRefused: 600,
+  specialDieDiscarded: 600,
+  specialDieTrapped: 1500,
+  fell: 2000,
+  parachuteOpened: 1500,
+  jostled: 1500,
+  conveyorMoved: 800,
+  windBlew: 2000,
+  minigameDrawn: 3500,
+  minigameChoiceOffered: 1000,
+  minigameChosen: 1500,
+  minigameChoiceGranted: 1500,
+  mysteryBoxOpened: 1500,
+  chestOpened: 1800,
+  rerolled: 1800,
+  troubleGauge: 600,
+  troubleAwakened: 3500,
+  troubleApplied: 2500,
+  overlayEnded: 1000,
+  roundEvent: 2000,
+  bonusMinigameStarted: 2000,
+  turnEnded: 300,
+  roundEnded: 1000,
+  finaleStarted: 3000,
+  gameWon: 5000,
+};
+
+export const MOVE_STEP_TIME = 350;
+
+/**
+ * Temps nécessaire pour jouer ces événements. Il est calculé sur ce que voit un spectateur :
+ * une action secrète (Miroir activé) ne doit pas se trahir par une pause plus longue.
+ */
+export function animationTime(events: GameEvent[]): number {
+  return viewEvents(events, { type: 'spectator' }).reduce(
+    (total, event) =>
+      total +
+      (event.type === 'moved' ? event.path.length * MOVE_STEP_TIME : EVENT_TIME[event.type]),
+    0,
+  );
+}
