@@ -7,6 +7,8 @@ import {
   ITEMS,
   type ItemId,
 } from '../items/catalog';
+import { applyTrouble, drawSpaceEvent } from '../trouble/events';
+import { effectiveKind } from '../trouble/overlays';
 import { activePlayerId, type Context, type Flow, removeItem } from './context';
 import type { ItemSource, PlayerState } from './types';
 
@@ -15,6 +17,7 @@ const TRAIL_LENGTH = 64;
 const FIRECRACKER_RECOIL = 5;
 const CHEST_TRAP_RECOIL = 4;
 const CHEST_TRAP_CHANCE = 0.5;
+const MAX_ERUPTION_CHAIN = 3;
 
 /**
  * Effet de la case d'arrivée (01-vision-et-plateau.md, section 8). Arrivée aux dés : la case
@@ -38,9 +41,15 @@ export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' 
     return applyHostile(ctx, player, null, (victim) => recoil(ctx, victim, FIRECRACKER_RECOIL));
   }
 
-  if (!hasEffect(space.kind, player, activePlayerId(ctx.state) === player.id)) return 'continue';
+  const kind = effectiveKind(ctx.board, ctx.state, space.id);
+  if (!hasEffect(kind, player, activePlayerId(ctx.state) === player.id)) return 'continue';
 
-  if (cause === 'effect') {
+  // Pendant l'Éruption, les cases -3 s'enchaînent sans pile ou face, 3 fois au plus.
+  const erupting = ctx.state.overlays.eruptionUntil !== null && kind.type === 'malus';
+  if (cause === 'effect' && erupting) {
+    if (ctx.eruptionChain >= MAX_ERUPTION_CHAIN) return 'continue';
+    ctx.eruptionChain++;
+  } else if (cause === 'effect') {
     if (ctx.state.turn.coinFlipped.includes(player.id)) return 'continue';
     ctx.state.turn.coinFlipped.push(player.id);
     const heads = ctx.rng.chance(0.5);
@@ -49,12 +58,18 @@ export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' 
   }
 
   ctx.events.push({ type: 'spaceTriggered', playerId: player.id, spaceId: space.id });
-  switch (space.kind.type) {
+  switch (kind.type) {
     case 'bonus':
-      return advanceByEffect(ctx, player, space.kind.amount);
+      return advanceByEffect(ctx, player, kind.amount);
     case 'malus': {
-      const { amount } = space.kind;
+      const { amount } = kind;
+      // L'Éruption vient du Plateau : le Bouclier n'y peut rien.
+      if (erupting) return recoil(ctx, player, amount);
       return applyHostile(ctx, player, null, (victim) => recoil(ctx, victim, amount));
+    }
+    case 'trouble': {
+      const event = drawSpaceEvent(ctx.board, ctx.state, ctx.rng);
+      return event === null ? 'continue' : applyTrouble(ctx, event, null, player);
     }
     case 'item':
       return gainItem(
@@ -86,6 +101,7 @@ function hasEffect(kind: SpaceKind, player: PlayerState, isActive: boolean): boo
   switch (kind.type) {
     case 'bonus':
     case 'malus':
+    case 'trouble':
       return true;
     case 'item':
     case 'chest':
@@ -112,8 +128,9 @@ export function openChest(ctx: Context, player: PlayerState, chest: 0 | 1): Flow
 }
 
 /**
- * Donne un objet. Inventaire plein : le joueur dont c'est le tour choisit quoi jeter ;
- * un autre joueur (hors de son tour) refuse automatiquement l'objet.
+ * Donne un objet. Inventaire plein : le joueur dont c'est le tour choisit quoi jeter ; entre
+ * deux tours (fin de manche), chacun choisira à son tour ; un joueur touché pendant le tour
+ * d'un autre refuse automatiquement l'objet (pas de choix pendant le tour d'un autre).
  */
 export function gainItem(
   ctx: Context,
@@ -126,7 +143,12 @@ export function gainItem(
     ctx.events.push({ type: 'itemGained', playerId: player.id, item, source });
     return 'continue';
   }
-  if (activePlayerId(ctx.state) === player.id) {
+  const active = activePlayerId(ctx.state);
+  if (active === null) {
+    ctx.pendingItemChoices.push({ playerId: player.id, offered: item });
+    return 'continue';
+  }
+  if (active === player.id) {
     ctx.state.phase = {
       type: 'turn',
       playerId: player.id,
@@ -242,4 +264,12 @@ export function stepForward(player: PlayerState, next: SpaceId): void {
 
 export function isGate(kind: SpaceKind): boolean {
   return kind.type === 'gate' || kind.type === 'finalGate';
+}
+
+/** Échange de places : aucune case ne s'active (01-vision-et-plateau.md, section 8). */
+export function swapPlaces(ctx: Context, a: PlayerState, b: PlayerState): void {
+  [a.position, b.position] = [b.position, a.position];
+  [a.atGate, b.atGate] = [b.atGate, a.atGate];
+  [a.trail, b.trail] = [b.trail, a.trail];
+  ctx.events.push({ type: 'swapped', playerId: a.id, with: b.id });
 }

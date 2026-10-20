@@ -1,9 +1,26 @@
 import type { Board } from '../board/board';
+import { distanceToGoal } from '../board/board';
 import { bonusDieForRank, breakTies, type DiceRoll, rollDice } from '../dice/dice';
+import { drawItem, type ItemId } from '../items/catalog';
 import { itemUseError, useItem } from '../items/useItem';
 import { Rng } from '../random/rng';
+import {
+  applyTrouble,
+  drawTroubleOptions,
+  rewardBonusMinigame,
+  type TroubleEventId,
+  troubleRanking,
+} from '../trouble/events';
+import {
+  addGauge,
+  DOUBLE_GAIN,
+  GAP_GAIN,
+  GAP_THRESHOLD,
+  GAUGE_MAX,
+  ROUND_GAIN,
+} from '../trouble/gauge';
 import { type Context, type Flow, getPlayer, removeItem } from './context';
-import { advanceByEffect, openChest } from './effects';
+import { advanceByEffect, gainItem, openChest, recoil } from './effects';
 import { moveWithDice, testGate } from './movement';
 import type {
   Actor,
@@ -18,6 +35,10 @@ import type {
   Resume,
   TurnModifiers,
 } from './types';
+
+const ROUND_EVENT_CHANCE = 0.15;
+const BIRD_STEPS = 3;
+const HOLE_STEPS = 2;
 
 /**
  * Crée une partie et joue le tirage de l'ordre. La première manche n'a pas de mini-jeu :
@@ -60,16 +81,42 @@ export function createGame(
     bonusDice: Object.fromEntries(ids.map((id) => [id, null])),
     turn: freshTurn(),
     traps: {},
+    trouble: { gauge: 0, chaos: config.chaos ?? 'normal' },
+    overlays: { inversionUntil: null, eruptionUntil: null, fog: null },
     finalGateOpenedBy: [],
     phase: { type: 'minigame' },
     rngState: 0,
   };
-  const ctx: Context = { board, state, rng, events: [], resume: 'endTurn' };
+  const ctx = newContext(board, state, rng);
   ctx.events.push({ type: 'orderDrawn', rolls, tieBreaks, order });
   ctx.events.push({ type: 'roundStarted', round: 1 });
   startTurn(ctx);
   state.rngState = rng.state;
   return { state, events: ctx.events };
+}
+
+/**
+ * Qui doit agir maintenant : le serveur (résultats de mini-jeux) ou un joueur précis. Sert à
+ * savoir qui attendre, à lancer les chronos et à faire jouer les bots. null : partie finie.
+ */
+export function whoMustAct(state: GameState): Actor | null {
+  const { phase } = state;
+  switch (phase.type) {
+    case 'minigame':
+    case 'finale':
+    case 'bonusMinigame':
+      return { type: 'system' };
+    case 'turn':
+      return { type: 'player', playerId: phase.playerId };
+    case 'trouble':
+      return { type: 'player', playerId: phase.chooser };
+    case 'itemChoices': {
+      const [next] = phase.queue;
+      return next ? { type: 'player', playerId: next.playerId } : null;
+    }
+    case 'finished':
+      return null;
+  }
 }
 
 /**
@@ -86,13 +133,7 @@ export function applyIntent(
   if (error) return { ok: false, error };
 
   const draft = structuredClone(state);
-  const ctx: Context = {
-    board,
-    state: draft,
-    rng: new Rng(draft.rngState),
-    events: [],
-    resume: 'endTurn',
-  };
+  const ctx = newContext(board, draft, new Rng(draft.rngState));
 
   switch (intent.type) {
     case 'submitMinigameResult':
@@ -100,6 +141,12 @@ export function applyIntent(
       break;
     case 'submitFinaleResult':
       finishFinale(ctx, intent.ranking);
+      break;
+    case 'submitBonusMinigameResult':
+      finishBonusMinigame(ctx, intent.ranking);
+      break;
+    case 'chooseTrouble':
+      chooseTrouble(ctx, intent.event);
       break;
     case 'useItem':
       // Une pause pendant l'objet (coffre atteint par la Fusée...) ramène ensuite au lancer.
@@ -120,7 +167,8 @@ export function applyIntent(
       resolvePause(ctx, (player) => openChest(ctx, player, intent.chest));
       break;
     case 'resolveItemSwap':
-      resolvePause(ctx, (player) => swapItem(ctx, player, intent.discard));
+      if (ctx.state.phase.type === 'itemChoices') resolveQueuedChoice(ctx, intent.discard);
+      else resolvePause(ctx, (player) => swapItem(ctx, player, intent.discard));
       break;
   }
 
@@ -135,15 +183,36 @@ function checkIntent(
   intent: Intent,
 ): IntentError | null {
   const { phase } = state;
-  if (intent.type === 'submitMinigameResult' || intent.type === 'submitFinaleResult') {
-    if (actor.type !== 'system') return 'notAllowed';
-    if (intent.type === 'submitMinigameResult') {
-      if (phase.type !== 'minigame') return 'wrongPhase';
-      const everyone = state.players.map((player) => player.id);
+  const everyone = state.players.map((player) => player.id);
+  switch (intent.type) {
+    case 'submitMinigameResult':
+    case 'submitBonusMinigameResult': {
+      if (actor.type !== 'system') return 'notAllowed';
+      const expected = intent.type === 'submitMinigameResult' ? 'minigame' : 'bonusMinigame';
+      if (phase.type !== expected) return 'wrongPhase';
       return isCompleteRanking(intent.ranking, everyone) ? null : 'invalidRanking';
     }
-    if (phase.type !== 'finale') return 'wrongPhase';
-    return isCompleteRanking(intent.ranking, phase.contenders) ? null : 'invalidRanking';
+    case 'submitFinaleResult':
+      if (actor.type !== 'system') return 'notAllowed';
+      if (phase.type !== 'finale') return 'wrongPhase';
+      return isCompleteRanking(intent.ranking, phase.contenders) ? null : 'invalidRanking';
+    case 'chooseTrouble':
+      if (actor.type !== 'player') return 'notAllowed';
+      if (phase.type !== 'trouble') return 'wrongPhase';
+      if (phase.chooser !== actor.playerId) return 'notYourTurn';
+      return phase.options.includes(intent.event) ? null : 'invalidChoice';
+    case 'resolveItemSwap': {
+      if (phase.type !== 'itemChoices') break;
+      if (actor.type !== 'player') return 'notAllowed';
+      const [next] = phase.queue;
+      if (next?.playerId !== actor.playerId) return 'notYourTurn';
+      const player = getPlayer(state, actor.playerId);
+      return intent.discard === next.offered || player.inventory.includes(intent.discard)
+        ? null
+        : 'invalidChoice';
+    }
+    default:
+      break;
   }
 
   if (actor.type !== 'player') return 'notAllowed';
@@ -235,6 +304,7 @@ function roll(ctx: Context): void {
     purpose: purposeOf(player),
     roll: dice,
   });
+  noteDouble(ctx, dice);
   if (ctx.state.turn.rerollArmed) {
     ctx.state.phase = {
       type: 'turn',
@@ -259,7 +329,13 @@ function resolveReroll(ctx: Context, reroll: boolean): void {
   }
   const dice = rollForTurn(ctx, player);
   ctx.events.push({ type: 'rerolled', playerId: player.id, previous, roll: dice });
+  noteDouble(ctx, dice);
   playRoll(ctx, player, dice);
+}
+
+/** Un double fait monter la jauge TROUBLE. */
+function noteDouble(ctx: Context, dice: DiceRoll): void {
+  if (dice.extra !== null) addGauge(ctx, DOUBLE_GAIN, 'double');
 }
 
 function rollForTurn(ctx: Context, player: PlayerState): DiceRoll {
@@ -358,7 +434,8 @@ function endTurn(ctx: Context): void {
 
 /**
  * Fin de manche : la victoire se décide ici. Un seul joueur a ouvert la porte finale : il
- * gagne. Plusieurs : finale en mini-jeu. Personne : nouvelle manche.
+ * gagne. Plusieurs : finale en mini-jeu. Personne : petit événement de manche, jauge
+ * TROUBLE, réveil du Plateau si elle est pleine, puis nouvelle manche.
  */
 function endRound(ctx: Context): void {
   const { state } = ctx;
@@ -375,8 +452,116 @@ function endRound(ctx: Context): void {
     ctx.events.push({ type: 'finaleStarted', contenders: [...openers] });
     return;
   }
+
+  // Les effets de fin de manche ont leur propre pile ou face, hors de tout tour.
+  state.phase = { type: 'minigame' };
+  state.turn = freshTurn();
+  playRoundEvent(ctx);
+  addGauge(ctx, ROUND_GAIN, 'round');
+  if (gapBetweenFirstAndLast(ctx) > GAP_THRESHOLD) addGauge(ctx, GAP_GAIN, 'gap');
+
+  const chooser = troubleRanking(ctx.board, state).at(-1);
+  if (state.trouble.gauge >= GAUGE_MAX && chooser !== undefined) {
+    const options = drawTroubleOptions(ctx.board, state, ctx.rng);
+    state.trouble.gauge = 0;
+    if (options.length > 0) {
+      state.phase = { type: 'trouble', chooser, options };
+      ctx.events.push({ type: 'troubleAwakened', chooser, options });
+      return;
+    }
+  }
+  proceedToNextRound(ctx);
+}
+
+/** Environ une manche sur sept, un petit événement sur un joueur au hasard. */
+function playRoundEvent(ctx: Context): void {
+  if (!ctx.rng.chance(ROUND_EVENT_CHANCE)) return;
+  const player = ctx.rng.pick(ctx.state.players);
+  const event = ctx.rng.pick(['bird', 'hole', 'foundItem'] as const);
+  ctx.events.push({ type: 'roundEvent', event, playerId: player.id });
+  if (event === 'bird') advanceByEffect(ctx, player, BIRD_STEPS);
+  else if (event === 'hole') recoil(ctx, player, HOLE_STEPS);
+  else gainItem(ctx, player, drawItem(ctx.rng, 0), 'roundEvent');
+}
+
+function gapBetweenFirstAndLast(ctx: Context): number {
+  const ranking = troubleRanking(ctx.board, ctx.state);
+  const [first] = ranking;
+  const last = ranking.at(-1);
+  if (first === undefined || last === undefined) return 0;
+  const distanceOf = (id: PlayerId) => distanceToGoal(ctx.board, getPlayer(ctx.state, id).position);
+  return distanceOf(last) - distanceOf(first);
+}
+
+function chooseTrouble(ctx: Context, event: TroubleEventId): void {
+  const { phase } = ctx.state;
+  if (phase.type !== 'trouble') throw new Error('Pas de TROUBLE en attente');
+  applyTrouble(ctx, event, phase.chooser, null);
+  if (ctx.state.phase.type === 'trouble') proceedToNextRound(ctx);
+}
+
+function finishBonusMinigame(ctx: Context, ranking: PlayerId[][]): void {
+  const [winner] = breakTies(ranking, ctx.rng).order;
+  if (winner === undefined) throw new Error('Mini-jeu bonus sans vainqueur');
+  rewardBonusMinigame(ctx, getPlayer(ctx.state, winner));
+  proceedToNextRound(ctx);
+}
+
+/** Objets reçus en fin de manche avec un inventaire plein : la file se traite dans l'ordre. */
+function resolveQueuedChoice(ctx: Context, discard: ItemId): void {
+  const { phase } = ctx.state;
+  if (phase.type !== 'itemChoices') throw new Error("Pas de choix d'objet en attente");
+  const [next, ...rest] = phase.queue;
+  if (!next) throw new Error("File de choix d'objets vide");
+  const player = getPlayer(ctx.state, next.playerId);
+  if (discard === next.offered) {
+    ctx.events.push({ type: 'itemRefused', playerId: player.id, item: next.offered });
+  } else {
+    removeItem(player, discard);
+    player.inventory.push(next.offered);
+    ctx.events.push({ type: 'itemDiscarded', playerId: player.id, item: discard });
+    ctx.events.push({
+      type: 'itemGained',
+      playerId: player.id,
+      item: next.offered,
+      source: 'trouble',
+    });
+  }
+  ctx.state.phase = { type: 'itemChoices', queue: rest };
+  proceedToNextRound(ctx);
+}
+
+/**
+ * Passe à la manche suivante, sauf s'il reste des choix d'objets à faire. Les modifications
+ * du plateau arrivées à leur terme disparaissent.
+ */
+function proceedToNextRound(ctx: Context): void {
+  const { state } = ctx;
+  const queue = [
+    ...(state.phase.type === 'itemChoices' ? state.phase.queue : []),
+    ...ctx.pendingItemChoices,
+  ];
+  ctx.pendingItemChoices = [];
+  if (queue.length > 0) {
+    state.phase = { type: 'itemChoices', queue };
+    return;
+  }
+
   state.round++;
   state.phase = { type: 'minigame' };
+  const { overlays } = state;
+  if (overlays.inversionUntil !== null && overlays.inversionUntil < state.round) {
+    overlays.inversionUntil = null;
+    ctx.events.push({ type: 'overlayEnded', overlay: 'inversion' });
+  }
+  if (overlays.eruptionUntil !== null && overlays.eruptionUntil < state.round) {
+    overlays.eruptionUntil = null;
+    ctx.events.push({ type: 'overlayEnded', overlay: 'eruption' });
+  }
+  if (overlays.fog !== null && overlays.fog.until < state.round) {
+    overlays.fog = null;
+    ctx.events.push({ type: 'overlayEnded', overlay: 'fog' });
+  }
 }
 
 function finishFinale(ctx: Context, ranking: PlayerId[][]): void {
@@ -388,6 +573,18 @@ function finishFinale(ctx: Context, ranking: PlayerId[][]): void {
 function finish(ctx: Context, winner: PlayerId): void {
   ctx.state.phase = { type: 'finished', winner };
   ctx.events.push({ type: 'gameWon', playerId: winner });
+}
+
+function newContext(board: Board, state: GameState, rng: Rng): Context {
+  return {
+    board,
+    state,
+    rng,
+    events: [],
+    resume: 'endTurn',
+    pendingItemChoices: [],
+    eruptionChain: 0,
+  };
 }
 
 function activePlayer(ctx: Context): PlayerState {

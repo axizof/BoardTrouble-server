@@ -14,6 +14,10 @@ export type Context = {
    * quand la pause est arrivée pendant l'utilisation d'un objet avant de lancer.
    */
   resume: Resume;
+  /** Objets reçus hors des tours avec un inventaire plein : chacun choisira quoi jeter. */
+  pendingItemChoices: { playerId: PlayerId; offered: ItemId }[];
+  /** Enchaînements de cases pendant l'Éruption dans cette action (3 au plus). */
+  eruptionChain: number;
 };
 
 /**

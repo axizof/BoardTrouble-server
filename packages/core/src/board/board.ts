@@ -11,6 +11,8 @@ export type SpaceKind =
   | { type: 'chest' }
   /** Donne un objet commun à qui n'en a aucun. */
   | { type: 'rest' }
+  /** Le Plateau se réveille tout de suite : un petit événement TROUBLE. */
+  | { type: 'trouble' }
   /** Porte à seuil : faire `threshold` ou plus aux dés, le seuil baisse à chaque échec. */
   | { type: 'gate'; threshold: number }
   /** Porte finale au sommet : le seuil ne baisse pas. */
