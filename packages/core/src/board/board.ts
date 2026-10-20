@@ -28,6 +28,8 @@ export type SpaceKind =
   | { type: 'oneVsAll' }
   /** Duel automatique contre le dernier joueur qui nous a fait reculer. */
   | { type: 'vendetta' }
+  /** Bousculade : les adversaires à 2 cases ou moins sont poussés d'une case. */
+  | { type: 'jostle' }
   /** Les Filous enlèvent le joueur et l'enferment dans leur Cachot. */
   | { type: 'filous' }
   // Déplacement et hasard.
@@ -53,6 +55,13 @@ export type SpaceKind =
   | { type: 'wheel'; segments: WheelSegment[] }
   /** Parier de 1 à 5 cases sur le vainqueur du prochain mini-jeu. */
   | { type: 'bet' }
+  // Mécaniques d'étage (01-vision-et-plateau.md, section 7).
+  /** Case gelée : on n'y reste jamais, on glisse jusqu'à la prochaine case non gelée. */
+  | { type: 'ice' }
+  /** Tapis roulant : déplace de `amount` cases le pion posé dessus, en fin de manche. */
+  | { type: 'conveyor'; direction: 'forward' | 'backward'; amount: number }
+  /** Pont-levis : on ne peut s'y engager que les manches impaires. */
+  | { type: 'drawbridge' }
   /** Porte à seuil : faire `threshold` ou plus aux dés, le seuil baisse à chaque échec. */
   | { type: 'gate'; threshold: number }
   /** Deux portes : choisir un passage ; l'un est piégé et repousse de 5 cases. */
@@ -104,6 +113,19 @@ export type Space = {
    * voie principale, suivie par les déplacements d'effet (qui ne demandent pas de choix).
    */
   next: SpaceId[];
+  /**
+   * Case de bord, sans garde-fou : un joueur poussé d'ici tombe sur cette case, à la
+   * verticale sur l'étage du dessous.
+   */
+  fallsTo?: SpaceId;
+};
+
+/** Mécaniques propres à un étage entier. */
+export type FloorRules = {
+  /** Boue : toute poussée va 2 cases plus loin. */
+  muddy?: boolean;
+  /** Coups de vent occasionnels en fin de manche. */
+  windy?: boolean;
 };
 
 export type BoardDefinition = {
@@ -111,6 +133,8 @@ export type BoardDefinition = {
   name: string;
   start: SpaceId;
   spaces: Record<SpaceId, Space>;
+  /** Règles par numéro d'étage ; un étage absent n'a rien de particulier. */
+  floors?: Record<number, FloorRules>;
 };
 
 /** Plateau validé, avec les données calculées une fois pour toutes. */
@@ -161,6 +185,7 @@ export function validateBoard(definition: BoardDefinition): string[] {
     if (space.kind.type === 'wheel' && space.kind.segments.length === 0) {
       errors.push(`La roue "${space.id}" n'a aucune issue`);
     }
+    errors.push(...floorMechanicErrors(definition, space));
   }
 
   if (definition.spaces[definition.start]?.kind.type !== 'start') {
@@ -176,6 +201,40 @@ export function validateBoard(definition: BoardDefinition): string[] {
     const distances = computeDistances(definition, finals[0]?.id ?? '');
     for (const space of spaces) {
       if (!distances.has(space.id)) errors.push(`La case "${space.id}" ne mène pas au sommet`);
+    }
+  }
+  return errors;
+}
+
+/**
+ * On ne s'arrête jamais sur une case gelée : une chute ou un transport n'y mène pas, et une
+ * glissade ne rencontre pas d'embranchement. Un pont-levis fermé ne bloque jamais la voie
+ * principale, que suivent les déplacements sans choix.
+ */
+function floorMechanicErrors(definition: BoardDefinition, space: Space): string[] {
+  const errors: string[] = [];
+  const kindOf = (id: SpaceId) => definition.spaces[id]?.kind;
+  const landing = [space.fallsTo, linkedSpace(space.kind)].filter((id) => id != null);
+  if (landing.some((id) => kindOf(id)?.type === 'ice')) {
+    errors.push(`La case "${space.id}" mène sur une case gelée`);
+  }
+  if (space.kind.type === 'ice' && space.next.length !== 1) {
+    errors.push(`La case gelée "${space.id}" ne doit avoir qu'une case suivante`);
+  }
+  const [main] = space.next;
+  if (main !== undefined && kindOf(main)?.type === 'drawbridge') {
+    errors.push(`Le pont-levis "${main}" ne doit pas être la voie principale de "${space.id}"`);
+  }
+  if (space.fallsTo !== undefined) {
+    const below = definition.spaces[space.fallsTo];
+    if (!below) errors.push(`La case "${space.id}" tombe sur "${space.fallsTo}", introuvable`);
+    else if (below.floor !== space.floor - 1) {
+      errors.push(`La case "${space.id}" doit tomber sur l'étage juste en dessous`);
+    }
+    if (isGateKind(space.kind) || (below && isGateKind(below.kind))) {
+      errors.push(
+        `La case de bord "${space.id}" ne peut ni être une porte, ni tomber sur une porte`,
+      );
     }
   }
   return errors;
@@ -203,6 +262,10 @@ export function getSpace(board: Board, id: SpaceId): Space {
   const space = board.definition.spaces[id];
   if (!space) throw new Error(`Case inconnue : ${id}`);
   return space;
+}
+
+export function floorRules(board: Board, floor: number): FloorRules {
+  return board.definition.floors?.[floor] ?? {};
 }
 
 export function distanceToGoal(board: Board, id: SpaceId): number {

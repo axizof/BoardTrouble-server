@@ -4,9 +4,17 @@ import type { GameState } from '../game/types';
 /** Recul d'une case spéciale pendant l'Éruption. */
 export const ERUPTION_RECOIL = 3;
 
-/** Cases "spéciales" : tout ce qui n'est ni vide, ni départ, ni porte. */
+/** Terrain des étages : il fait partie du décor, ni mélangé ni changé en -3. */
+const TERRAIN = ['ice', 'conveyor', 'drawbridge'];
+
+/** Cases "spéciales" : tout ce qui n'est ni vide, ni départ, ni porte, ni terrain. */
 export function isSpecial(kind: SpaceKind): boolean {
-  return !isGateKind(kind) && kind.type !== 'start' && kind.type !== 'empty';
+  return (
+    !isGateKind(kind) &&
+    kind.type !== 'start' &&
+    kind.type !== 'empty' &&
+    !TERRAIN.includes(kind.type)
+  );
 }
 
 /**

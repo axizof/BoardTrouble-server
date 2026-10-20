@@ -13,6 +13,7 @@ import { kidnap } from '../jail/jail';
 import { applyTrouble, drawSpaceEvent } from '../trouble/events';
 import { effectiveKind } from '../trouble/overlays';
 import { activePlayerId, type Context, type Flow, removeItem } from './context';
+import { isIce, openNext } from './floors';
 import { freightLiftWorks, launchSeesaw, rollGiantDie, transport } from './spaces';
 import type { HostileVia, ItemSource, PlayerId, PlayerState, TurnStep } from './types';
 
@@ -84,6 +85,7 @@ export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' 
     case 'duel':
     case 'oneVsAll':
     case 'vendetta':
+    case 'jostle':
       return startInteraction(ctx, player, kind.type);
     case 'filous':
       return applyHostile(ctx, player, null, (victim) => kidnap(ctx, victim));
@@ -182,6 +184,7 @@ function hasEffect(
     case 'steal':
     case 'duel':
     case 'oneVsAll':
+    case 'jostle':
       return isActive;
     default:
       return false;
@@ -286,6 +289,7 @@ export function applyHostile(
 
 /**
  * Recul de `amount` cases par le chemin réellement suivi, puis effet de la case d'arrivée.
+ * Sur une case gelée, on continue de glisser en arrière jusqu'à une case non gelée.
  * `attacker` : l'adversaire responsable du recul, retenu pour la Vendetta.
  */
 export function recoil(
@@ -295,11 +299,9 @@ export function recoil(
   attacker?: PlayerId,
 ): Flow {
   const path: SpaceId[] = [];
-  for (let i = 0; i < amount; i++) {
-    const previous = player.trail.pop() ?? ctx.board.predecessors.get(player.position)?.[0];
+  for (let i = 0; i < amount || isIce(ctx.board, player.position); i++) {
+    const previous = stepBack(ctx, player);
     if (previous === undefined) break;
-    player.position = previous;
-    player.atGate = isGate(getSpace(ctx.board, previous).kind);
     path.push(previous);
   }
   if (path.length > 0) {
@@ -336,7 +338,8 @@ export function stealRandomItem(ctx: Context, victim: PlayerState, thief: Player
  * Avancée par un effet (case bonus, Fusée...), puis effet de la case d'arrivée. Elle ne
  * franchit jamais une porte : elle s'arrête devant. À un embranchement, le joueur dont c'est
  * le tour choisit sa voie ; un joueur déplacé pendant le tour d'un autre ne peut pas répondre
- * à ce moment-là et suit la voie principale. `firstStep` est la voie choisie.
+ * à ce moment-là et suit la voie principale. `firstStep` est la voie choisie. Arrivé sur une
+ * case gelée, on glisse jusqu'à la prochaine case non gelée (une seule voie possible).
  */
 export function advanceByEffect(
   ctx: Context,
@@ -351,8 +354,12 @@ export function advanceByEffect(
     path.length = 0;
   };
   let forced = firstStep;
-  for (let remaining = steps; remaining > 0 && !player.atGate; remaining--) {
-    const { next } = getSpace(ctx.board, player.position);
+  for (
+    let remaining = steps;
+    (remaining > 0 || isIce(ctx.board, player.position)) && !player.atGate;
+    remaining--
+  ) {
+    const next = openNext(ctx.board, ctx.state, getSpace(ctx.board, player.position));
     if (forced === undefined && next.length > 1 && activePlayerId(ctx.state) === player.id) {
       flush();
       ctx.events.push({ type: 'branchReached', playerId: player.id, options: [...next] });
@@ -378,6 +385,15 @@ export function advanceByEffect(
   }
   flush();
   return resolveArrival(ctx, player, 'effect');
+}
+
+/** Une case en arrière par le chemin réellement suivi, ou la voie principale à défaut. */
+export function stepBack(ctx: Context, player: PlayerState): SpaceId | undefined {
+  const previous = player.trail.pop() ?? ctx.board.predecessors.get(player.position)?.[0];
+  if (previous === undefined) return undefined;
+  player.position = previous;
+  player.atGate = isGate(getSpace(ctx.board, previous).kind);
+  return previous;
 }
 
 export function stepForward(player: PlayerState, next: SpaceId): void {

@@ -1,7 +1,8 @@
 import { getSpace } from '../board/board';
 import type { DiceRoll } from '../dice/dice';
 import { type Context, type Flow, removeItem } from '../game/context';
-import { isGate, stepForward } from '../game/effects';
+import { isGate, stepBack, stepForward } from '../game/effects';
+import { isIce } from '../game/floors';
 import type { PlayerState } from '../game/types';
 
 // Le Cachot des Filous (01-vision-et-plateau.md, section 10).
@@ -78,19 +79,15 @@ export function openTrapdoor(ctx: Context, player: PlayerState, trapdoor: 0 | 1 
   ctx.events.push({ type: 'trapdoorOpened', playerId: player.id, trapdoor, offset });
   player.jail = null;
 
-  for (let i = 0; i < Math.abs(offset); i++) {
+  // Une trappe ne dépose jamais sur une case gelée : on glisse dans le même sens.
+  for (let i = 0; i < Math.abs(offset) || isIce(ctx.board, player.position); i++) {
     if (offset > 0) {
       if (player.atGate) break;
       const next = getSpace(ctx.board, player.position).next[0];
       if (next === undefined) break;
       stepForward(player, next);
       player.atGate = isGate(getSpace(ctx.board, next).kind);
-    } else {
-      const previous = player.trail.pop() ?? ctx.board.predecessors.get(player.position)?.[0];
-      if (previous === undefined) break;
-      player.position = previous;
-      player.atGate = isGate(getSpace(ctx.board, previous).kind);
-    }
+    } else if (stepBack(ctx, player) === undefined) break;
   }
   ctx.events.push({ type: 'released', playerId: player.id, spaceId: player.position });
 }
