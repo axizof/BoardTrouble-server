@@ -177,7 +177,7 @@ const FLOORS: FloorPlan[] = [
     ],
     edges: [11, 12, 13],
     branches: [
-      { name: 'wall', from: 10, to: 14, kinds: [bonus(3), _, bonus(5), _, ITEM], lane: { bow: -1.8, rise: 1 } },
+      { name: 'wall', from: 10, to: 14, kinds: [bonus(3), _, bonus(5), _, ITEM], lane: { bow: -2.8, rise: 1 } },
     ],
   },
   {
@@ -213,7 +213,7 @@ const FLOORS: FloorPlan[] = [
     ],
     edges: [7, 8, 9],
     branches: [
-      { name: 'wall', from: 6, to: 10, kinds: [bonus(3), _, REST, bonus(5), _], lane: { bow: -1.8, rise: 1 } },
+      { name: 'wall', from: 6, to: 10, kinds: [bonus(3), _, REST, bonus(5), _], lane: { bow: -2.4, rise: 1 } },
       { name: 'bridge', from: 17, to: 22, kinds: [DRAWBRIDGE, _], lane: { bow: 0 } },
     ],
   },
@@ -246,7 +246,7 @@ const FLOORS: FloorPlan[] = [
     ],
     edges: [8, 9],
     branches: [
-      { name: 'wall', from: 5, to: 10, kinds: [ITEM, _, bonus(3), _], lane: { bow: -1.5, rise: 1 } },
+      { name: 'wall', from: 5, to: 10, kinds: [ITEM, _, bonus(3), _], lane: { bow: -2, rise: 1 } },
     ],
   },
   {
@@ -279,7 +279,7 @@ const FLOORS: FloorPlan[] = [
     // dépasse le Glacier, n'a pas de bord (on y tomberait trop loin).
     edges: [3, 4, 5, 6],
     branches: [
-      { name: 'wall', from: 2, to: 6, kinds: [bonus(3), _, ITEM, _, _], lane: { bow: -2, rise: 1 } },
+      { name: 'wall', from: 2, to: 6, kinds: [bonus(3), _, ITEM, _, _], lane: { bow: -3.2, rise: 1 } },
     ],
   },
 ];
