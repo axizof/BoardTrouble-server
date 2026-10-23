@@ -8,21 +8,26 @@ const bots = new Map([
 ]);
 
 describe('an arena run', () => {
-  test('waits for the human during the intro, then counts down as soon as they are ready', () => {
+  test('waits for the human during the intro as long as needed, then counts down', () => {
     const run = new ArenaRun('pawnSumo', ['a', 'b', 'c'], bots, 1, 0);
     expect(run.view(0).ready.sort()).toEqual(['b', 'c']);
-    expect(run.nextWakeAt()).toBe(ARENA_TIMES.intro);
+    // Pas de limite : l'hôte n'a rien à faire tant que le joueur n'est pas prêt.
+    expect(run.nextWakeAt()).toBeNull();
+    run.advance(600_000, new Rng(1));
+    expect(run.stage).toBe('intro');
+    expect(run.view(600_000).stageEndsIn).toBeNull();
     run.setReady('a', 1000);
     expect(run.stage).toBe('countdown');
     expect(run.nextWakeAt()).toBe(1000 + ARENA_TIMES.countdown);
   });
 
-  test('starts anyway when the intro time runs out, plays, then shows the ranking', () => {
+  test('plays once everyone is ready, then shows the ranking', () => {
     const rng = new Rng(3);
     const run = new ArenaRun('pawnSumo', ['a', 'b', 'c'], bots, 1, 0);
+    run.setReady('a', 0);
     let now = 0;
     while (!run.isDone(now) && now < 300_000) {
-      now = run.nextWakeAt();
+      now = run.nextWakeAt() ?? now;
       // Le joueur humain ne touche à rien : il finit par tomber avec le plateau.
       run.advance(now, rng);
     }

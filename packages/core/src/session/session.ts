@@ -27,8 +27,11 @@ export type SeatControl = 'human' | BotLevel;
 export type Seat = { control: SeatControl; appearance: Appearance };
 
 export type SessionOptions = {
-  /** Temps pour décider, en millisecondes (20 s par défaut, réglable dans le salon). */
-  decisionTime: number;
+  /**
+   * Temps pour décider, en millisecondes, ou null sans limite (le solo : on joue quand on veut ;
+   * en multi, réglable dans le salon).
+   */
+  decisionTime: number | null;
 };
 
 /**
@@ -114,17 +117,22 @@ export class GameSession {
     return { ok: true, events: result.events };
   }
 
-  /** Heure de la prochaine action automatique, ou null si la partie est finie. */
+  /**
+   * Heure de la prochaine action automatique, ou null s'il n'y en a pas : partie finie, ou un
+   * humain qui a tout son temps (l'hôte attend qu'il joue).
+   */
   nextWakeAt(): number | null {
     const actor = this.#actor();
     if (actor === null) return null;
     if (actor.type === 'system') {
-      if (this.#arenaToPlay()) return this.#arena?.nextWakeAt() ?? this.#readyAt;
+      if (this.#arenaToPlay()) return this.#arena ? this.#arena.nextWakeAt() : this.#readyAt;
       return this.#readyAt + PLACEHOLDER_MINIGAME_TIME;
     }
-    return this.seats[actor.playerId]?.control === 'human'
-      ? this.#readyAt + this.#decisionTime()
-      : this.#readyAt + botThinkTime(this.#state);
+    if (this.seats[actor.playerId]?.control !== 'human') {
+      return this.#readyAt + botThinkTime(this.#state);
+    }
+    const decisionTime = this.#decisionTime();
+    return decisionTime === null ? null : this.#readyAt + decisionTime;
   }
 
   /**
@@ -249,7 +257,8 @@ export class GameSession {
   #decisionEndsIn(now: number): number | null {
     const actor = this.#actor();
     if (actor?.type !== 'player' || this.seats[actor.playerId]?.control !== 'human') return null;
-    return this.#readyAt + this.#decisionTime() - now;
+    const decisionTime = this.#decisionTime();
+    return decisionTime === null ? null : this.#readyAt + decisionTime - now;
   }
 
   /** Qui l'hôte fait jouer ou attend. Quand tout le monde agit en même temps, les bots d'abord. */
@@ -258,7 +267,8 @@ export class GameSession {
     return bot ? { type: 'player', playerId: bot } : whoMustAct(this.#state);
   }
 
-  #decisionTime(): number {
+  #decisionTime(): number | null {
+    if (this.#options.decisionTime === null) return null;
     return this.#state.phase.type === 'intro' ? INTRO_TIME : this.#options.decisionTime;
   }
 

@@ -10,7 +10,11 @@ import { GameSession, type Seat, type SeatControl } from './session';
 const board = prepareBoard(buildMontTrouble());
 const DECISION_TIME = 20_000;
 
-function start(controls: Record<string, SeatControl>, seed = 1) {
+function start(
+  controls: Record<string, SeatControl>,
+  seed = 1,
+  decisionTime: number | null = DECISION_TIME,
+) {
   const seats = Object.fromEntries(
     Object.entries(controls).map(([id, control]): [string, Seat] => [
       id,
@@ -21,7 +25,7 @@ function start(controls: Record<string, SeatControl>, seed = 1) {
     board,
     { players: FOUR_PLAYERS, tableSize: 4, seed },
     seats,
-    { decisionTime: DECISION_TIME },
+    { decisionTime },
     0,
   );
 }
@@ -110,6 +114,23 @@ describe('a game session', () => {
     expect(session.tick(deadline - 1)).toBeNull();
     const played = session.tick(deadline);
     expect(played?.length).toBeGreaterThan(0);
+  });
+
+  test('without a time limit, waits for the human as long as it takes; bots still play', () => {
+    const { session } = start({ ...BOTS, ana: 'human' }, 1, null);
+    let now = 0;
+    for (let bot = 0; bot < 3; bot++) {
+      now = session.nextWakeAt() ?? now;
+      session.tick(now);
+    }
+    // Ana regarde l'intro : rien n'est prévu, ni chrono ni choix par défaut.
+    expect(session.nextWakeAt()).toBeNull();
+    expect(session.tick(now + 3_600_000)).toBeNull();
+    const intro = session.snapshot({ type: 'player', playerId: 'ana' }, now);
+    expect(intro.type === 'snapshot' && intro.decisionEndsIn).toBeNull();
+    session.submit({ type: 'player', playerId: 'ana' }, { type: 'skipIntro' }, now);
+    // Les bots reprennent seuls.
+    expect(session.nextWakeAt()).not.toBeNull();
   });
 
   test('applies a human intent and waits for its animations before the next bot acts', () => {

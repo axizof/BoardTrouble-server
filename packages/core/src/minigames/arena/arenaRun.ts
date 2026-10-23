@@ -20,10 +20,12 @@ export function isArenaMinigame(minigame: MinigameId): minigame is ArenaMinigame
 
 export type ArenaStage = 'intro' | 'countdown' | 'play' | 'result';
 
-/** Durées des étapes, en millisecondes. */
+/**
+ * Durées des étapes, en millisecondes. La présentation n'a pas de limite : on prend le temps de
+ * comprendre le jeu, et elle finit quand tout le monde est prêt (en multi, l'hôte pourra la
+ * lancer sans attendre un retardataire).
+ */
 export const ARENA_TIMES = {
-  /** La présentation et le bac à sable, au plus : elle finit dès que tout le monde est prêt. */
-  intro: 30_000,
   /** Entre bots seulement (le labo moteur), la présentation est courte. */
   botsIntro: 3000,
   countdown: 3000,
@@ -50,7 +52,7 @@ export class ArenaRun {
   readonly #ready = new Set<PlayerId>();
   readonly #inputs = new Map<PlayerId, ArenaInput>();
   #stage: ArenaStage = 'intro';
-  /** Fin de l'étape en cours (heure de l'hôte) ; pendant le jeu, son début. */
+  /** Fin de l'étape en cours (heure de l'hôte), l'infini pour une présentation sans limite ; pendant le jeu, son début. */
   #stageAt: number;
   #state: SumoState;
   #ranking: PlayerId[][] | null = null;
@@ -70,7 +72,7 @@ export class ArenaRun {
     for (const id of players) if (bots.has(id)) this.#ready.add(id);
     this.#state = this.#game.create(players, { practice: false, seed });
     const isBotsOnly = players.every((id) => bots.has(id));
-    this.#stageAt = now + (isBotsOnly ? ARENA_TIMES.botsIntro : ARENA_TIMES.intro);
+    this.#stageAt = isBotsOnly ? now + ARENA_TIMES.botsIntro : Number.POSITIVE_INFINITY;
   }
 
   get stage(): ArenaStage {
@@ -90,9 +92,9 @@ export class ArenaRun {
     }
   }
 
-  /** L'heure à laquelle l'hôte doit rappeler `advance`. */
-  nextWakeAt(): number {
-    if (this.#stage !== 'play') return this.#stageAt;
+  /** L'heure à laquelle l'hôte doit rappeler `advance`, ou null s'il attend les joueurs. */
+  nextWakeAt(): number | null {
+    if (this.#stage !== 'play') return Number.isFinite(this.#stageAt) ? this.#stageAt : null;
     return this.#stageAt + (this.#state.tick + 1) * ARENA_STEP * 1000;
   }
 
@@ -138,7 +140,10 @@ export class ArenaRun {
     return {
       minigame: this.minigame,
       stage: this.#stage,
-      stageEndsIn: this.#stage === 'play' ? null : Math.max(0, this.#stageAt - now),
+      stageEndsIn:
+        this.#stage === 'play' || !Number.isFinite(this.#stageAt)
+          ? null
+          : Math.max(0, this.#stageAt - now),
       players: this.players,
       ready: [...this.#ready],
       arena: this.#state,
