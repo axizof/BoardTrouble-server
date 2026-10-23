@@ -29,8 +29,14 @@ export type SessionOptions = {
   decisionTime: number;
 };
 
-/** Un bot décide vite, mais on le voit "réfléchir" un instant. */
-const BOT_THINK_TIME = 700;
+/**
+ * Un bot décide vite, mais on le voit "réfléchir" : le temps de voir où il en est avant qu'il
+ * lance, et un peu plus quand il a un vrai choix à faire (voie, coffre, cible, objet...). À
+ * l'ouverture (intro, tirage de l'ordre), tout le monde agit en même temps : les bots, vite.
+ */
+const BOT_ROLL_TIME = 1300;
+const BOT_CHOICE_TIME = 1900;
+const BOT_OPENING_TIME = 700;
 /** Durée d'un mini-jeu provisoire (voir `placeholderSystemIntent`). */
 const PLACEHOLDER_MINIGAME_TIME = 5000;
 /** Un joueur qui laisse passer son chrono : l'hôte choisit pour lui, comme un bot Normal. */
@@ -111,7 +117,7 @@ export class GameSession {
     if (actor.type === 'system') return this.#readyAt + PLACEHOLDER_MINIGAME_TIME;
     return this.seats[actor.playerId]?.control === 'human'
       ? this.#readyAt + this.#decisionTime()
-      : this.#readyAt + BOT_THINK_TIME;
+      : this.#readyAt + botThinkTime(this.#state);
   }
 
   /**
@@ -188,4 +194,12 @@ export class GameSession {
     const control = this.seats[playerId]?.control;
     return control === undefined || control === 'human' ? STAND_IN_LEVEL : control;
   }
+}
+
+/** Le temps de "réflexion" d'un bot avant son action, selon ce qu'il a à faire. */
+function botThinkTime(state: GameState): number {
+  const { phase } = state;
+  if (phase.type === 'intro' || phase.type === 'orderRoll') return BOT_OPENING_TIME;
+  if (phase.type === 'turn' && phase.step.type === 'awaitRoll') return BOT_ROLL_TIME;
+  return BOT_CHOICE_TIME;
 }
