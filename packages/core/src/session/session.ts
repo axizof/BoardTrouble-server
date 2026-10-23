@@ -34,8 +34,8 @@ export type SessionOptions = {
  * lance, et un peu plus quand il a un vrai choix à faire (voie, coffre, cible, objet...). À
  * l'ouverture (intro, tirage de l'ordre), tout le monde agit en même temps : les bots, vite.
  */
-const BOT_ROLL_TIME = 1300;
-const BOT_CHOICE_TIME = 1900;
+const BOT_ROLL_TIME = 1600;
+const BOT_CHOICE_TIME = 2400;
 const BOT_OPENING_TIME = 700;
 /** Durée d'un mini-jeu provisoire (voir `placeholderSystemIntent`). */
 const PLACEHOLDER_MINIGAME_TIME = 5000;

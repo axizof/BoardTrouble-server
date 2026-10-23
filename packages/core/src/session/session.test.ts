@@ -67,7 +67,7 @@ describe('a game session', () => {
     }
     expect(waits.roll.length).toBeGreaterThan(10);
     expect(waits.choice.length).toBeGreaterThan(0);
-    expect(Math.min(...waits.roll)).toBeGreaterThanOrEqual(1300);
+    expect(Math.min(...waits.roll)).toBeGreaterThanOrEqual(1600);
     expect(Math.min(...waits.choice)).toBeGreaterThan(Math.min(...waits.roll));
   });
 

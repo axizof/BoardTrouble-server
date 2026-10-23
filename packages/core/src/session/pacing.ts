@@ -89,7 +89,15 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
 };
 
 /** Le personnage marche d'une case à l'autre (environ 6 m) : il prend son temps. */
-export const MOVE_STEP_TIME = 700;
+export const MOVE_STEP_TIME = 800;
+
+/**
+ * Le rythme de la partie : chaque moment dure un peu plus que sa durée de base, pour jouer
+ * sans être pressé (retour du test solo : "pas en mode rush"). L'ouverture, où tout le monde
+ * agit en même temps, garde son rythme.
+ */
+const PACE = 1.35;
+const UNPACED = new Set<GameEvent['type']>(['introEnded', 'orderRolled']);
 
 /**
  * Temps nécessaire pour jouer ces événements. Il est calculé sur ce que voit un spectateur :
@@ -99,7 +107,9 @@ export function animationTime(events: GameEvent[]): number {
   return viewEvents(events, { type: 'spectator' }).reduce(
     (total, event) =>
       total +
-      (event.type === 'moved' ? event.path.length * MOVE_STEP_TIME : EVENT_TIME[event.type]),
+      (event.type === 'moved'
+        ? event.path.length * MOVE_STEP_TIME
+        : EVENT_TIME[event.type] * (UNPACED.has(event.type) ? 1 : PACE)),
     0,
   );
 }
