@@ -50,6 +50,27 @@ describe('a game session', () => {
     expect(session.isFinished).toBe(true);
   });
 
+  test('lets a bot take its time: longer for a real choice than for a roll', () => {
+    const { session, events: opening } = start(BOTS);
+    let ready = animationTime(opening);
+    const waits = { roll: [] as number[], choice: [] as number[] };
+    for (let i = 0; i < 400; i++) {
+      const wake = session.nextWakeAt();
+      if (wake === null) break;
+      const snapshot = session.snapshot({ type: 'spectator' }, wake);
+      if (snapshot.type !== 'snapshot') throw new Error('Instantané attendu');
+      const { phase } = snapshot.state;
+      if (phase.type === 'turn') {
+        (phase.step.type === 'awaitRoll' ? waits.roll : waits.choice).push(wake - ready);
+      }
+      ready = wake + animationTime(session.tick(wake) ?? []);
+    }
+    expect(waits.roll.length).toBeGreaterThan(10);
+    expect(waits.choice.length).toBeGreaterThan(0);
+    expect(Math.min(...waits.roll)).toBeGreaterThanOrEqual(1300);
+    expect(Math.min(...waits.choice)).toBeGreaterThan(Math.min(...waits.roll));
+  });
+
   test('gives a human the decision time, then plays a default choice for them', () => {
     const { session } = start({ ...BOTS, ana: 'human' });
     // Les bots et les mini-jeux provisoires jouent jusqu'à ce que ce soit à Ana.
