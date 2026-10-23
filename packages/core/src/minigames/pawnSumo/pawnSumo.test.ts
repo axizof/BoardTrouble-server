@@ -108,3 +108,33 @@ describe('pawn sumo', () => {
     expect(wins.c ?? 0).toBeGreaterThan(wins.a ?? 0);
   });
 });
+
+describe('pushing in pawn sumo', () => {
+  const pair = (bInput: ArenaInput) => {
+    let state = PAWN_SUMO.create(['a', 'b'], { practice: true, seed: 1 });
+    state = {
+      ...state,
+      fighters: state.fighters.map((f) =>
+        f.id === 'a' ? { ...f, x: 0, z: -1.5 } : { ...f, x: 0, z: -0.5 },
+      ),
+    };
+    const push = { move: { x: 0, z: 1 }, primary: false, secondary: false };
+    return run(state, { a: push, b: bInput }, 45);
+  };
+
+  test('walking into someone pushes them back, together and slower than walking', () => {
+    const state = pair(IDLE_INPUT);
+    const [a, b] = [fighter(state, 'a'), fighter(state, 'b')];
+    // b a reculé, poussé par a, qui avance moins vite qu'en marchant seul.
+    expect(b.z).toBeGreaterThan(0.3);
+    expect(a.vz).toBeGreaterThan(0.5);
+    expect(a.vz).toBeLessThan(3.5);
+    // Ils restent collés : celui qui pousse ne rebondit pas.
+    expect(b.z - a.z).toBeLessThan(1.15);
+  });
+
+  test('two players pushing against each other hold each other', () => {
+    const state = pair({ move: { x: 0, z: -1 }, primary: false, secondary: false });
+    expect(Math.abs(fighter(state, 'b').z - -0.5)).toBeLessThan(0.3);
+  });
+});

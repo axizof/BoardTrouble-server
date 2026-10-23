@@ -24,13 +24,17 @@ export const SUMO_TIME_LIMIT = 120;
 const BODY_RADIUS = 0.5;
 const WALK_SPEED = 4.5;
 /**
- * La marche répond tout de suite : on prend sa vitesse et on s'arrête presque net, comme un
- * personnage qui marche (avec moins d'adhérence, on glissait comme une voiture).
+ * La marche est une force, pas une vitesse imposée : chacun pousse avec ses jambes
+ * (WALK_FORCE, de moins en moins à mesure qu'il approche de sa vitesse de marche) et freine
+ * avec ses pieds (BRAKE_FORCE, en m/s²). Seul, on part et on s'arrête vite. Contre quelqu'un,
+ * on le pousse : il recule en freinant, on avance ensemble plus lentement ; s'il pousse en
+ * face, c'est un bras de fer. (Une vitesse imposée faisait de l'autre un mur.)
  */
-const WALK_GRIP = 18;
-/** Après un choc, on contrôle moins bien son personnage, le temps de se rattraper. */
+const WALK_FORCE = 32;
+const BRAKE_FORCE = 20;
+/** Après un choc, on a moins d'appui le temps de se rattraper : on glisse. */
 const STUN_TIME = 0.35;
-const STUN_GRIP = 1.5;
+const STUN_FOOTING = 0.15;
 /** La charge : un élan vers l'avant, puis une recharge. */
 const CHARGE_SPEED = 13;
 const CHARGE_TIME = 0.25;
@@ -44,9 +48,8 @@ const CHARGE_KNOCK = 5.2;
 const PARRY_TIME = 0.25;
 export const PARRY_COOLDOWN = 1;
 const PARRY_KNOCK = 6.5;
-/** Se rentrer dedans en marchant : on se repousse un peu. */
-const BUMP_RESTITUTION = 0.6;
-const BUMP_PUSH = 2;
+/** Se rentrer dedans en marchant : un choc mou, presque sans rebond (on se colle, on pousse). */
+const BUMP_RESTITUTION = 0.1;
 /** Positions de départ : en cercle, à cette part du rayon. */
 const START_RING = 0.45;
 
@@ -145,7 +148,11 @@ function step(state: SumoState, inputs: Partial<Record<PlayerId, ArenaInput>>): 
     if (fighter.fellAt !== null) continue;
     act(fighter, inputs[fighter.id] ?? IDLE_INPUT, dt);
   }
-  collide(fighters.filter((fighter) => fighter.fellAt === null));
+  // Les contacts se règlent l'un après l'autre : l'ordre change à chaque pas, pour que la
+  // place dans la liste ne donne jamais l'avantage (à égalité, une place gagnait 3 fois plus).
+  const standingNow = fighters.filter((fighter) => fighter.fellAt === null);
+  const shift = tick % Math.max(1, standingNow.length);
+  collide([...standingNow.slice(shift), ...standingNow.slice(0, shift)].reverse());
   const next: SumoState = { ...state, tick, fighters };
   const radius = sumoRadius(next);
   for (const fighter of fighters) {
@@ -189,11 +196,35 @@ function act(fighter: SumoFighter, input: ArenaInput, dt: number): void {
     fighter.charging = Math.max(0, fighter.charging - dt);
     return;
   }
-  // La marche : la vitesse rejoint celle voulue, plus lentement juste après un choc.
-  const grip = fighter.stunned > 0 ? STUN_GRIP : WALK_GRIP;
-  const blend = Math.min(1, grip * dt);
-  fighter.vx += (input.move.x * WALK_SPEED - fighter.vx) * blend;
-  fighter.vz += (input.move.z * WALK_SPEED - fighter.vz) * blend;
+  walk(fighter, input, dt);
+}
+
+/**
+ * La marche : une poussée dans la direction voulue, qui faiblit près de la vitesse de marche,
+ * et un freinage de tout le reste (l'élan de côté, ou tout l'élan quand on lâche les touches).
+ */
+function walk(fighter: SumoFighter, input: ArenaInput, dt: number): void {
+  const footing = fighter.stunned > 0 ? STUN_FOOTING : 1;
+  const strength = Math.min(1, Math.hypot(input.move.x, input.move.z));
+  const dirX = strength > 0.1 ? input.move.x / strength : 0;
+  const dirZ = strength > 0.1 ? input.move.z / strength : 0;
+  const along = fighter.vx * dirX + fighter.vz * dirZ;
+  // Freinage : l'élan qui n'est pas dans la direction voulue (tout l'élan, sans direction).
+  let restX = fighter.vx - dirX * Math.max(0, along);
+  let restZ = fighter.vz - dirZ * Math.max(0, along);
+  const rest = Math.hypot(restX, restZ);
+  if (rest > 0) {
+    const kept = Math.max(0, rest - BRAKE_FORCE * footing * dt) / rest;
+    restX *= kept;
+    restZ *= kept;
+  }
+  // Poussée : forte à l'arrêt, nulle à la vitesse de marche.
+  const target = WALK_SPEED * strength;
+  const drive = along < target ? WALK_FORCE * footing * (1 - Math.max(0, along) / WALK_SPEED) : 0;
+  const forward = Math.min(target, Math.max(0, along) + drive * dt);
+  const slowing = along > target ? Math.max(target, along - BRAKE_FORCE * footing * dt) : forward;
+  fighter.vx = restX + dirX * slowing;
+  fighter.vz = restZ + dirZ * slowing;
 }
 
 /** Les chocs entre combattants : une charge envoie loin, parée elle renvoie l'attaquant. */
@@ -223,10 +254,10 @@ function collide(fighters: SumoFighter[]): void {
       if (a.charging > 0 || b.charging > 0) {
         if (a.charging > 0 && b.charging <= 0) charge(a, b, nx, nz);
         else if (b.charging > 0 && a.charging <= 0) charge(b, a, -nx, -nz);
-        else bump(a, b, nx, nz, CHARGE_SPEED / 2);
+        else bump(a, b, nx, nz);
         continue;
       }
-      bump(a, b, nx, nz, BUMP_PUSH);
+      bump(a, b, nx, nz);
     }
   }
 }
@@ -249,16 +280,17 @@ function charge(attacker: SumoFighter, target: SumoFighter, nx: number, nz: numb
 }
 
 /**
- * Un choc sans charge : ils échangent leur élan et se repoussent un peu, sans perdre le
- * contrôle (sinon, coincé contre un autre près du bord, on glissait dehors sans rien pouvoir).
+ * Un contact sans charge : ils partagent leur élan le long du contact (même poids), presque
+ * sans rebond. Celui qui avance entraîne l'autre ; la suite se joue entre leurs jambes (walk).
  */
-function bump(a: SumoFighter, b: SumoFighter, nx: number, nz: number, push: number): void {
+function bump(a: SumoFighter, b: SumoFighter, nx: number, nz: number): void {
   const closing = (a.vx - b.vx) * nx + (a.vz - b.vz) * nz;
-  const exchange = closing > 0 ? (closing * (1 + BUMP_RESTITUTION)) / 2 : 0;
-  a.vx -= nx * (exchange + push / 2);
-  a.vz -= nz * (exchange + push / 2);
-  b.vx += nx * (exchange + push / 2);
-  b.vz += nz * (exchange + push / 2);
+  if (closing <= 0) return;
+  const exchange = (closing * (1 + BUMP_RESTITUTION)) / 2;
+  a.vx -= nx * exchange;
+  a.vz -= nz * exchange;
+  b.vx += nx * exchange;
+  b.vz += nz * exchange;
 }
 
 function standing(state: SumoState): SumoFighter[] {
