@@ -23,7 +23,11 @@ export const SUMO_TIME_LIMIT = 120;
 
 const BODY_RADIUS = 0.5;
 const WALK_SPEED = 4.5;
-const WALK_GRIP = 10;
+/**
+ * La marche répond tout de suite : on prend sa vitesse et on s'arrête presque net, comme un
+ * personnage qui marche (avec moins d'adhérence, on glissait comme une voiture).
+ */
+const WALK_GRIP = 18;
 /** Après un choc, on contrôle moins bien son personnage, le temps de se rattraper. */
 const STUN_TIME = 0.35;
 const STUN_GRIP = 1.5;
@@ -43,8 +47,6 @@ const PARRY_KNOCK = 6.5;
 /** Se rentrer dedans en marchant : on se repousse un peu. */
 const BUMP_RESTITUTION = 0.6;
 const BUMP_PUSH = 2;
-/** Sans commande, on glisse encore un peu : on ne s'arrête pas net. */
-const DRAG = 0.4;
 /** Positions de départ : en cercle, à cette part du rayon. */
 const START_RING = 0.45;
 
@@ -192,10 +194,6 @@ function act(fighter: SumoFighter, input: ArenaInput, dt: number): void {
   const blend = Math.min(1, grip * dt);
   fighter.vx += (input.move.x * WALK_SPEED - fighter.vx) * blend;
   fighter.vz += (input.move.z * WALK_SPEED - fighter.vz) * blend;
-  if (!moving) {
-    fighter.vx *= 1 - Math.min(1, DRAG * dt);
-    fighter.vz *= 1 - Math.min(1, DRAG * dt);
-  }
 }
 
 /** Les chocs entre combattants : une charge envoie loin, parée elle renvoie l'attaquant. */
