@@ -13,6 +13,8 @@ import type {
 } from '../game/types';
 import { type Viewer, viewEvents, viewState } from '../game/views';
 import type { Appearance } from '../lobby/players';
+import { ArenaRun, isArenaMinigame } from '../minigames/arena/arenaRun';
+import type { MinigameId } from '../minigames/catalog';
 import { Rng } from '../random/rng';
 import { animationTime } from './pacing';
 import { placeholderSystemIntent } from './placeholder';
@@ -63,6 +65,8 @@ export class GameSession {
   #state: GameState;
   /** Fin des animations en cours : rien d'automatique ne se joue avant. */
   #readyAt: number;
+  /** Le mini-jeu d'arène en cours, ou null. */
+  #arena: ArenaRun | null = null;
 
   private constructor(
     board: Board,
@@ -114,7 +118,10 @@ export class GameSession {
   nextWakeAt(): number | null {
     const actor = this.#actor();
     if (actor === null) return null;
-    if (actor.type === 'system') return this.#readyAt + PLACEHOLDER_MINIGAME_TIME;
+    if (actor.type === 'system') {
+      if (this.#arenaToPlay()) return this.#arena?.nextWakeAt() ?? this.#readyAt;
+      return this.#readyAt + PLACEHOLDER_MINIGAME_TIME;
+    }
     return this.seats[actor.playerId]?.control === 'human'
       ? this.#readyAt + this.#decisionTime()
       : this.#readyAt + botThinkTime(this.#state);
@@ -122,13 +129,16 @@ export class GameSession {
 
   /**
    * Joue l'action automatique si son heure est venue : décision d'un bot, choix par défaut
-   * d'un joueur dont le chrono est écoulé, résultat provisoire d'un mini-jeu. Renvoie ses
-   * événements, ou null s'il n'y avait rien à jouer.
+   * d'un joueur dont le chrono est écoulé, pas d'un mini-jeu d'arène, résultat provisoire des
+   * autres mini-jeux. Renvoie ses événements (une liste vide si seule l'arène a avancé), ou null
+   * s'il n'y avait rien à jouer.
    */
   tick(now: number): GameEvent[] | null {
     const wake = this.nextWakeAt();
     const actor = this.#actor();
     if (wake === null || actor === null || now < wake) return null;
+    const arena = actor.type === 'system' ? this.#arenaToPlay() : null;
+    if (arena) return this.#playArena(arena, now);
     const intent =
       actor.type === 'system'
         ? placeholderSystemIntent(this.#state, this.#botRng)
@@ -172,6 +182,68 @@ export class GameSession {
       state: viewState(this.#state, viewer),
       decisionEndsIn: this.#decisionEndsIn(now),
     };
+  }
+
+  /** Un joueur envoie ses commandes d'arène. */
+  arenaInput(player: PlayerId, input: unknown): void {
+    this.#arena?.setInput(player, input);
+  }
+
+  /** Un joueur se dit prêt, à la présentation d'un mini-jeu d'arène. */
+  arenaReady(player: PlayerId, now: number): void {
+    this.#arena?.setReady(player, now);
+  }
+
+  /** Le message du mini-jeu d'arène en cours (null s'il n'y en a pas). Tout y est public. */
+  arenaMessage(now: number): HostMessage {
+    return { type: 'arena', run: this.#arena?.view(now) ?? null };
+  }
+
+  get isPlayingArena(): boolean {
+    return this.#arena !== null;
+  }
+
+  /** Le mini-jeu d'arène que la partie attend, et qui le joue ; null sinon. */
+  #arenaToPlay(): { minigame: MinigameId; players: PlayerId[] } | null {
+    const { phase } = this.#state;
+    if (phase.type === 'minigame' || phase.type === 'bonusMinigame') {
+      return isArenaMinigame(phase.minigame)
+        ? { minigame: phase.minigame, players: this.#state.players.map((player) => player.id) }
+        : null;
+    }
+    if (phase.type === 'finale' && isArenaMinigame(phase.minigame)) {
+      return { minigame: phase.minigame, players: phase.contenders };
+    }
+    return null;
+  }
+
+  /** Lance l'arène une fois les animations jouées, la fait avancer, puis rend son classement. */
+  #playArena(to: { minigame: MinigameId; players: PlayerId[] }, now: number): GameEvent[] {
+    if (!isArenaMinigame(to.minigame)) return [];
+    if (!this.#arena) {
+      const bots = new Map(
+        to.players.flatMap((id): [PlayerId, BotLevel][] => {
+          const control = this.seats[id]?.control;
+          return control && control !== 'human' ? [[id, control]] : [];
+        }),
+      );
+      this.#arena = new ArenaRun(to.minigame, to.players, bots, this.#botRng.int(1, 1e9), now);
+      return [];
+    }
+    this.#arena.advance(now, this.#botRng);
+    const ranking = this.#arena.ranking;
+    if (!ranking || !this.#arena.isDone(now)) return [];
+    this.#arena = null;
+    const { phase } = this.#state;
+    const intent: Intent =
+      phase.type === 'finale'
+        ? { type: 'submitFinaleResult', ranking }
+        : phase.type === 'bonusMinigame'
+          ? { type: 'submitBonusMinigameResult', ranking }
+          : { type: 'submitMinigameResult', ranking };
+    const result = this.submit({ type: 'system' }, intent, now);
+    if (!result.ok) throw new Error(`Classement d'arène refusé : ${result.error}`);
+    return result.events;
   }
 
   #decisionEndsIn(now: number): number | null {

@@ -45,7 +45,8 @@ describe('a game session', () => {
       expect(events).not.toBeNull();
       previousReady = wake + animationTime(events ?? []);
       ticks++;
-      if (ticks > 20_000) throw new Error('Partie sans fin');
+      // Un mini-jeu d'arène avance d'un pas par réveil (30 par seconde) : beaucoup de réveils.
+      if (ticks > 200_000) throw new Error('Partie sans fin');
     }
     expect(session.isFinished).toBe(true);
   });
@@ -54,7 +55,7 @@ describe('a game session', () => {
     const { session, events: opening } = start(BOTS);
     let ready = animationTime(opening);
     const waits = { roll: [] as number[], choice: [] as number[] };
-    for (let i = 0; i < 400; i++) {
+    for (let i = 0; i < 50_000 && waits.roll.length < 30; i++) {
       const wake = session.nextWakeAt();
       if (wake === null) break;
       const snapshot = session.snapshot({ type: 'spectator' }, wake);
@@ -69,6 +70,29 @@ describe('a game session', () => {
     expect(waits.choice.length).toBeGreaterThan(0);
     expect(Math.min(...waits.roll)).toBeGreaterThanOrEqual(1600);
     expect(Math.min(...waits.choice)).toBeGreaterThan(Math.min(...waits.roll));
+  });
+
+  test('plays an arena minigame: intro, countdown, a real match, then its ranking', () => {
+    // On cherche une partie dont le premier mini-jeu tiré est le Sumo.
+    for (let seed = 1; seed < 400; seed++) {
+      const { session } = start(BOTS, seed);
+      let arenaSeen = false;
+      let drawn: GameEvent | undefined;
+      let ranked: GameEvent | undefined;
+      for (let wake = session.nextWakeAt(); wake !== null && !ranked; wake = session.nextWakeAt()) {
+        const events = session.tick(wake) ?? [];
+        drawn ??= events.find((event) => event.type === 'minigameDrawn');
+        const message = session.arenaMessage(wake);
+        if (message.type === 'arena' && message.run) arenaSeen = true;
+        ranked = events.find((event) => event.type === 'minigameRanked');
+      }
+      if (drawn?.type !== 'minigameDrawn' || drawn.minigame !== 'pawnSumo') continue;
+      expect(arenaSeen).toBe(true);
+      expect(ranked?.type).toBe('minigameRanked');
+      expect(session.isPlayingArena).toBe(false);
+      return;
+    }
+    throw new Error('Aucune partie ne tire le Sumo en premier');
   });
 
   test('gives a human the decision time, then plays a default choice for them', () => {
