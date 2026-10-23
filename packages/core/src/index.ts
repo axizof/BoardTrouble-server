@@ -17,6 +17,7 @@ export * from './jail/jail';
 export * from './lobby/players';
 export * from './minigames/arena/arena';
 export * from './minigames/arena/arenaRun';
+export * from './minigames/arena/body';
 export * from './minigames/catalog';
 export * from './minigames/pawnSumo/pawnSumo';
 export * from './random/rng';
