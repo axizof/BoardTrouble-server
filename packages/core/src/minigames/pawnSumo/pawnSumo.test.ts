@@ -2,7 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import type { BotLevel } from '../../bots/boardBot';
 import { Rng } from '../../random/rng';
 import { ARENA_STEP, type ArenaInput, IDLE_INPUT } from '../arena/arena';
-import { PAWN_SUMO, SUMO_RADIUS, SUMO_TIME_LIMIT, type SumoState, sumoRadius } from './pawnSumo';
+import {
+  CLASH_TIME,
+  clashScore,
+  PAWN_SUMO,
+  SUMO_RADIUS,
+  SUMO_TIME_LIMIT,
+  type SumoState,
+  sumoRadius,
+} from './pawnSumo';
 
 const PLAYERS = ['a', 'b', 'c', 'd'];
 const run = (state: SumoState, inputs: Record<string, ArenaInput>, steps: number) => {
@@ -37,28 +45,90 @@ describe('pawn sumo', () => {
     expect(state.tick * ARENA_STEP).toBeLessThan(SUMO_TIME_LIMIT);
   });
 
-  test('a charge pushes the target back, a parried charge pushes the attacker back', () => {
-    const duel = (parry: boolean) => {
-      let state = PAWN_SUMO.create(['a', 'b'], { practice: false, seed: 1 });
-      // a regarde b, à 2 m.
-      state = {
-        ...state,
-        fighters: state.fighters.map((f) =>
-          f.id === 'a' ? { ...f, x: 0, z: -1, facing: 0 } : { ...f, x: 0, z: 1, facing: Math.PI },
-        ),
-      };
-      state = PAWN_SUMO.step(state, {
-        a: { move: { x: 0, z: 1 }, primary: true, secondary: false },
+  /** a regarde b, à 2 m ; b regarde dans la direction `bFacing`. */
+  const facingOff = (bFacing: number) => {
+    const state = PAWN_SUMO.create(['a', 'b'], { practice: false, seed: 1 });
+    return {
+      ...state,
+      fighters: state.fighters.map((f) =>
+        f.id === 'a' ? { ...f, x: 0, z: -1, facing: 0 } : { ...f, x: 0, z: 1, facing: bFacing },
+      ),
+    };
+  };
+  const charging = { move: { x: 0, z: 1 }, primary: true, secondary: false };
+
+  test('a charge from the side knocks the target down, a parried one knocks the attacker down', () => {
+    const fromSide = (parry: boolean) => {
+      const state = PAWN_SUMO.step(facingOff(Math.PI / 2), {
+        a: charging,
         b: parry ? { ...IDLE_INPUT, secondary: true } : IDLE_INPUT,
       });
       return run(state, {}, 5);
     };
-    const hit = duel(false);
+    const hit = fromSide(false);
     expect(fighter(hit, 'b').vz).toBeGreaterThan(3);
+    expect(fighter(hit, 'b').downed).toBeGreaterThan(0);
     expect(fighter(hit, 'a').vz).toBeLessThan(fighter(hit, 'b').vz);
-    const parried = duel(true);
+    const parried = fromSide(true);
     expect(fighter(parried, 'a').vz).toBeLessThan(-3);
+    expect(fighter(parried, 'a').downed).toBeGreaterThan(0);
     expect(Math.abs(fighter(parried, 'b').vz)).toBeLessThan(1);
+  });
+
+  test('knocked down, a player can neither move nor charge back right away', () => {
+    let state = run(PAWN_SUMO.step(facingOff(Math.PI / 2), { a: charging }), {}, 3);
+    const z = fighter(state, 'b').z;
+    // b essaie de revenir et de charger : rien tant qu'il est à terre.
+    state = run(state, { b: { move: { x: 0, z: -1 }, primary: true, secondary: false } }, 10);
+    expect(fighter(state, 'b').z).toBeGreaterThan(z);
+    expect(fighter(state, 'b').charging).toBe(0);
+  });
+
+  test('a charge on someone facing you starts a timing clash that freezes both', () => {
+    const state = run(PAWN_SUMO.step(facingOff(Math.PI), { a: charging }), {}, 5);
+    expect(state.clashes).toHaveLength(1);
+    expect(state.clashes[0]?.result).toBeNull();
+    expect(fighter(state, 'a').vz).toBe(0);
+    expect(fighter(state, 'b').vz).toBe(0);
+  });
+
+  /** Lance un duel, puis a et b appuient quand l'aiguille passe à `pressA` / `pressB`. */
+  const clash = (pressA: number | null, pressB: number | null) => {
+    // La charge met quelques pas à arriver sur b.
+    let state = run(PAWN_SUMO.step(facingOff(Math.PI), { a: charging }), {}, 4);
+    const duel = state.clashes[0];
+    if (!duel) throw new Error('Duel attendu');
+    // On place la zone au milieu du tour, pour viser juste.
+    state = { ...state, clashes: [{ ...duel, zone: 0.5 }] };
+    const press = (at: number | null, needle: number) =>
+      at !== null && needle >= at ? { ...IDLE_INPUT, primary: true } : IDLE_INPUT;
+    for (let i = 0; i < CLASH_TIME / ARENA_STEP + 2; i++) {
+      const needle = ((state.tick + 1 - duel.startTick) * ARENA_STEP) / CLASH_TIME;
+      state = PAWN_SUMO.step(state, { a: press(pressA, needle), b: press(pressB, needle) });
+    }
+    return state;
+  };
+
+  test('the better timing wins the clash and throws the other down', () => {
+    const won = clash(0.5, 0.58);
+    expect(won.clashes[0]?.result?.scores).toEqual({ a: 3, b: 1 });
+    expect(fighter(won, 'b').downed).toBeGreaterThan(0);
+    expect(fighter(won, 'a').downed).toBe(0);
+    // Ne pas appuyer avant la fin du tour, c'est perdre.
+    const late = clash(null, 0.55);
+    expect(fighter(late, 'a').downed).toBeGreaterThan(0);
+    // À égalité, ils rebondissent tous les deux, sans tomber.
+    const tie = clash(0.5, 0.5);
+    expect(fighter(tie, 'a').downed + fighter(tie, 'b').downed).toBe(0);
+    expect(fighter(tie, 'b').z - fighter(tie, 'a').z).toBeGreaterThan(1.5);
+  });
+
+  test('scores a press by how close it is to the zone', () => {
+    expect(clashScore(0.5, 0.51)).toBe(3);
+    expect(clashScore(0.5, 0.46)).toBe(2);
+    expect(clashScore(0.5, 0.58)).toBe(1);
+    expect(clashScore(0.5, 0.7)).toBe(0);
+    expect(clashScore(0.5, undefined)).toBe(0);
   });
 
   test('ranks the last one standing first, then the fallen from last to first', () => {
@@ -122,14 +192,12 @@ describe('pushing in pawn sumo', () => {
     return run(state, { a: push, b: bInput }, 45);
   };
 
-  test('walking into someone pushes them back, together and slower than walking', () => {
+  test('walking into someone standing still barely moves them', () => {
     const state = pair(IDLE_INPUT);
     const [a, b] = [fighter(state, 'a'), fighter(state, 'b')];
-    // b a reculé, poussé par a, qui avance moins vite qu'en marchant seul.
-    expect(b.z).toBeGreaterThan(0.3);
-    expect(a.vz).toBeGreaterThan(0.5);
-    expect(a.vz).toBeLessThan(3.5);
-    // Ils restent collés : celui qui pousse ne rebondit pas.
+    // En 1,5 s, b recule à peine (seul, a aurait fait plus de 6 m), sans à-coups ni rebond.
+    expect(b.z - -0.5).toBeGreaterThan(0.1);
+    expect(b.z - -0.5).toBeLessThan(1);
     expect(b.z - a.z).toBeLessThan(1.15);
   });
 
