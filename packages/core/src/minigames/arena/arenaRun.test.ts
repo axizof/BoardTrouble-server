@@ -38,6 +38,6 @@ describe('an arena run', () => {
     run.advance(ARENA_TIMES.countdown + 200, new Rng(1));
     const a = run.view(0).arena.fighters.find((fighter) => fighter.id === 'a');
     expect(Math.hypot(a?.vx ?? 0, a?.vz ?? 0)).toBeLessThan(5);
-    expect(a?.charging).toBe(0);
+    expect(a?.winding).toBe(0);
   });
 });
