@@ -41,7 +41,9 @@ describe('an arena run', () => {
     run.setInput('b', { move: { x: 1, z: 0 }, primary: true, secondary: false });
     run.setReady('a', 0);
     run.advance(ARENA_TIMES.countdown + 200, new Rng(1));
-    const a = run.view(0).arena.fighters.find((fighter) => fighter.id === 'a');
+    const view = run.view(0);
+    if (view.minigame !== 'pawnSumo') throw new Error('Sumo attendu');
+    const a = view.arena.fighters.find((fighter) => fighter.id === 'a');
     expect(Math.hypot(a?.vx ?? 0, a?.vz ?? 0)).toBeLessThan(5);
     expect(a?.dashing).toBe(0);
   });

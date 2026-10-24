@@ -2,17 +2,30 @@ import type { BotLevel } from '../../bots/boardBot';
 import type { PlayerId } from '../../game/types';
 import type { Rng } from '../../random/rng';
 import type { MinigameId } from '../catalog';
-import { PAWN_SUMO, type SumoState } from '../pawnSumo/pawnSumo';
-import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT, sanitizeInput } from './arena';
+import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
+import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
+import {
+  ARENA_STEP,
+  type ArenaGame,
+  type ArenaInput,
+  type ArenaState,
+  IDLE_INPUT,
+  sanitizeInput,
+} from './arena';
 
 // Une partie d'arène hébergée (02-mini-jeux.md, section 1 : présentation, "Prêt", décompte,
 // jeu, résultat). Comme la session, elle ne lance aucun minuteur : l'hôte lui donne l'heure.
 
 /** Les arènes jouables. Les autres mini-jeux restent tirés au hasard en attendant. */
-export const ARENAS = { pawnSumo: PAWN_SUMO } satisfies Partial<
-  Record<MinigameId, ArenaGame<SumoState>>
->;
+export const ARENAS = {
+  pawnSumo: PAWN_SUMO,
+  meltingPlatform: MELTING_PLATFORM,
+} satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
+/** L'état de chaque arène jouable. */
+export type ArenaStates = {
+  [M in ArenaMinigame]: (typeof ARENAS)[M] extends ArenaGame<infer State> ? State : never;
+};
 
 export function isArenaMinigame(minigame: MinigameId): minigame is ArenaMinigame {
   return minigame in ARENAS;
@@ -32,29 +45,32 @@ export const ARENA_TIMES = {
   result: 6000,
 } as const;
 
-/** Ce que les clients voient de la partie d'arène (tout y est public). */
+/**
+ * Ce que les clients voient de la partie d'arène (tout y est public) : le mini-jeu et son état
+ * vont ensemble (`minigame` dit de quelle arène est `arena`).
+ */
 export type ArenaRunView = {
-  minigame: ArenaMinigame;
+  [M in ArenaMinigame]: { minigame: M; arena: ArenaStates[M] };
+}[ArenaMinigame] & {
   stage: ArenaStage;
   /** Millisecondes avant la fin de l'étape, au moment de l'envoi ; null pendant le jeu. */
   stageEndsIn: number | null;
   players: PlayerId[];
   ready: PlayerId[];
-  arena: SumoState;
   ranking: PlayerId[][] | null;
 };
 
 export class ArenaRun {
   readonly minigame: ArenaMinigame;
   readonly players: PlayerId[];
-  readonly #game: ArenaGame<SumoState>;
+  readonly #game: ArenaGame<ArenaState>;
   readonly #bots: Map<PlayerId, BotLevel>;
   readonly #ready = new Set<PlayerId>();
   readonly #inputs = new Map<PlayerId, ArenaInput>();
   #stage: ArenaStage = 'intro';
   /** Fin de l'étape en cours (heure de l'hôte), l'infini pour une présentation sans limite ; pendant le jeu, son début. */
   #stageAt: number;
-  #state: SumoState;
+  #state: ArenaState;
   #ranking: PlayerId[][] | null = null;
 
   /** `bots` : le niveau de chaque joueur tenu par un bot ; les autres sont des humains. */
@@ -137,6 +153,8 @@ export class ArenaRun {
   }
 
   view(now: number): ArenaRunView {
+    // L'état vient toujours du jeu de ce mini-jeu (ARENAS[minigame]) : la paire est juste, ce
+    // que le typage ne peut pas suivre à travers `#game`.
     return {
       minigame: this.minigame,
       stage: this.#stage,
@@ -148,7 +166,7 @@ export class ArenaRun {
       ready: [...this.#ready],
       arena: this.#state,
       ranking: this.#ranking,
-    };
+    } as ArenaRunView;
   }
 
   #startCountdown(now: number): void {

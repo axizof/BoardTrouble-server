@@ -3,8 +3,9 @@ import type { PlayerId } from '../../game/types';
 // Les corps des arènes à personnages : on marche avec ses jambes (une force, pas une vitesse
 // imposée), on tient sur ses pieds, on se tourne avec un peu d'inertie, on saute si le mini-jeu
 // le permet, on se fait bousculer ou projeter au sol puis on se relève. Chaque mini-jeu part de
-// là avec ses réglages (BodyTuning) ; ses règles à lui (coups, objets, plateau) restent chez lui.
-// Plan (x, z) en mètres, hauteur y, secondes.
+// là avec ses réglages (BodyTuning) et dit où est le sol (à plat, des niveaux, du vide) ; ses
+// règles à lui (coups, objets, plateau) restent chez lui. Plan (x, z) en mètres, hauteur y,
+// secondes.
 
 export type BodyTuning = {
   /** Le rayon du disque qui le représente au sol. */
@@ -61,15 +62,25 @@ export type ArenaBody = {
   /** Secondes restantes sonné (moins d'appui), et à terre (sans commandes). */
   stunned: number;
   downed: number;
+  /** Les pieds sur un sol ; faux en saut ou en chute. */
+  onGround: boolean;
 };
 
-export function createBody(id: PlayerId, x: number, z: number, facing: number): ArenaBody {
-  return { id, x, y: 0, z, vx: 0, vy: 0, vz: 0, facing, stunned: 0, downed: 0 };
+/** Un corps debout en (x, y, z) : `y`, la hauteur du sol sous lui. */
+export function createBody(id: PlayerId, x: number, z: number, facing: number, y = 0): ArenaBody {
+  return { id, x, y, z, vx: 0, vy: 0, vz: 0, facing, stunned: 0, downed: 0, onGround: true };
 }
 
 export function isAirborne(body: ArenaBody): boolean {
-  return body.y > 0 || body.vy > 0;
+  return !body.onGround;
 }
+
+/**
+ * La hauteur du sol sous un corps (le plus haut à sa hauteur ou en dessous), ou null s'il n'y a
+ * que du vide. Par défaut, un sol plat à 0.
+ */
+export type GroundAt = (body: ArenaBody) => number | null;
+const FLAT_GROUND: GroundAt = () => 0;
 
 /** Sur ses pieds et maître de ses gestes : ni à terre, ni sonné. */
 export function isSteady(body: ArenaBody): boolean {
@@ -143,18 +154,31 @@ export function knockDown(
   body.stunned = downTime + 0.35;
 }
 
-/** Fait avancer les corps de `dt` : la marche au sol, la pesanteur en l'air. */
-export function moveBodies(bodies: ArenaBody[], tuning: BodyTuning, dt: number): void {
+/**
+ * Fait avancer les corps de `dt` : la marche au sol, la pesanteur en l'air. Un corps dont le sol
+ * se dérobe (il marche dans le vide, sa tuile tombe) tombe jusqu'au sol suivant, s'il y en a un.
+ */
+export function moveBodies(
+  bodies: ArenaBody[],
+  tuning: BodyTuning,
+  dt: number,
+  groundAt: GroundAt = FLAT_GROUND,
+): void {
   for (const body of bodies) {
     body.x += body.vx * dt;
     body.z += body.vz * dt;
-    if (!isAirborne(body)) continue;
+    const ground = groundAt(body);
+    if (body.onGround && body.vy <= 0 && ground !== null && Math.abs(body.y - ground) < 1e-6) {
+      continue;
+    }
     body.vy -= tuning.gravity * dt;
     body.y += body.vy * dt;
-    if (body.y <= 0) {
-      body.y = 0;
+    const isLanding = ground !== null && body.y <= ground && body.vy <= 0;
+    if (isLanding) {
+      body.y = ground;
       body.vy = 0;
     }
+    body.onGround = isLanding;
   }
 }
 
