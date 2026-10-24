@@ -3,6 +3,7 @@ import type { BotLevel } from '../../bots/boardBot';
 import { Rng } from '../../random/rng';
 import { ARENA_STEP, type ArenaInput, IDLE_INPUT } from '../arena/arena';
 import {
+  CHARGE_TIME,
   DASH_COOLDOWN,
   PAWN_SUMO,
   SUMO_RADIUS,
@@ -67,9 +68,41 @@ describe('pawn sumo', () => {
 
   test('dashing into nobody carries the dasher a few meters, toward where they go', () => {
     const state = PAWN_SUMO.create(['a'], { practice: true, seed: 1 });
-    const alone = run(PAWN_SUMO.step(state, { a: { ...dash, move: { x: 1, z: 0 } } }), {}, 30);
-    expect(fighter(alone, 'a').x).toBeGreaterThan(2.5);
-    expect(fighter(alone, 'a').x).toBeLessThan(5);
+    const right = { x: 1, z: 0 };
+    const tapped = PAWN_SUMO.step(state, { a: { ...dash, move: right } });
+    const alone = run(tapped, { a: { ...IDLE_INPUT, move: right } }, 1);
+    // Il lâche en allant à droite : il s'élance à droite, puis on le laisse glisser.
+    const slid = run(alone, {}, 30);
+    expect(fighter(slid, 'a').x).toBeGreaterThan(2.5);
+    expect(fighter(slid, 'a').x).toBeLessThan(5);
+  });
+
+  test('holding charges the dash: a charged one shoves much farther than a tap', () => {
+    const shove = (held: number) => {
+      const charged = run(facingOff(), { a: dash }, held);
+      return fighter(run(charged, {}, 60), 'b').z;
+    };
+    expect(shove(Math.round((0.8 * CHARGE_TIME) / ARENA_STEP))).toBeGreaterThan(shove(1) + 1.2);
+  });
+
+  test('charging, one stands still; a full charge sets off by itself', () => {
+    const start = facingOff(10);
+    const charging = run(start, { a: { ...dash, move: { x: 0, z: 1 } } }, 10);
+    expect(fighter(charging, 'a').charge).not.toBeNull();
+    expect(fighter(charging, 'a').z).toBeCloseTo(fighter(start, 'a').z, 1);
+    const full = run(charging, { a: dash }, Math.ceil(CHARGE_TIME / ARENA_STEP));
+    expect(fighter(full, 'a').charge).toBeNull();
+    expect(fighter(full, 'a').dashReady).toBeGreaterThan(0);
+  });
+
+  test('shoved while charging, one loses the charge', () => {
+    let state = facingOff();
+    state = { ...state, fighters: state.fighters.map((f) => ({ ...f, facing: 0 })) };
+    // b charge en tournant le dos ; a le bouscule.
+    state = run(state, { b: dash }, 3);
+    state = run(PAWN_SUMO.step(state, { a: dash, b: dash }), { b: dash }, 8);
+    expect(fighter(state, 'b').charge).toBeNull();
+    expect(fighter(state, 'b').dashing).toBe(0);
   });
 
   test('two dashes head on bounce both back', () => {
@@ -82,11 +115,12 @@ describe('pawn sumo', () => {
     let state = run(PAWN_SUMO.step(facingOff(8), { a: dash }), {}, 10);
     state = PAWN_SUMO.step(state, { a: dash });
     expect(fighter(state, 'a').dashing).toBe(0);
+    expect(fighter(state, 'a').charge).toBeNull();
     state = run(state, {}, Math.ceil(DASH_COOLDOWN / ARENA_STEP));
-    expect(fighter(PAWN_SUMO.step(state, { a: dash }), 'a').dashing).toBeGreaterThan(0);
-    // b, bousculé, ne peut pas foncer tout de suite.
-    const shoved = run(PAWN_SUMO.step(facingOff(), { a: dash }), {}, 3);
-    expect(fighter(PAWN_SUMO.step(shoved, { b: dash }), 'b').dashing).toBe(0);
+    expect(fighter(PAWN_SUMO.step(state, { a: dash }), 'a').charge).not.toBeNull();
+    // b, bousculé, ne peut pas charger tout de suite.
+    const shoved = run(PAWN_SUMO.step(facingOff(), { a: dash }), {}, 6);
+    expect(fighter(PAWN_SUMO.step(shoved, { b: dash }), 'b').charge).toBeNull();
   });
 
   test('ranks the last one standing first, then the fallen from last to first', () => {
