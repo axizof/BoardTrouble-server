@@ -7,17 +7,16 @@ import {
   collideBodies,
   createBody,
   isSteady,
-  knockDown,
   moveBodies,
   WALKER,
   walkBody,
 } from '../arena/body';
 
-// Sumo des pions (02-mini-jeux.md, fiche 2) : faire tomber les autres d'un plateau rond qui
-// rétrécit, à coups de poing. Les corps sont ceux des arènes (arena/body.ts) ; ici, les coups, la
-// parade et le plateau. Le plateau s'effrite anneau par anneau jusqu'à disparaître : il y a
-// toujours un dernier debout. Un temps de sécurité très long termine quand même la partie si
-// quelque chose tourne mal ; il n'est jamais atteint en jeu normal.
+// Sumo des pions (02-mini-jeux.md, fiche 2) : bousculer les autres hors d'un plateau rond qui
+// rétrécit. On marche, et on fonce : c'est l'élan qui pousse. Les corps sont ceux des arènes
+// (arena/body.ts) ; ici, l'élan, ses chocs et le plateau. Le plateau s'effrite anneau par anneau
+// jusqu'à disparaître : il y a toujours un dernier debout. Un temps de sécurité très long termine
+// quand même la partie si quelque chose tourne mal ; il n'est jamais atteint en jeu normal.
 
 /** Le plateau : son rayon de départ, quand il commence à s'effriter et à quel rythme. */
 export const SUMO_RADIUS = 7;
@@ -32,43 +31,30 @@ export const SHRINK_WARNING = 2;
 export const SUMO_TIME_LIMIT = 120;
 
 /**
- * Le coup : il arme (WINDUP, on le voit venir et on marche à peine), puis frappe (STRIKE_TIME) en
- * se jetant un peu en avant. Il touche le premier adversaire à portée devant lui ; le premier qui
- * frappe gagne (celui qui armait encore est interrompu).
+ * L'élan : il fonce dans la direction où il va (ou devant lui, à l'arrêt) pendant DASH_TIME,
+ * puis freine sur ses pieds, environ 3,5 m plus loin en tout. Raté, il peut l'emmener au bord.
  */
-export const STRIKE_WINDUP = 0.15;
-export const STRIKE_TIME = 0.12;
-export const STRIKE_COOLDOWN = 0.9;
-const STRIKE_LUNGE = 3;
-const WINDUP_CONTROL = 0.35;
-/** Portée (du centre au centre) et ouverture du coup, de part et d'autre du regard. */
-const STRIKE_REACH = 1.3;
-const STRIKE_ARC = Math.cos((60 * Math.PI) / 180);
-/** Touché : projeté (1,5 m environ), au sol un moment, et pas de riposte tout de suite. */
-const HIT_KNOCK = 6.5;
-export const DOWN_TIME = 1.1;
-const GET_UP_STRIKE_DELAY = 0.4;
+const DASH_SPEED = 10;
+export const DASH_TIME = 0.2;
+export const DASH_COOLDOWN = 1.5;
 /**
- * La parade : une fenêtre courte. Un coup paré fait tituber l'attaquant (STAGGER_TIME, sans
- * coups ni parade) et rend son coup au défenseur tout de suite : de quoi contre-attaquer.
+ * Un élan qui touche : un choc mou (même poids pour tous, s'arc-bouter n'y fait rien). La cible
+ * repart à environ 5,5 m/s et perd l'appui (HIT_STUN) : elle glisse, environ 2 m ; celui qui
+ * fonçait la suit un peu. Deux élans de face : les deux rebondissent.
  */
-export const PARRY_TIME = 0.25;
-export const PARRY_COOLDOWN = 1;
-const STAGGER_TIME = 0.8;
-const STAGGER_KNOCK = 1.2;
+const DASH_BOUNCE = 0.1;
+/** Deux élans de face rebondissent franchement : chacun repart à environ 6 m/s. */
+const HEAD_ON_BOUNCE = 0.6;
+const HIT_STUN = 0.35;
 /** Positions de départ : en cercle, à cette part du rayon. */
 const START_RING = 0.45;
 
 export type SumoFighter = ArenaBody & {
-  /** Secondes restantes à armer, à frapper, à parer. */
-  winding: number;
-  striking: number;
-  parrying: number;
-  /** Secondes avant de pouvoir refrapper, reparer. */
-  strikeReady: number;
-  parryReady: number;
-  /** Les touches tenues au pas précédent : une action part quand on appuie, pas en tenant. */
-  held: { primary: boolean; secondary: boolean };
+  /** Secondes restantes d'élan, et avant de pouvoir refoncer. */
+  dashing: number;
+  dashReady: number;
+  /** La touche tenue au pas précédent : l'élan part quand on appuie, pas en tenant. */
+  held: boolean;
   /** Le pas où il est tombé du plateau, ou null s'il est encore dessus. */
   fellAt: number | null;
 };
@@ -119,37 +105,34 @@ function create(
       const reach = players.length === 1 ? 0 : SUMO_RADIUS * START_RING;
       const x = Math.sin(angle) * reach;
       const z = Math.cos(angle) * reach;
-      return {
-        // Chacun regarde le centre.
-        ...createBody(id, x, z, Math.atan2(-x, -z)),
-        winding: 0,
-        striking: 0,
-        parrying: 0,
-        strikeReady: 0,
-        parryReady: 0,
-        held: { primary: false, secondary: false },
-        fellAt: null,
-      };
+      // Chacun regarde le centre.
+      return { ...createBody(id, x, z, Math.atan2(-x, -z)), ...freshMoves(), fellAt: null };
     }),
   };
+}
+
+function freshMoves() {
+  return { dashing: 0, dashReady: 0, held: false };
 }
 
 function step(state: SumoState, inputs: Partial<Record<PlayerId, ArenaInput>>): SumoState {
   const dt = ARENA_STEP;
   const tick = state.tick + 1;
-  const fighters = state.fighters.map((fighter) => ({ ...fighter, held: { ...fighter.held } }));
+  const fighters = state.fighters.map((fighter) => ({ ...fighter }));
   const standing = fighters.filter((fighter) => fighter.fellAt === null);
   const braced = new Set<PlayerId>();
   for (const fighter of standing) {
     const input = inputs[fighter.id] ?? IDLE_INPUT;
     act(fighter, input, dt);
-    if (Math.hypot(input.move.x, input.move.z) <= 0.1 && isSteady(fighter)) braced.add(fighter.id);
+    const isStill = Math.hypot(input.move.x, input.move.z) <= 0.1;
+    if (isStill && isSteady(fighter) && fighter.dashing <= 0) braced.add(fighter.id);
   }
-  strike(standing);
   // Les contacts se règlent l'un après l'autre : l'ordre change à chaque pas, pour que la
   // place dans la liste ne donne jamais l'avantage (à égalité, une place gagnait 3 fois plus).
   const shift = tick % Math.max(1, standing.length);
-  collideBodies([...standing.slice(shift), ...standing.slice(0, shift)].reverse(), WALKER, braced);
+  const order = [...standing.slice(shift), ...standing.slice(0, shift)].reverse();
+  bump(order);
+  collideBodies(order, WALKER, braced);
   moveBodies(standing, WALKER, dt);
   const next: SumoState = { ...state, tick, fighters };
   const radius = sumoRadius(next);
@@ -157,7 +140,7 @@ function step(state: SumoState, inputs: Partial<Record<PlayerId, ArenaInput>>): 
     if (Math.hypot(fighter.x, fighter.z) <= radius) continue;
     if (state.practice) {
       // Au bac à sable, on revient au centre.
-      Object.assign(fighter, createBody(fighter.id, 0, 0, fighter.facing));
+      Object.assign(fighter, createBody(fighter.id, 0, 0, fighter.facing), freshMoves());
     } else {
       fighter.fellAt = tick;
     }
@@ -165,87 +148,60 @@ function step(state: SumoState, inputs: Partial<Record<PlayerId, ArenaInput>>): 
   return next;
 }
 
-/** Les commandes d'un combattant : marcher, armer un coup, parer. */
+/** Les commandes d'un combattant : marcher, foncer. */
 function act(fighter: SumoFighter, input: ArenaInput, dt: number): void {
-  const pressedPrimary = input.primary && !fighter.held.primary;
-  const pressedSecondary = input.secondary && !fighter.held.secondary;
-  fighter.held = { primary: input.primary, secondary: input.secondary };
-  fighter.strikeReady = Math.max(0, fighter.strikeReady - dt);
-  fighter.parryReady = Math.max(0, fighter.parryReady - dt);
-  fighter.parrying = Math.max(0, fighter.parrying - dt);
-  fighter.striking = Math.max(0, fighter.striking - dt);
-  if (fighter.winding > 0) {
-    fighter.winding = Math.max(0, fighter.winding - dt);
-    if (fighter.winding === 0) {
-      // Il frappe : il se jette en avant.
-      fighter.striking = STRIKE_TIME;
-      fighter.vx += Math.sin(fighter.facing) * STRIKE_LUNGE;
-      fighter.vz += Math.cos(fighter.facing) * STRIKE_LUNGE;
-    }
+  const pressed = input.primary && !fighter.held;
+  fighter.held = input.primary;
+  fighter.dashReady = Math.max(0, fighter.dashReady - dt);
+  if (pressed && fighter.dashReady <= 0 && fighter.dashing <= 0 && isSteady(fighter)) {
+    const isMoving = Math.hypot(input.move.x, input.move.z) > 0.1;
+    if (isMoving) fighter.facing = Math.atan2(input.move.x, input.move.z);
+    fighter.dashing = DASH_TIME;
+    fighter.dashReady = DASH_COOLDOWN;
+    fighter.vx = Math.sin(fighter.facing) * DASH_SPEED;
+    fighter.vz = Math.cos(fighter.facing) * DASH_SPEED;
   }
-  const isBusy = fighter.winding > 0 || fighter.striking > 0;
-  if (isSteady(fighter) && !isBusy) {
-    if (pressedSecondary && fighter.parryReady <= 0) {
-      fighter.parrying = PARRY_TIME;
-      fighter.parryReady = PARRY_COOLDOWN;
-    } else if (pressedPrimary && fighter.strikeReady <= 0 && fighter.parrying <= 0) {
-      fighter.winding = STRIKE_WINDUP;
-      fighter.strikeReady = STRIKE_COOLDOWN;
-    }
+  if (fighter.dashing > 0) {
+    // Lancé : il ne freine ni ne tourne, il fonce.
+    fighter.dashing = Math.max(0, fighter.dashing - dt);
+    return;
   }
-  // En armant, il marche à peine (on peut l'esquiver) ; en frappant, il suit son élan.
-  const control = fighter.winding > 0 ? WINDUP_CONTROL : fighter.striking > 0 ? 0 : 1;
-  walkBody(fighter, input.move, WALKER, dt, control);
+  walkBody(fighter, input.move, WALKER, dt);
 }
 
 /**
- * Les coups de ce pas : chaque coup en cours touche le plus proche adversaire à portée devant
- * lui. Tous les coups sont cherchés avant d'être appliqués : deux coups qui se croisent au même
- * pas se touchent tous les deux.
+ * Les chocs d'un élan : un élan qui touche quelqu'un s'arrête là, l'autre est bousculé et perd
+ * l'appui. Réglés avant les contacts ordinaires, qui ne font ensuite que séparer les corps.
  */
-function strike(fighters: SumoFighter[]): void {
-  const hits = fighters.flatMap((attacker) => {
-    if (attacker.striking <= 0) return [];
-    const target = fighters
-      .filter((other) => other !== attacker && other.downed <= 0 && inReach(attacker, other))
-      .sort((a, b) => distance(attacker, a) - distance(attacker, b))[0];
-    return target ? [{ attacker, target }] : [];
-  });
-  for (const { attacker, target } of hits) {
-    // Un coup ne touche qu'une fois.
-    attacker.striking = 0;
-    const gap = distance(attacker, target) || 1;
-    const nx = (target.x - attacker.x) / gap;
-    const nz = (target.z - attacker.z) / gap;
-    if (target.parrying > 0) {
-      // Paré : l'attaquant titube, le défenseur peut contre-attaquer tout de suite.
-      Object.assign(attacker, { winding: 0, striking: 0, stunned: STAGGER_TIME });
-      attacker.vx = -nx * STAGGER_KNOCK;
-      attacker.vz = -nz * STAGGER_KNOCK;
-      Object.assign(target, { parrying: 0, strikeReady: 0 });
-      continue;
+function bump(fighters: SumoFighter[]): void {
+  for (let i = 0; i < fighters.length; i++) {
+    for (let j = i + 1; j < fighters.length; j++) {
+      const a = fighters[i];
+      const b = fighters[j];
+      if (!a || !b || (a.dashing <= 0 && b.dashing <= 0)) continue;
+      const gap = Math.hypot(b.x - a.x, b.z - a.z);
+      if (gap >= WALKER.radius * 2 || gap === 0) continue;
+      const nx = (b.x - a.x) / gap;
+      const nz = (b.z - a.z) / gap;
+      const closing = (a.vx - b.vx) * nx + (a.vz - b.vz) * nz;
+      if (closing <= 0) continue;
+      const bounce = a.dashing > 0 && b.dashing > 0 ? HEAD_ON_BOUNCE : DASH_BOUNCE;
+      const impulse = ((1 + bounce) * closing) / 2;
+      a.vx -= nx * impulse;
+      a.vz -= nz * impulse;
+      b.vx += nx * impulse;
+      b.vz += nz * impulse;
+      // Celui qui fonçait s'arrête ; celui qui ne fonçait pas est bousculé.
+      for (const [hit, other] of [
+        [a, b],
+        [b, a],
+      ] as const) {
+        if (hit.dashing <= 0 || other.dashing > 0) hit.stunned = HIT_STUN;
+      }
+      a.dashing = 0;
+      b.dashing = 0;
     }
-    knockDown(target, nx, nz, HIT_KNOCK, DOWN_TIME);
-    Object.assign(target, { winding: 0, striking: 0, parrying: 0 });
-    target.strikeReady = Math.max(target.strikeReady, DOWN_TIME + GET_UP_STRIKE_DELAY);
   }
-}
-
-/** `other` est à portée du coup de `attacker` : assez près, et devant lui. */
-function inReach(attacker: SumoFighter, other: SumoFighter): boolean {
-  return distance(attacker, other) <= STRIKE_REACH && facesToward(attacker, other, STRIKE_ARC);
-}
-
-/** `from` regarde vers `to`, à l'ouverture `arc` près (cosinus de l'angle). */
-function facesToward(from: ArenaBody, to: { x: number; z: number }, arc: number): boolean {
-  const gap = distance(from, to);
-  if (gap === 0) return true;
-  const ahead = Math.sin(from.facing) * (to.x - from.x) + Math.cos(from.facing) * (to.z - from.z);
-  return ahead / gap >= arc;
-}
-
-function distance(a: { x: number; z: number }, b: { x: number; z: number }): number {
-  return Math.hypot(b.x - a.x, b.z - a.z);
 }
 
 function standing(state: SumoState): SumoFighter[] {
@@ -278,85 +234,92 @@ function ranking(state: SumoState): PlayerId[][] {
   return [...alive, ...byFall];
 }
 
-/** La part des coups qu'un bot pare, selon son niveau. */
-const PARRY_SKILL: Record<BotLevel, number> = { easy: 0.2, normal: 0.45, expert: 0.7 };
+/** La part des élans qu'un bot esquive (il s'écarte de leur ligne), selon son niveau. */
+const DODGE_SKILL: Record<BotLevel, number> = { easy: 0.15, normal: 0.4, expert: 0.65 };
 /** Un bot vise moins bien selon son niveau (radians d'écart au hasard). */
 const AIM_NOISE: Record<BotLevel, number> = { easy: 0.6, normal: 0.3, expert: 0.1 };
 /**
- * Il ne frappe pas à la première occasion : une chance par pas, selon son niveau (il hésite,
- * il guette). Contre un adversaire qui titube, il ne rate pas l'occasion.
+ * Il ne fonce pas à la première occasion : une chance par pas, selon son niveau (il hésite,
+ * il guette). Sans ça, quatre bots fonçaient toutes les deux secondes et la partie durait 5 s.
  */
-const STRIKE_EAGERNESS: Record<BotLevel, number> = { easy: 0.05, normal: 0.08, expert: 0.12 };
-const COUNTER_EAGERNESS = 0.5;
-/** Il frappe quand sa cible est à cette distance et bien en face. */
-const STRIKE_RANGE = 1.2;
-const STRIKE_AIM = Math.cos((25 * Math.PI) / 180);
+const DASH_EAGERNESS: Record<BotLevel, number> = { easy: 0.04, normal: 0.07, expert: 0.1 };
+/** Il fonce quand sa cible est à cette distance et que l'élan la pousse vers le bord. */
+const DASH_RANGE = 3;
 /** Il reste à cette distance du bord, et se place de ce côté-ci de sa cible. */
 const SAFE_EDGE = 1.4;
-const BEHIND_TARGET = 0.9;
-/** Un coup qui arrive : un adversaire tout près qui arme, tourné vers lui. */
-const THREAT_RANGE = 1.8;
+const BEHIND_TARGET = 1.2;
+/** Un élan qui arrive : assez près, et vers lui. */
+const THREAT_RANGE = 3;
+/** Le nombre de pas d'un élan : la chance d'esquive se tire à chacun. */
+const DODGE_STEPS = DASH_TIME / ARENA_STEP;
 
 /**
  * Le bot (02-mini-jeux.md, fiche 2) : il vise le joueur le plus près du bord, se place entre
- * lui et le centre, frappe quand il est en face, pare un coup qui arrive (plus ou moins souvent
- * selon son niveau) et contre-attaque celui qui titube. Quand le plateau rétrécit, il reste loin
- * du bord.
+ * lui et le centre, fonce quand l'élan le pousse vers le bord, et s'écarte d'un élan qui arrive
+ * (plus ou moins souvent selon son niveau). Quand le plateau rétrécit, il reste loin du bord.
  */
 function botInput(state: SumoState, player: PlayerId, level: BotLevel, rng: Rng): ArenaInput {
   const me = state.fighters.find((fighter) => fighter.id === player);
-  if (!me || me.fellAt !== null || !isSteady(me)) return IDLE_INPUT;
+  if (!me || me.fellAt !== null || !isSteady(me) || me.dashing > 0) return IDLE_INPUT;
   const radius = sumoRadius(state);
   const others = standing(state).filter((fighter) => fighter.id !== player);
-  const canAct = me.winding <= 0 && me.striking <= 0;
 
-  // Un coup arrive : il pare, s'il le voit venir. Décidé une fois par pas, avec une chance
-  // ramenée au pas pour que la réussite sur un coup entier vaille PARRY_SKILL.
-  const threat = others.find(
-    (other) =>
-      (other.winding > 0 || other.striking > 0) &&
-      distance(me, other) < THREAT_RANGE &&
-      facesToward(other, me, STRIKE_ARC),
-  );
-  if (threat && canAct && me.parryReady <= 0 && me.parrying <= 0) {
-    const perStep = 1 - (1 - PARRY_SKILL[level]) ** (1 / (STRIKE_WINDUP / ARENA_STEP));
-    if (rng.chance(perStep)) return { move: { x: 0, z: 0 }, primary: false, secondary: true };
+  // Un élan arrive : il s'écarte de sa ligne, s'il le voit venir. Décidé une fois par pas, avec
+  // une chance ramenée au pas pour que la réussite sur un élan entier vaille DODGE_SKILL.
+  const threat = others.find((other) => {
+    if (other.dashing <= 0) return false;
+    const dx = me.x - other.x;
+    const dz = me.z - other.z;
+    const gap = Math.hypot(dx, dz);
+    return gap < THREAT_RANGE && (other.vx * dx + other.vz * dz) / (gap || 1) > 4;
+  });
+  if (threat) {
+    const perStep = 1 - (1 - DODGE_SKILL[level]) ** (1 / DODGE_STEPS);
+    if (rng.chance(perStep)) {
+      // De côté par rapport à l'élan, du côté du centre plutôt que du bord.
+      const speed = Math.hypot(threat.vx, threat.vz) || 1;
+      const side = { x: -threat.vz / speed, z: threat.vx / speed };
+      const towardCenter = side.x * -me.x + side.z * -me.z >= 0 ? 1 : -1;
+      return {
+        move: { x: side.x * towardCenter, z: side.z * towardCenter },
+        primary: false,
+        secondary: false,
+      };
+    }
   }
 
   // Trop près du bord : il revient vers le centre avant tout.
   if (Math.hypot(me.x, me.z) > radius - SAFE_EDGE) {
     return { move: toward(me, { x: 0, z: 0 }), primary: false, secondary: false };
   }
-  // La cible : un adversaire qui titube s'il y en a un tout près, sinon près du bord et pas trop
-  // loin de lui. Chaque bot a ses têtes (une préférence par paire, tirée pour la partie) : sans
-  // elle, à égalité au départ, tous visaient le même.
-  const staggered = others.find(
-    (other) => other.stunned > 0 && other.downed <= 0 && distance(me, other) < STRIKE_RANGE * 1.5,
-  );
+  // La cible : près du bord et pas trop loin de lui. Chaque bot a ses têtes (une préférence
+  // par paire, tirée pour la partie) : sans elle, à égalité au départ, tous visaient le même.
   const score = (other: SumoFighter) =>
     Math.hypot(other.x, other.z) -
-    0.3 * distance(me, other) +
+    0.3 * Math.hypot(other.x - me.x, other.z - me.z) +
     hashUnit(`${state.seed}:${player}>${other.id}`) * 1.5;
-  const upright = others.filter((other) => other.downed <= 0);
-  const target = staggered ?? upright.sort((a, b) => score(b) - score(a))[0];
+  const target = [...others].sort((a, b) => score(b) - score(a))[0];
   if (!target) return { move: toward(me, { x: 0, z: 0 }), primary: false, secondary: false };
 
-  const aimed =
-    Math.atan2(target.x - me.x, target.z - me.z) + (rng.next() - 0.5) * AIM_NOISE[level];
-  // Une petite poussée vers la cible : il se tourne vers elle sans foncer dedans.
-  const face = { x: Math.sin(aimed) * 0.3, z: Math.cos(aimed) * 0.3 };
-  const isInFront = distance(me, target) < STRIKE_RANGE && facesToward(me, target, STRIKE_AIM);
-  const eagerness = staggered ? COUNTER_EAGERNESS : STRIKE_EAGERNESS[level];
-  if (isInFront && canAct && me.strikeReady <= 0 && rng.chance(eagerness)) {
-    return { move: face, primary: true, secondary: false };
-  }
-  // Il se place entre le centre et sa cible, pour la frapper vers le bord.
+  const dx = target.x - me.x;
+  const dz = target.z - me.z;
+  const gap = Math.hypot(dx, dz);
   const out = Math.hypot(target.x, target.z) || 1;
+  const aimed = Math.atan2(dx, dz) + (rng.next() - 0.5) * AIM_NOISE[level];
+  // L'élan pousse la cible vers le bord : il est entre elle et le centre.
+  const outward = (dx * target.x + dz * target.z) / ((gap || 1) * out);
+  const isAligned = gap < DASH_RANGE && outward > 0.3;
+  if (isAligned && me.dashReady <= 0 && rng.chance(DASH_EAGERNESS[level])) {
+    return { move: { x: Math.sin(aimed), z: Math.cos(aimed) }, primary: true, secondary: false };
+  }
+  // Il se place entre le centre et sa cible, pour la pousser vers le bord.
   const spot = {
     x: target.x - (target.x / out) * BEHIND_TARGET,
     z: target.z - (target.z / out) * BEHIND_TARGET,
   };
-  const isPlaced = distance(me, spot) < 0.5;
+  const isPlaced = Math.hypot(spot.x - me.x, spot.z - me.z) < 0.6;
+  // Placé, il se tourne vers elle d'une petite poussée, sans foncer dedans.
+  const face = { x: Math.sin(aimed) * 0.3, z: Math.cos(aimed) * 0.3 };
   return { move: isPlaced ? face : toward(me, spot), primary: false, secondary: false };
 }
 
