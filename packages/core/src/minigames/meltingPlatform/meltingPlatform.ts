@@ -106,14 +106,14 @@ export function tileAt(x: number, z: number): { q: number; r: number } {
 }
 
 /** Le temps de fissure d'une tuile fissurée à ce pas : plus court passé HURRY_AT. */
-function crackTime(crackedAt: number): number {
+export function tileCrackTime(crackedAt: number): number {
   return crackedAt * ARENA_STEP >= HURRY_AT ? HURRY_CRACK_TIME : CRACK_TIME;
 }
 
 /** La tuile est tombée (ou partie) à ce pas. */
 export function isFallen(tile: MeltTile, tick: number): boolean {
   return (
-    tile.crackedAt !== null && (tick - tile.crackedAt) * ARENA_STEP >= crackTime(tile.crackedAt)
+    tile.crackedAt !== null && (tick - tile.crackedAt) * ARENA_STEP >= tileCrackTime(tile.crackedAt)
   );
 }
 
@@ -180,7 +180,7 @@ function step(state: MeltState, inputs: Partial<Record<PlayerId, ArenaInput>>): 
       const isBack =
         state.practice &&
         tile.crackedAt !== null &&
-        (tick - tile.crackedAt) * ARENA_STEP >= crackTime(tile.crackedAt) + REGROW_TIME;
+        (tick - tile.crackedAt) * ARENA_STEP >= tileCrackTime(tile.crackedAt) + REGROW_TIME;
       return { ...tile, crackedAt: isBack ? null : tile.crackedAt };
     }),
   );
@@ -326,7 +326,7 @@ function botInput(state: MeltState, player: PlayerId, level: BotLevel, rng: Rng)
   const mine = tileOf(here, under.q, under.r);
   if (mine?.crackedAt != null) {
     const since = (state.tick - mine.crackedAt) * ARENA_STEP;
-    if (since < BOT_STAY[level] * crackTime(mine.crackedAt)) return IDLE_INPUT;
+    if (since < BOT_STAY[level] * tileCrackTime(mine.crackedAt)) return IDLE_INPUT;
   }
   const others = standingFighters(state).filter((f) => f.id !== player);
   // Son hasard ne change pas tant qu'il est sur la même tuile : il ne change pas d'avis en route.
