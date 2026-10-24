@@ -28,6 +28,8 @@ export type ArenaGame<State> = {
   step(state: State, inputs: Partial<Record<PlayerId, ArenaInput>>): State;
   botInput(state: State, player: PlayerId, level: BotLevel, rng: Rng): ArenaInput;
   isOver(state: State): boolean;
+  /** Les secondes qui restent avant la fin forcée de la partie (le chrono affiché), ou null. */
+  timeLeft(state: State): number | null;
   /** Le classement complet, du premier au dernier ; les ex aequo partagent un groupe. */
   ranking(state: State): PlayerId[][];
 };

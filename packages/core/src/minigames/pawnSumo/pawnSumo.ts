@@ -15,8 +15,8 @@ import {
 // Sumo des pions (02-mini-jeux.md, fiche 2) : bousculer les autres hors d'un plateau rond qui
 // rétrécit. On marche, et on fonce (plus ou moins chargé) : c'est l'élan qui pousse. Les corps sont ceux des arènes
 // (arena/body.ts) ; ici, l'élan, ses chocs et le plateau. Le plateau s'effrite anneau par anneau
-// jusqu'à disparaître : il y a toujours un dernier debout. Un temps de sécurité très long termine
-// quand même la partie si quelque chose tourne mal ; il n'est jamais atteint en jeu normal.
+// jusqu'à disparaître : le chrono de la partie va jusque-là. Ceux encore debout à la fin sont
+// ex aequo, et les dés les départagent (comme toute égalité de mini-jeu).
 
 /** Le plateau : son rayon de départ, quand il commence à s'effriter et à quel rythme. */
 export const SUMO_RADIUS = 7;
@@ -27,8 +27,13 @@ export const SHRINK_RING = 1;
 const SHRINK_FALL = 1;
 /** Avant de tomber, l'anneau tremble ce temps-là : on le voit venir. */
 export const SHRINK_WARNING = 2;
-/** Temps de sécurité (secondes) : bien après la disparition du plateau (vers 71 s). */
-export const SUMO_TIME_LIMIT = 120;
+/**
+ * Le chrono (secondes) : le dernier anneau, celui du centre, a fini de tomber (64 s), plus une
+ * seconde. En pratique, tout le monde est tombé avant ; seul celui qui se tient pile au centre
+ * irait jusque-là.
+ */
+export const SUMO_TIME_LIMIT =
+  SHRINK_START + (SUMO_RADIUS / SHRINK_RING - 1) * SHRINK_EVERY + SHRINK_FALL + 1;
 
 /**
  * L'élan : on maintient la touche pour le charger (CHARGE_TIME au plus, puis il part tout seul),
@@ -244,14 +249,12 @@ function isOver(state: SumoState): boolean {
 }
 
 /**
- * Le classement : ceux encore debout d'abord (au temps de sécurité, du plus près du centre au
- * plus loin), puis les tombés, du dernier tombé au premier. Tombés au même pas : ex aequo.
+ * Le classement : ceux encore debout d'abord (à la fin du chrono, ex aequo : les dés les
+ * départageront), puis les tombés, du dernier tombé au premier. Tombés au même pas : ex aequo.
  */
 function ranking(state: SumoState): PlayerId[][] {
-  const alive = standing(state)
-    .map((fighter) => ({ id: fighter.id, distance: Math.hypot(fighter.x, fighter.z) }))
-    .sort((a, b) => a.distance - b.distance)
-    .map(({ id }) => [id]);
+  const survivors = standing(state).map((fighter) => fighter.id);
+  const alive = survivors.length > 0 ? [survivors] : [];
   const fallen = new Map<number, PlayerId[]>();
   for (const fighter of state.fighters) {
     if (fighter.fellAt === null) continue;
@@ -381,4 +384,15 @@ function toward(from: { x: number; z: number }, to: { x: number; z: number }) {
   return gap < 0.05 ? { x: 0, z: 0 } : { x: dx / gap, z: dz / gap };
 }
 
-export const PAWN_SUMO: ArenaGame<SumoState> = { create, step, botInput, isOver, ranking };
+function timeLeft(state: SumoState): number | null {
+  return state.practice ? null : Math.max(0, SUMO_TIME_LIMIT - sumoTime(state));
+}
+
+export const PAWN_SUMO: ArenaGame<SumoState> = {
+  create,
+  step,
+  botInput,
+  isOver,
+  timeLeft,
+  ranking,
+};
