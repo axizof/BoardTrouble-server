@@ -18,8 +18,15 @@ export type ArenaInput = { move: { x: number; z: number }; primary: boolean; sec
 
 export const IDLE_INPUT: ArenaInput = { move: { x: 0, z: 0 }, primary: false, secondary: false };
 
+/** Ce que garde toute arène : le pas, le bac à sable ou non, et ses combattants (tombés ou non). */
+export type ArenaState = {
+  tick: number;
+  practice: boolean;
+  fighters: readonly { id: PlayerId; fellAt: number | null }[];
+};
+
 /** Une arène : comment elle se crée, avance, se joue par un bot et se classe. */
-export type ArenaGame<State> = {
+export type ArenaGame<State extends ArenaState> = {
   /**
    * `practice` : le bac à sable de la présentation, sans fin de partie ni danger qui monte.
    * `seed` : propre à chaque partie (ce qui varie d'une partie à l'autre en dépend).
