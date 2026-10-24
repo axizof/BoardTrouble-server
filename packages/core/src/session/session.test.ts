@@ -99,6 +99,33 @@ describe('a game session', () => {
     throw new Error('Aucune partie ne tire le Sumo en premier');
   });
 
+  test('plays a placeholder minigame as soon as its intro has been read', () => {
+    for (let seed = 1; seed < 200; seed++) {
+      const { session } = start({ ...BOTS, ana: 'human' }, seed);
+      const ana = { type: 'player', playerId: 'ana' } as const;
+      let now = 0;
+      for (let i = 0; i < 5000; i++) {
+        const snapshot = session.snapshot(ana, now);
+        const phase = snapshot.type === 'snapshot' ? snapshot.state.phase : null;
+        if (phase?.type === 'minigame') break;
+        now = session.nextWakeAt() ?? now;
+        session.tick(now);
+      }
+      const snapshot = session.snapshot(ana, now);
+      const phase = snapshot.type === 'snapshot' ? snapshot.state.phase : null;
+      if (phase?.type !== 'minigame' || phase.minigame === 'pawnSumo') continue;
+      // Sans "Suivant", le résultat attend le temps d'un mini-jeu provisoire ; Ana a lu : tout de suite.
+      const waiting = session.nextWakeAt() ?? 0;
+      session.minigameReady('ana');
+      const ready = session.nextWakeAt() ?? 0;
+      expect(ready).toBeLessThan(waiting);
+      const events = session.tick(ready) ?? [];
+      expect(events.map((event) => event.type)).toContain('minigameRanked');
+      return;
+    }
+    throw new Error('Aucune partie ne tire de mini-jeu provisoire');
+  });
+
   test('gives a human the decision time, then plays a default choice for them', () => {
     const { session } = start({ ...BOTS, ana: 'human' });
     // Les bots et les mini-jeux provisoires jouent jusqu'à ce que ce soit à Ana.
