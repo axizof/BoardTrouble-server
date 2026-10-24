@@ -13,7 +13,7 @@ import {
 } from '../arena/body';
 
 // Sumo des pions (02-mini-jeux.md, fiche 2) : bousculer les autres hors d'un plateau rond qui
-// rétrécit. On marche, et on fonce : c'est l'élan qui pousse. Les corps sont ceux des arènes
+// rétrécit. On marche, et on fonce (plus ou moins chargé) : c'est l'élan qui pousse. Les corps sont ceux des arènes
 // (arena/body.ts) ; ici, l'élan, ses chocs et le plateau. Le plateau s'effrite anneau par anneau
 // jusqu'à disparaître : il y a toujours un dernier debout. Un temps de sécurité très long termine
 // quand même la partie si quelque chose tourne mal ; il n'est jamais atteint en jeu normal.
@@ -31,29 +31,39 @@ export const SHRINK_WARNING = 2;
 export const SUMO_TIME_LIMIT = 120;
 
 /**
- * L'élan : il fonce dans la direction où il va (ou devant lui, à l'arrêt) pendant DASH_TIME,
- * puis freine sur ses pieds, environ 3,5 m plus loin en tout. Raté, il peut l'emmener au bord.
+ * L'élan : on maintient la touche pour le charger (CHARGE_TIME au plus, puis il part tout seul),
+ * il part au lâcher, dans la direction où l'on va (ou devant soi, à l'arrêt). Tapoté, il fonce à
+ * DASH_SPEED (environ 3,5 m, freinage compris) ; chargé à fond, à FULL_DASH_SPEED (environ 6 m).
+ * En chargeant, on ne marche plus (on se tourne pour viser), et bousculé, on perd sa charge.
+ * Raté, l'élan peut emmener au bord.
  */
 const DASH_SPEED = 10;
+const FULL_DASH_SPEED = 14;
+export const CHARGE_TIME = 1;
 export const DASH_TIME = 0.2;
 export const DASH_COOLDOWN = 1.5;
 /**
  * Un élan qui touche : un choc mou (même poids pour tous, s'arc-bouter n'y fait rien). La cible
- * repart à environ 5,5 m/s et perd l'appui (HIT_STUN) : elle glisse, environ 2 m ; celui qui
- * fonçait la suit un peu. Deux élans de face : les deux rebondissent.
+ * repart à un peu plus de la moitié de la vitesse de l'élan et perd l'appui (HIT_STUN, plus
+ * FULL_HIT_STUN chargé à fond) : elle glisse, d'environ 2 m tapoté à environ 4 m chargé. Celui
+ * qui fonçait la suit un peu. Deux élans de face : les deux rebondissent.
  */
 const DASH_BOUNCE = 0.1;
 /** Deux élans de face rebondissent franchement : chacun repart à environ 6 m/s. */
 const HEAD_ON_BOUNCE = 0.6;
 const HIT_STUN = 0.35;
+const FULL_HIT_STUN = 0.25;
 /** Positions de départ : en cercle, à cette part du rayon. */
 const START_RING = 0.45;
 
 export type SumoFighter = ArenaBody & {
-  /** Secondes restantes d'élan, et avant de pouvoir refoncer. */
+  /** Secondes de charge, tant qu'il charge un élan ; null sinon. */
+  charge: number | null;
+  /** Secondes restantes d'élan, sa force (0 tapoté, 1 chargé à fond), et avant de refoncer. */
   dashing: number;
+  power: number;
   dashReady: number;
-  /** La touche tenue au pas précédent : l'élan part quand on appuie, pas en tenant. */
+  /** La touche tenue au pas précédent : la charge part quand on appuie, pas en tenant. */
   held: boolean;
   /** Le pas où il est tombé du plateau, ou null s'il est encore dessus. */
   fellAt: number | null;
@@ -112,7 +122,7 @@ function create(
 }
 
 function freshMoves() {
-  return { dashing: 0, dashReady: 0, held: false };
+  return { charge: null, dashing: 0, power: 0, dashReady: 0, held: false };
 }
 
 function step(state: SumoState, inputs: Partial<Record<PlayerId, ArenaInput>>): SumoState {
@@ -148,18 +158,23 @@ function step(state: SumoState, inputs: Partial<Record<PlayerId, ArenaInput>>): 
   return next;
 }
 
-/** Les commandes d'un combattant : marcher, foncer. */
+/** Les commandes d'un combattant : marcher, charger un élan, foncer. */
 function act(fighter: SumoFighter, input: ArenaInput, dt: number): void {
   const pressed = input.primary && !fighter.held;
   fighter.held = input.primary;
   fighter.dashReady = Math.max(0, fighter.dashReady - dt);
-  if (pressed && fighter.dashReady <= 0 && fighter.dashing <= 0 && isSteady(fighter)) {
-    const isMoving = Math.hypot(input.move.x, input.move.z) > 0.1;
-    if (isMoving) fighter.facing = Math.atan2(input.move.x, input.move.z);
-    fighter.dashing = DASH_TIME;
-    fighter.dashReady = DASH_COOLDOWN;
-    fighter.vx = Math.sin(fighter.facing) * DASH_SPEED;
-    fighter.vz = Math.cos(fighter.facing) * DASH_SPEED;
+  // Bousculé en pleine charge : elle est perdue.
+  if (fighter.charge !== null && !isSteady(fighter)) fighter.charge = null;
+  const canCharge = fighter.dashReady <= 0 && fighter.dashing <= 0 && isSteady(fighter);
+  if (pressed && fighter.charge === null && canCharge) fighter.charge = 0;
+  if (fighter.charge !== null) {
+    fighter.charge = Math.min(CHARGE_TIME, fighter.charge + dt);
+    if (input.primary && fighter.charge < CHARGE_TIME) {
+      // Il charge : il ne marche plus, il se tourne pour viser.
+      walkBody(fighter, input.move, WALKER, dt, 0);
+      return;
+    }
+    dash(fighter, input, fighter.charge / CHARGE_TIME);
   }
   if (fighter.dashing > 0) {
     // Lancé : il ne freine ni ne tourne, il fonce.
@@ -169,9 +184,19 @@ function act(fighter: SumoFighter, input: ArenaInput, dt: number): void {
   walkBody(fighter, input.move, WALKER, dt);
 }
 
+/** Il s'élance, de la force `power` (0 tapoté, 1 chargé à fond). */
+function dash(fighter: SumoFighter, input: ArenaInput, power: number): void {
+  const isMoving = Math.hypot(input.move.x, input.move.z) > 0.1;
+  if (isMoving) fighter.facing = Math.atan2(input.move.x, input.move.z);
+  const speed = DASH_SPEED + (FULL_DASH_SPEED - DASH_SPEED) * power;
+  Object.assign(fighter, { charge: null, power, dashing: DASH_TIME, dashReady: DASH_COOLDOWN });
+  fighter.vx = Math.sin(fighter.facing) * speed;
+  fighter.vz = Math.cos(fighter.facing) * speed;
+}
+
 /**
  * Les chocs d'un élan : un élan qui touche quelqu'un s'arrête là, l'autre est bousculé et perd
- * l'appui. Réglés avant les contacts ordinaires, qui ne font ensuite que séparer les corps.
+ * l'appui, d'autant plus longtemps que l'élan était chargé. Réglés avant les contacts ordinaires, qui ne font ensuite que séparer les corps.
  */
 function bump(fighters: SumoFighter[]): void {
   for (let i = 0; i < fighters.length; i++) {
@@ -196,7 +221,9 @@ function bump(fighters: SumoFighter[]): void {
         [a, b],
         [b, a],
       ] as const) {
-        if (hit.dashing <= 0 || other.dashing > 0) hit.stunned = HIT_STUN;
+        if (hit.dashing <= 0 || other.dashing > 0) {
+          hit.stunned = HIT_STUN + FULL_HIT_STUN * other.power;
+        }
       }
       a.dashing = 0;
       b.dashing = 0;
@@ -243,8 +270,17 @@ const AIM_NOISE: Record<BotLevel, number> = { easy: 0.6, normal: 0.3, expert: 0.
  * il guette). Sans ça, quatre bots fonçaient toutes les deux secondes et la partie durait 5 s.
  */
 const DASH_EAGERNESS: Record<BotLevel, number> = { easy: 0.04, normal: 0.07, expert: 0.1 };
-/** Il fonce quand sa cible est à cette distance et que l'élan la pousse vers le bord. */
-const DASH_RANGE = 3;
+/**
+ * Il charge quand sa cible est à cette distance et que l'élan la pousse vers le bord, et tient
+ * sa charge plus ou moins longtemps (une part de CHARGE_TIME tirée entre ces bornes, selon son
+ * niveau : le Facile lâche vite, l'Expert ose charger).
+ */
+const DASH_RANGE = 4;
+const CHARGE_WISH: Record<BotLevel, readonly [number, number]> = {
+  easy: [0, 0.4],
+  normal: [0.1, 0.6],
+  expert: [0.2, 0.7],
+};
 /** Il reste à cette distance du bord, et se place de ce côté-ci de sa cible. */
 const SAFE_EDGE = 1.4;
 const BEHIND_TARGET = 1.2;
@@ -261,6 +297,7 @@ const DODGE_STEPS = DASH_TIME / ARENA_STEP;
 function botInput(state: SumoState, player: PlayerId, level: BotLevel, rng: Rng): ArenaInput {
   const me = state.fighters.find((fighter) => fighter.id === player);
   if (!me || me.fellAt !== null || !isSteady(me) || me.dashing > 0) return IDLE_INPUT;
+  const isCharging = me.charge !== null;
   const radius = sumoRadius(state);
   const others = standing(state).filter((fighter) => fighter.id !== player);
 
@@ -273,7 +310,7 @@ function botInput(state: SumoState, player: PlayerId, level: BotLevel, rng: Rng)
     const gap = Math.hypot(dx, dz);
     return gap < THREAT_RANGE && (other.vx * dx + other.vz * dz) / (gap || 1) > 4;
   });
-  if (threat) {
+  if (threat && !isCharging) {
     const perStep = 1 - (1 - DODGE_SKILL[level]) ** (1 / DODGE_STEPS);
     if (rng.chance(perStep)) {
       // De côté par rapport à l'élan, du côté du centre plutôt que du bord.
@@ -288,7 +325,7 @@ function botInput(state: SumoState, player: PlayerId, level: BotLevel, rng: Rng)
     }
   }
 
-  // Trop près du bord : il revient vers le centre avant tout.
+  // Trop près du bord : il revient vers le centre avant tout (et lâche sa charge).
   if (Math.hypot(me.x, me.z) > radius - SAFE_EDGE) {
     return { move: toward(me, { x: 0, z: 0 }), primary: false, secondary: false };
   }
@@ -309,8 +346,17 @@ function botInput(state: SumoState, player: PlayerId, level: BotLevel, rng: Rng)
   // L'élan pousse la cible vers le bord : il est entre elle et le centre.
   const outward = (dx * target.x + dz * target.z) / ((gap || 1) * out);
   const isAligned = gap < DASH_RANGE && outward > 0.3;
+  // Placé, il se tourne vers elle d'une petite poussée, sans foncer dedans.
+  const face = { x: Math.sin(aimed) * 0.3, z: Math.cos(aimed) * 0.3 };
+  if (me.charge !== null) {
+    // Il vise en chargeant, et lâche à la charge voulue (tirée pour cette charge-là).
+    const startTick = state.tick - Math.round(me.charge / ARENA_STEP);
+    const [from, to] = CHARGE_WISH[level];
+    const wish = from + (to - from) * hashUnit(`${state.seed}:${player}:${startTick}`);
+    return { move: face, primary: me.charge < wish * CHARGE_TIME, secondary: false };
+  }
   if (isAligned && me.dashReady <= 0 && rng.chance(DASH_EAGERNESS[level])) {
-    return { move: { x: Math.sin(aimed), z: Math.cos(aimed) }, primary: true, secondary: false };
+    return { move: face, primary: true, secondary: false };
   }
   // Il se place entre le centre et sa cible, pour la pousser vers le bord.
   const spot = {
@@ -318,8 +364,6 @@ function botInput(state: SumoState, player: PlayerId, level: BotLevel, rng: Rng)
     z: target.z - (target.z / out) * BEHIND_TARGET,
   };
   const isPlaced = Math.hypot(spot.x - me.x, spot.z - me.z) < 0.6;
-  // Placé, il se tourne vers elle d'une petite poussée, sans foncer dedans.
-  const face = { x: Math.sin(aimed) * 0.3, z: Math.cos(aimed) * 0.3 };
   return { move: isPlaced ? face : toward(me, spot), primary: false, secondary: false };
 }
 
