@@ -136,6 +136,21 @@ describe('pawn sumo', () => {
     expect(PAWN_SUMO.ranking(ranked)).toEqual([['a'], ['b', 'd'], ['c']]);
   });
 
+  test('when the clock runs out, those still standing are tied (the dice will decide)', () => {
+    const state = PAWN_SUMO.create(PLAYERS, { practice: false, seed: 1 });
+    expect(PAWN_SUMO.timeLeft(state)).toBe(SUMO_TIME_LIMIT);
+    const late: SumoState = {
+      ...state,
+      tick: Math.ceil(SUMO_TIME_LIMIT / ARENA_STEP),
+      fighters: state.fighters.map((f) => ({ ...f, fellAt: { c: 10, d: 20 }[f.id] ?? null })),
+    };
+    expect(PAWN_SUMO.timeLeft(late)).toBe(0);
+    expect(PAWN_SUMO.isOver(late)).toBe(true);
+    expect(PAWN_SUMO.ranking(late)).toEqual([['a', 'b'], ['d'], ['c']]);
+    // Au bac à sable, pas de chrono.
+    expect(PAWN_SUMO.timeLeft(PAWN_SUMO.create(['a'], { practice: true, seed: 1 }))).toBeNull();
+  });
+
   test('never ends the practice board, and brings back whoever falls', () => {
     const out = { move: { x: 0, z: 1 }, primary: false, secondary: false };
     const state = run(PAWN_SUMO.create(['a'], { practice: true, seed: 1 }), { a: out }, 30 * 90);
