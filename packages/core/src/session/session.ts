@@ -42,7 +42,11 @@ export type SessionOptions = {
 const BOT_ROLL_TIME = 1600;
 const BOT_CHOICE_TIME = 2400;
 const BOT_OPENING_TIME = 700;
-/** Durée d'un mini-jeu provisoire (voir `placeholderSystemIntent`). */
+/**
+ * Durée d'un mini-jeu provisoire (voir `placeholderSystemIntent`), quand on ne l'attend pas :
+ * en multi avec un chrono, ou entre bots. Sans limite de temps (le solo), l'hôte attend que
+ * chaque humain ait lu sa présentation ("Suivant").
+ */
 const PLACEHOLDER_MINIGAME_TIME = 5000;
 /** Un joueur qui laisse passer son chrono : l'hôte choisit pour lui, comme un bot Normal. */
 const STAND_IN_LEVEL: BotLevel = 'normal';
@@ -70,6 +74,8 @@ export class GameSession {
   #readyAt: number;
   /** Le mini-jeu d'arène en cours, ou null. */
   #arena: ArenaRun | null = null;
+  /** Les humains qui ont lu la présentation du mini-jeu provisoire en cours. */
+  readonly #minigameReady = new Set<PlayerId>();
 
   private constructor(
     board: Board,
@@ -126,7 +132,7 @@ export class GameSession {
     if (actor === null) return null;
     if (actor.type === 'system') {
       if (this.#arenaToPlay()) return this.#arena ? this.#arena.nextWakeAt() : this.#readyAt;
-      return this.#readyAt + PLACEHOLDER_MINIGAME_TIME;
+      return this.#placeholderWakeAt();
     }
     if (this.seats[actor.playerId]?.control !== 'human') {
       return this.#readyAt + botThinkTime(this.#state);
@@ -161,7 +167,15 @@ export class GameSession {
       throw new Error(`Aucune action automatique (phase ${this.#state.phase.type})`);
     const result = this.submit(actor, intent, now);
     if (!result.ok) throw new Error(`Action automatique refusée : ${result.error}`);
+    if (actor.type === 'system') this.#minigameReady.clear();
     return result.events;
+  }
+
+  /** Un joueur a lu la présentation d'un mini-jeu provisoire ("Suivant"). */
+  minigameReady(player: PlayerId): void {
+    if (this.#isPlaceholderMinigame() && this.seats[player]?.control === 'human') {
+      this.#minigameReady.add(player);
+    }
   }
 
   /** Message d'arrivée dans la partie, pour une place ou un spectateur. */
@@ -252,6 +266,32 @@ export class GameSession {
     const result = this.submit({ type: 'system' }, intent, now);
     if (!result.ok) throw new Error(`Classement d'arène refusé : ${result.error}`);
     return result.events;
+  }
+
+  /**
+   * Quand tirer le résultat provisoire : dès que tous les humains ont lu la présentation ;
+   * sinon, sans limite de temps, on les attend ; avec un chrono (ou entre bots), au bout de
+   * PLACEHOLDER_MINIGAME_TIME.
+   */
+  #placeholderWakeAt(): number | null {
+    const automatic = this.#readyAt + PLACEHOLDER_MINIGAME_TIME;
+    if (!this.#isPlaceholderMinigame()) return automatic;
+    const humans = Object.keys(this.seats).filter((id) => this.seats[id]?.control === 'human');
+    if (humans.length === 0) return automatic;
+    if (humans.every((id) => this.#minigameReady.has(id))) return this.#readyAt;
+    return this.#options.decisionTime === null ? null : automatic;
+  }
+
+  /** La partie attend le résultat d'un mini-jeu provisoire, dont le client montre la présentation. */
+  #isPlaceholderMinigame(): boolean {
+    const { phase } = this.#state;
+    if (phase.type === 'minigame' || phase.type === 'bonusMinigame' || phase.type === 'finale') {
+      return !isArenaMinigame(phase.minigame);
+    }
+    return (
+      phase.type === 'turn' &&
+      ['awaitDuelResult', 'awaitOneVsAllResult', 'awaitSkillGate'].includes(phase.step.type)
+    );
   }
 
   #decisionEndsIn(now: number): number | null {

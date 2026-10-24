@@ -6,10 +6,12 @@ import type { ArenaRunView } from '../minigames/arena/arenaRun';
 
 // Messages entre un client et l'hôte de la partie : le serveur en multi, un Web Worker en
 // solo. Les deux parlent exactement ce protocole (01-architecture.md, section 5).
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type ClientMessage =
   | { type: 'intent'; intent: Intent }
+  /** La présentation d'un mini-jeu provisoire est lue : on peut tirer son résultat. */
+  | { type: 'minigameReady' }
   /** Pendant un mini-jeu d'arène : se dire prêt, puis envoyer ses commandes. */
   | { type: 'arenaReady' }
   | { type: 'arenaInput'; input: ArenaInput };
