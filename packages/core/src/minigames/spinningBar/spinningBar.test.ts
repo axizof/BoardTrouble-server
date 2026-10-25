@@ -5,6 +5,7 @@ import { ARENA_STEP, type ArenaInput, IDLE_INPUT } from '../arena/arena';
 import {
   BEEP_EVERY,
   barAngle,
+  boostShown,
   isBeep,
   isReversing,
   reversal,
@@ -46,12 +47,13 @@ function play(state: SpinState, seconds: number, input: ArenaInput, holdFor = In
   return current;
 }
 
-/** Les barres seules, sans joueur, pendant toute une partie : chaque état. */
-function barsAlone(seed: number): SpinState[] {
-  let state: SpinState = {
-    ...SPINNING_BAR.create(PLAYERS, { practice: false, seed }),
-    fighters: [],
-  };
+/**
+ * Les barres seules, sans joueur, pendant toute une partie : chaque état. `boosts` à faux : sans
+ * coup de vitesse (le premier est repoussé après la fin).
+ */
+function barsAlone(seed: number, boosts = true): SpinState[] {
+  const created = SPINNING_BAR.create(PLAYERS, { practice: false, seed });
+  let state: SpinState = { ...created, fighters: [], ...(boosts ? {} : { boostAt: 1e9 }) };
   const states: SpinState[] = [];
   for (let i = 0; i < SPIN_TIME_LIMIT / ARENA_STEP; i++) {
     state = SPINNING_BAR.step(state, {});
@@ -127,7 +129,7 @@ describe('spinning bar', () => {
   });
 
   test('a reversal is announced by beeps: three at first, then two, then one', () => {
-    const states = barsAlone(5);
+    const states = barsAlone(5, false);
     // Les bips avant chaque changement de sens, et quand il a lieu.
     const beepsBefore: { at: number; beeps: number }[] = [];
     let beeps = 0;
@@ -148,6 +150,43 @@ describe('spinning bar', () => {
     expect(announced && reversal(announced)?.direction).toBe(-1);
     expect(states[first - 1] && reversal(states[first - 1] as SpinState)).toBeNull();
     expect(BEEP_EVERY).toBeGreaterThan(0);
+  });
+
+  test('a boost is announced, then slows or speeds the bars for a while, and they come back', () => {
+    const seen = { slow: 0, fast: 0, withReverse: 0, lateFast: 0 };
+    for (let seed = 1; seed <= 20; seed++) {
+      const states = barsAlone(seed);
+      const plain = barsAlone(seed, false);
+      states.forEach((state, index) => {
+        const before = states[index - 1];
+        // Le début d'un coup de vitesse : annoncé juste avant, par l'icône et des bips.
+        if (!before || state.tick !== state.boostAt) return;
+        expect(boostShown(before)).toBe(state.boost);
+        expect(states.slice(index - 20, index).some(isBeep)).toBe(true);
+        seen[state.boost]++;
+        if (state.boostAt === before.reverseAt) seen.withReverse++;
+        if (state.boost === 'fast' && state.tick * ARENA_STEP > 56) seen.lateFast++;
+        // Pendant le coup, plus lent ou plus vite que la même partie sans coup de vitesse ; deux
+        // secondes après, revenu comme elle.
+        const usual = plain[index + 45];
+        const during = states[index + 45];
+        if (usual && during && !isReversing(usual) && !isReversing(during)) {
+          const ratio = Math.abs(during.spin) / Math.abs(usual.spin);
+          if (state.boost === 'slow') expect(ratio).toBeLessThan(0.7);
+          else expect(ratio).toBeGreaterThan(1.05);
+        }
+        const usualAfter = plain[index + 120];
+        const after = states[index + 120];
+        if (usualAfter && after && !isReversing(after) && !isReversing(usualAfter)) {
+          expect(Math.abs(after.spin)).toBeCloseTo(Math.abs(usualAfter.spin), 1);
+        }
+      });
+    }
+    expect(seen.slow).toBeGreaterThan(5);
+    expect(seen.fast).toBeGreaterThan(5);
+    expect(seen.withReverse).toBeGreaterThan(2);
+    // En fin de partie, les barres sont déjà au plus vite : plus que des ralentis.
+    expect(seen.lateFast).toBe(0);
   });
 
   test('reversals and the bars start change from one match to another', () => {
