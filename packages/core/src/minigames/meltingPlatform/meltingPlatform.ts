@@ -20,9 +20,12 @@ import {
 // du dernier est éliminé. Dernier debout gagne. Les corps sont ceux des arènes (arena/body.ts),
 // avec un saut court pour franchir une tuile tombée.
 
-/** Les niveaux, du haut (0) au bas, et la hauteur entre deux niveaux. */
+/**
+ * Les niveaux, du haut (0) au bas, et la hauteur entre deux niveaux : assez pour que la caméra
+ * d'un joueur passe sous le niveau du dessus (on ne voit pas ceux qui y sont encore).
+ */
 export const MELT_LEVELS = 3;
-export const LEVEL_HEIGHT = 5;
+export const LEVEL_HEIGHT = 8;
 /** Une tuile : un hexagone pointe en haut, de ce rayon (centre au coin), en mètres. */
 export const HEX_SIZE = 1.1;
 /** Le plateau de chaque niveau : un grand hexagone de tuiles, de ce rayon (en tuiles). */
