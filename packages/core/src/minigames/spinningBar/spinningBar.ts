@@ -26,7 +26,7 @@ export const SPOT_RADIUS = 4.5;
 /** On bouge autour de sa place, jusqu'à cette distance. */
 export const PAD_RADIUS = 0.9;
 /** Le pilier du centre ; les barres vont de lui jusqu'au-delà du bord. */
-export const PILLAR_RADIUS = 0.7;
+export const PILLAR_RADIUS = 0.45;
 /** La barre basse, du sol à LOW_BAR_TOP ; la haute, de HIGH_BAR_BOTTOM à HIGH_BAR_TOP. */
 export const LOW_BAR_TOP = 0.55;
 export const HIGH_BAR_BOTTOM = 1;
