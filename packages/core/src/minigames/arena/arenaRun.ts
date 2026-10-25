@@ -4,6 +4,7 @@ import type { Rng } from '../../random/rng';
 import type { MinigameId } from '../catalog';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
+import { SPINNING_BAR } from '../spinningBar/spinningBar';
 import {
   ARENA_STEP,
   type ArenaGame,
@@ -20,6 +21,7 @@ import {
 export const ARENAS = {
   pawnSumo: PAWN_SUMO,
   meltingPlatform: MELTING_PLATFORM,
+  spinningBar: SPINNING_BAR,
 } satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
