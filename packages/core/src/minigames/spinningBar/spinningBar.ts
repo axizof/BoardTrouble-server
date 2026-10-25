@@ -17,8 +17,9 @@ import {
 // Barre tournante (02-mini-jeux.md, fiche 6) : deux barres tournent autour d'un pilier central,
 // au-dessus du vide. Chacun se tient sur son propre pilier, où il peut bouger un peu. La barre
 // basse se saute, la haute se passe baissé ; une barre qui te prend te pousse, et poussé hors de
-// ton pilier, tu tombes. Elles accélèrent, se rapprochent l'une de l'autre et changent parfois de
-// sens, en l'annonçant par des bips. Dernier debout gagne.
+// ton pilier, tu tombes. Elles accélèrent, se rapprochent l'une de l'autre, changent parfois de
+// sens et ont des coups de vitesse passagers (ralenti, accélération), chaque fois annoncés par
+// des bips. Dernier debout gagne.
 
 /** Le cercle des piliers des joueurs, et le dessus de chaque pilier (mètres). */
 export const SPOT_RADIUS = 4.5;
@@ -71,8 +72,31 @@ const FIRST_REVERSE = 12;
 const REVERSE_EVERY = 9;
 const REVERSE_SPREAD = 9;
 /**
- * Un changement de sens s'annonce par des bips, un toutes les BEEP_EVERY secondes, le dernier
- * juste avant : trois au début, deux après TWO_BEEPS_AT, un seul après ONE_BEEP_AT.
+ * Les coups de vitesse : pendant BOOST_TIME secondes, les barres visent SLOW_FACTOR ou
+ * FAST_FACTOR fois leur vitesse (elles y vont et en reviennent à REVERSE_ACCEL). Le premier
+ * entre FIRST_BOOST et + BOOST_SPREAD secondes, puis un toutes les BOOST_EVERY à + BOOST_SPREAD
+ * secondes ; une fois sur trois environ, en même temps qu'un changement de sens.
+ */
+export type SpinBoost = 'slow' | 'fast';
+const BOOST_TIME = 2;
+const SLOW_FACTOR = 0.45;
+const FAST_FACTOR = 1.5;
+const FIRST_BOOST = 20;
+const BOOST_EVERY = 10;
+const BOOST_SPREAD = 8;
+const BOOST_WITH_REVERSE = 0.35;
+/**
+ * Jamais plus vite que ça : il reste toujours 0,78 s entre l'orange et la turquoise qui la suit
+ * (le temps de retomber d'un saut et de se baisser). Une accélération n'a lieu que si elle a de
+ * la place sous cette limite (FAST_ROOM) ; en fin de partie, les barres y sont déjà : ce ne sont
+ * plus que des ralentis.
+ */
+const MIN_GAP_TIME = 0.78;
+const FAST_ROOM = 1.25;
+/**
+ * Un changement de sens ou un coup de vitesse s'annonce par des bips, un toutes les BEEP_EVERY
+ * secondes, le dernier juste avant : trois au début, deux après TWO_BEEPS_AT, un seul après
+ * ONE_BEEP_AT.
  */
 export const BEEP_EVERY = 0.5;
 const TWO_BEEPS_AT = 30;
@@ -117,6 +141,9 @@ type Bars = {
   direction: 1 | -1;
   /** Le pas du prochain changement de sens. */
   reverseAt: number;
+  /** Le pas où commence le coup de vitesse en cours ou le prochain, et lequel c'est. */
+  boostAt: number;
+  boost: SpinBoost;
 };
 
 export type SpinState = Bars & {
@@ -136,17 +163,29 @@ export function isReversing(bars: Bars): boolean {
   return Math.sign(bars.spin) !== bars.direction;
 }
 
-/** Combien de bips annoncent un changement de sens qui arrive à ce pas. */
-export function beepsBefore(reverseAt: number): number {
-  const time = reverseAt * ARENA_STEP;
+/** Combien de bips annoncent ce qui arrive à ce pas (changement de sens, coup de vitesse). */
+export function beepsBefore(at: number): number {
+  const time = at * ARENA_STEP;
   return time < TWO_BEEPS_AT ? 3 : time < ONE_BEEP_AT ? 2 : 1;
 }
 
-/** Un bip d'annonce à ce pas (il y en a BEEP_EVERY secondes avant, et avant encore). */
+/** Ce qui arrive au pas `at` est annoncé au pas `tick` (depuis le premier bip). */
+function isAnnounced(at: number, tick: number): boolean {
+  const left = (at - tick) * ARENA_STEP;
+  return left > 0 && left <= beepsBefore(at) * BEEP_EVERY + 1e-6;
+}
+
+/**
+ * Un bip d'annonce à ce pas (BEEP_EVERY secondes avant ce qui arrive, et avant encore). Un coup
+ * de vitesse en même temps qu'un changement de sens : les mêmes bips.
+ */
 export function isBeep(state: SpinState): boolean {
-  const left = state.reverseAt - state.tick;
   const every = Math.round(BEEP_EVERY / ARENA_STEP);
-  return left > 0 && left % every === 0 && left / every <= beepsBefore(state.reverseAt);
+  const beepFor = (at: number) => {
+    const left = at - state.tick;
+    return left > 0 && left % every === 0 && left / every <= beepsBefore(at);
+  };
+  return beepFor(state.reverseAt) || beepFor(state.boostAt);
 }
 
 /**
@@ -155,9 +194,20 @@ export function isBeep(state: SpinState): boolean {
  */
 export function reversal(state: SpinState): { direction: 1 | -1 } | null {
   if (isReversing(state)) return { direction: state.direction };
-  const left = (state.reverseAt - state.tick) * ARENA_STEP;
-  const announced = left <= beepsBefore(state.reverseAt) * BEEP_EVERY + 1e-6;
-  return announced ? { direction: state.direction === 1 ? -1 : 1 } : null;
+  return isAnnounced(state.reverseAt, state.tick)
+    ? { direction: state.direction === 1 ? -1 : 1 }
+    : null;
+}
+
+/** Le coup de vitesse annoncé (depuis le premier bip) ou en cours ; null sinon. */
+export function boostShown(state: SpinState): SpinBoost | null {
+  return isBoosting(state, state.tick) || isAnnounced(state.boostAt, state.tick)
+    ? state.boost
+    : null;
+}
+
+function isBoosting(bars: Bars, tick: number): boolean {
+  return tick >= bars.boostAt && tick < bars.boostAt + Math.round(BOOST_TIME / ARENA_STEP);
 }
 
 /** Un angle ramené entre -π et π. */
@@ -178,23 +228,63 @@ function reverseTick(seed: number, after: number, wait: number): number {
   return after + Math.round((wait + spread) / ARENA_STEP);
 }
 
-/** Les barres un pas plus tard (la vitesse monte, le sens change à l'heure dite). */
+/** La vitesse ordinaire des barres et leur écart, à ce moment de la partie. */
+function baseSpeed(time: number, practice: boolean): number {
+  if (practice) return PRACTICE_SPIN;
+  return SPIN_START + (SPIN_MAX - SPIN_START) * Math.min(1, time / SPIN_RAMP);
+}
+
+function gapAt(time: number, practice: boolean): number {
+  if (practice) return GAP_START;
+  return GAP_START + (GAP_MIN - GAP_START) * Math.min(1, time / SPIN_RAMP);
+}
+
+/**
+ * Le prochain coup de vitesse, `wait` à + BOOST_SPREAD secondes après `tick` (ou au prochain
+ * changement de sens, parfois), et lequel : une accélération seulement si elle a de la place.
+ */
+function nextBoost(
+  seed: number,
+  tick: number,
+  wait: number,
+  reverseAt: number,
+  practice: boolean,
+): { boostAt: number; boost: SpinBoost } {
+  const key = `${seed}:boost:${tick}`;
+  // Avec un changement de sens, seulement s'il reste le temps de l'annoncer entièrement.
+  const announce = Math.round((3 * BEEP_EVERY) / ARENA_STEP) + 1;
+  const withReverse = hashUnit(`${key}:with`) < BOOST_WITH_REVERSE && reverseAt - tick > announce;
+  const boostAt = withReverse
+    ? reverseAt
+    : tick + Math.round((wait + hashUnit(key) * BOOST_SPREAD) / ARENA_STEP);
+  const time = boostAt * ARENA_STEP;
+  const room = gapAt(time, practice) / MIN_GAP_TIME / baseSpeed(time, practice);
+  const boost = room >= FAST_ROOM && hashUnit(`${key}:kind`) < 0.5 ? 'fast' : 'slow';
+  return { boostAt, boost };
+}
+
+/** Les barres un pas plus tard (la vitesse monte, le sens et la vitesse changent à l'heure dite). */
 function advanceBars(bars: Bars, tick: number, practice: boolean, seed: number): Bars {
   const dt = ARENA_STEP;
   const time = tick * dt;
-  let { direction, reverseAt } = bars;
+  let { direction, reverseAt, boostAt, boost } = bars;
   if (tick >= reverseAt) {
     direction = direction === 1 ? -1 : 1;
     reverseAt = reverseTick(seed, tick, REVERSE_EVERY);
   }
-  const ramp = Math.min(1, time / SPIN_RAMP);
-  const speed = practice ? PRACTICE_SPIN : SPIN_START + (SPIN_MAX - SPIN_START) * ramp;
+  if (tick >= boostAt + Math.round(BOOST_TIME / dt)) {
+    ({ boostAt, boost } = nextBoost(seed, tick, BOOST_EVERY, reverseAt, practice));
+  }
+  const gap = gapAt(time, practice);
+  const boosted = isBoosting({ ...bars, boostAt }, tick);
+  const factor = !boosted ? 1 : boost === 'slow' ? SLOW_FACTOR : FAST_FACTOR;
+  const speed = Math.min(baseSpeed(time, practice) * factor, gap / MIN_GAP_TIME);
   // Vers la vitesse voulue, sans dépasser REVERSE_ACCEL : un changement de sens freine puis
-  // repart, et l'accélération ordinaire (bien plus douce) est suivie telle quelle.
+  // repart, un coup de vitesse y va et en revient, et l'accélération ordinaire (bien plus
+  // douce) est suivie telle quelle.
   const change = speed * direction - bars.spin;
   const spin = bars.spin + Math.max(-REVERSE_ACCEL * dt, Math.min(REVERSE_ACCEL * dt, change));
-  const gap = practice ? GAP_START : GAP_START + (GAP_MIN - GAP_START) * ramp;
-  return { angle: bars.angle + spin * dt, gap, spin, direction, reverseAt };
+  return { angle: bars.angle + spin * dt, gap, spin, direction, reverseAt, boostAt, boost };
 }
 
 function spotOf(spot: number): { x: number; z: number } {
@@ -221,6 +311,7 @@ function create(
   // Les barres partent arrêtées, juste après un pilier tiré au hasard : celui qu'elles
   // atteignent en premier a le temps de les voir venir, et ce n'est pas toujours le même.
   const after = Math.floor(hashUnit(`${seed}:start`) * count);
+  const reverseAt = reverseTick(seed, 0, FIRST_REVERSE);
   return {
     tick: 0,
     practice,
@@ -229,7 +320,8 @@ function create(
     gap: GAP_START,
     spin: 0,
     direction: 1,
-    reverseAt: reverseTick(seed, 0, FIRST_REVERSE),
+    reverseAt,
+    ...nextBoost(seed, 0, FIRST_BOOST, reverseAt, practice),
     fighters: players.map((id, index) => standOnSpot(id, (index / count) * Math.PI * 2)),
   };
 }
