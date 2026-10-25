@@ -22,8 +22,8 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
   keyUsed: 1200,
   finalGateOpened: 2500,
   coinFlipped: 1500,
-  // Le temps de lire ce que fait la case (le jeu l'annonce à l'écran).
-  spaceTriggered: 1600,
+  // Le temps de lire ce que fait la case (le jeu l'annonce à l'écran ; 1,6 s : trop court).
+  spaceTriggered: 2400,
   itemGained: 1200,
   itemRefused: 600,
   itemDiscarded: 600,
@@ -69,7 +69,8 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
   jostled: 1500,
   conveyorMoved: 800,
   windBlew: 2000,
-  minigameDrawn: 3500,
+  // Le ruban tourne 2,2 s, puis on a le temps de voir le mini-jeu tiré.
+  minigameDrawn: 4500,
   minigameChoiceOffered: 1000,
   minigameChosen: 1500,
   minigameChoiceGranted: 1500,
