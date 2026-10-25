@@ -3,16 +3,22 @@ import type { BotLevel } from '../../bots/boardBot';
 import { Rng } from '../../random/rng';
 import { ARENA_STEP, type ArenaInput, IDLE_INPUT } from '../arena/arena';
 import {
+  BEEP_EVERY,
   barAngle,
+  isBeep,
   isReversing,
+  reversal,
   SPIN_TIME_LIMIT,
   SPINNING_BAR,
+  SPOT_PILLAR_RADIUS,
   SPOT_RADIUS,
   type SpinBar,
   type SpinState,
 } from './spinningBar';
 
 const PLAYERS = ['a', 'b', 'c', 'd'];
+/** La vitesse des barres au départ (rad/s), une fois lancées. */
+const SPIN = 1.1;
 const JUMP: ArenaInput = { ...IDLE_INPUT, primary: true };
 const DUCK: ArenaInput = { ...IDLE_INPUT, secondary: true };
 
@@ -25,9 +31,9 @@ const fighter = (state: SpinState, id: string) => {
 /** Un joueur seul, et la barre `bar` à `seconds` de lui (elle tourne vers lui). */
 function barComing(bar: SpinBar, seconds: number, practice = false): SpinState {
   const state = SPINNING_BAR.create(['a'], { practice, seed: 1 });
-  // Sa place est à l'angle 0 ; la barre doit encore parcourir spin × seconds pour l'atteindre.
+  // Son pilier est à l'angle 0 ; la barre, lancée à SPIN, doit encore parcourir SPIN × seconds.
   const offset = bar === 'low' ? 0 : state.gap;
-  return { ...state, angle: offset - state.spin * seconds };
+  return { ...state, spin: SPIN, angle: offset - SPIN * seconds };
 }
 
 /** Joue `seconds` secondes, `input` sur les premiers `holdFor` pas, rien ensuite. */
@@ -40,73 +46,120 @@ function play(state: SpinState, seconds: number, input: ArenaInput, holdFor = In
   return current;
 }
 
+/** Les barres seules, sans joueur, pendant toute une partie : chaque état. */
+function barsAlone(seed: number): SpinState[] {
+  let state: SpinState = {
+    ...SPINNING_BAR.create(PLAYERS, { practice: false, seed }),
+    fighters: [],
+  };
+  const states: SpinState[] = [];
+  for (let i = 0; i < SPIN_TIME_LIMIT / ARENA_STEP; i++) {
+    state = SPINNING_BAR.step(state, {});
+    states.push(state);
+  }
+  return states;
+}
+
 describe('spinning bar', () => {
-  test('the low bar sweeps whoever stays on the ground, not whoever jumps over it', () => {
-    expect(fighter(play(barComing('low', 0.5), 1, IDLE_INPUT), 'a').fellAt).not.toBeNull();
+  test('the low bar pushes whoever stays on the ground off his pillar, not whoever jumps', () => {
+    expect(fighter(play(barComing('low', 0.5), 2.5, IDLE_INPUT), 'a').fellAt).not.toBeNull();
     // Il saute un tiers de seconde avant qu'elle arrive : elle passe sous lui.
-    const jumped = play(play(barComing('low', 0.65), 0.32, IDLE_INPUT), 1, JUMP, 1);
+    const jumped = play(play(barComing('low', 0.65), 0.32, IDLE_INPUT), 2.5, JUMP, 1);
     expect(fighter(jumped, 'a').fellAt).toBeNull();
-    // Baissé, la basse le balaie quand même.
-    expect(fighter(play(barComing('low', 0.5), 1, DUCK), 'a').fellAt).not.toBeNull();
+    // Baissé, la basse le pousse quand même.
+    expect(fighter(play(barComing('low', 0.5), 2.5, DUCK), 'a').fellAt).not.toBeNull();
   });
 
-  test('the high bar sweeps whoever stands or jumps, not whoever ducks under it', () => {
-    expect(fighter(play(barComing('high', 0.5), 1, IDLE_INPUT), 'a').fellAt).not.toBeNull();
-    expect(fighter(play(barComing('high', 0.5), 1, DUCK), 'a').fellAt).toBeNull();
-    const jumped = play(play(barComing('high', 0.65), 0.32, IDLE_INPUT), 1, JUMP, 1);
+  test('the high bar pushes whoever stands or jumps, not whoever ducks under it', () => {
+    expect(fighter(play(barComing('high', 0.5), 2.5, IDLE_INPUT), 'a').fellAt).not.toBeNull();
+    expect(fighter(play(barComing('high', 0.5), 2.5, DUCK), 'a').fellAt).toBeNull();
+    const jumped = play(play(barComing('high', 0.65), 0.32, IDLE_INPUT), 2.5, JUMP, 1);
     expect(fighter(jumped, 'a').fellAt).not.toBeNull();
   });
 
-  test('a swept player flies off the platform, along the bar', () => {
-    const swept = play(barComing('low', 0.2), 1.5, IDLE_INPUT);
-    const a = fighter(swept, 'a');
-    expect(Math.hypot(a.x, a.z)).toBeGreaterThan(SPOT_RADIUS + 3);
+  test('pushed, he slides along the bar off his pillar and falls into the void', () => {
+    const pushed = play(barComing('low', 0.2), 0.6, IDLE_INPUT);
+    const a = fighter(pushed, 'a');
+    expect(a.downed).toBeGreaterThan(0);
+    expect(Math.hypot(a.x, a.z - SPOT_RADIUS)).toBeGreaterThan(SPOT_PILLAR_RADIUS);
+    expect(a.y).toBeLessThan(0);
   });
 
-  test('in practice the bar only knocks you down', () => {
-    const knocked = play(barComing('low', 0.2, true), 0.5, IDLE_INPUT);
-    expect(fighter(knocked, 'a').fellAt).toBeNull();
-    expect(fighter(knocked, 'a').downed).toBeGreaterThan(0);
-    expect(SPINNING_BAR.isOver(play(knocked, 10, IDLE_INPUT))).toBe(false);
+  test('in practice, who falls comes back on his pillar', () => {
+    const back = play(barComing('low', 0.2, true), 2, IDLE_INPUT);
+    expect(fighter(back, 'a').fellAt).toBeNull();
+    expect(fighter(back, 'a').y).toBe(0);
+    expect(SPINNING_BAR.isOver(back)).toBe(false);
   });
 
-  test('moves stay around your own spot, in the frame of your camera', () => {
+  test('moves stay around your own pillar, in the frame of your camera', () => {
     const state = SPINNING_BAR.create(PLAYERS, { practice: true, seed: 1 });
-    // "Haut" mène vers le pilier, quelle que soit la place.
+    // "Haut" mène vers le pilier du centre, quelle que soit la place.
     const inputs = Object.fromEntries(
       PLAYERS.map((id) => [id, { ...IDLE_INPUT, move: { x: 0, z: -1 } }]),
     );
-    let current = state;
-    for (let i = 0; i < 60; i++) current = SPINNING_BAR.step(current, inputs);
+    let current = { ...state, angle: 100 };
+    // Les barres loin de tout le monde : on les fige pendant l'essai.
+    for (let i = 0; i < 60; i++) current = { ...SPINNING_BAR.step(current, inputs), angle: 100 };
     for (const one of current.fighters) {
       const before = fighter(state, one.id);
+      expect(one.fellAt).toBeNull();
       expect(Math.hypot(one.x, one.z)).toBeLessThan(Math.hypot(before.x, before.z) - 0.5);
       expect(Math.hypot(one.x - before.x, one.z - before.z)).toBeLessThanOrEqual(0.9 + 1e-9);
     }
   });
 
-  test('the bars speed up, get closer and sometimes reverse, but always leave time to react', () => {
-    let state = SPINNING_BAR.create(PLAYERS, { practice: false, seed: 3 });
+  test('the bars speed up, get closer and reverse, always leaving time to react', () => {
+    const states = barsAlone(3);
+    const last = states.at(-1);
+    expect(Math.abs(last?.spin ?? 0)).toBeGreaterThan(3);
     let reversals = 0;
-    let wasReversing = false;
     let shortestGap = Number.POSITIVE_INFINITY;
-    const idle = Object.fromEntries(PLAYERS.map((id) => [id, IDLE_INPUT]));
-    // Personne ne bouge : on arrête dès que tout le monde est balayé, on suit donc les barres
-    // seules sur un état sans joueur.
-    state = { ...state, fighters: [] };
-    for (let i = 0; i < SPIN_TIME_LIMIT / ARENA_STEP; i++) {
-      state = SPINNING_BAR.step(state, idle);
-      if (isReversing(state) && !wasReversing) reversals++;
-      wasReversing = isReversing(state);
+    states.forEach((state, index) => {
+      if (isReversing(state) && !isReversing(states[index - 1] ?? state)) reversals++;
       const between = Math.abs(barAngle(state, 'low') - barAngle(state, 'high'));
-      const seconds =
-        Math.min(between, Math.PI * 2 - between) / Math.max(0.01, Math.abs(state.spin));
+      const seconds = Math.min(between, Math.PI * 2 - between) / Math.abs(state.spin || 0.01);
       shortestGap = Math.min(shortestGap, seconds);
-    }
-    expect(Math.abs(state.spin)).toBeGreaterThan(3);
+    });
     expect(reversals).toBeGreaterThanOrEqual(4);
     // Le temps de retomber d'un saut (0,7 s) puis de se baisser.
     expect(shortestGap).toBeGreaterThan(0.75);
+  });
+
+  test('a reversal is announced by beeps: three at first, then two, then one', () => {
+    const states = barsAlone(5);
+    // Les bips avant chaque changement de sens, et quand il a lieu.
+    const beepsBefore: { at: number; beeps: number }[] = [];
+    let beeps = 0;
+    states.forEach((state, index) => {
+      if (isBeep(state)) beeps++;
+      const before = states[index - 1];
+      if (before && isReversing(state) && !isReversing(before)) {
+        beepsBefore.push({ at: state.tick * ARENA_STEP, beeps });
+        beeps = 0;
+      }
+    });
+    for (const { at, beeps: count } of beepsBefore) {
+      expect(count).toBe(at < 30 ? 3 : at < 60 ? 2 : 1);
+    }
+    // L'annonce commence au premier bip, et dit le sens où elles repartiront.
+    const first = states.findIndex(isBeep);
+    const announced = states[first];
+    expect(announced && reversal(announced)?.direction).toBe(-1);
+    expect(states[first - 1] && reversal(states[first - 1] as SpinState)).toBeNull();
+    expect(BEEP_EVERY).toBeGreaterThan(0);
+  });
+
+  test('reversals and the bars start change from one match to another', () => {
+    const firstReversal = (seed: number) => barsAlone(seed).findIndex(isReversing);
+    const starts = new Set([1, 2, 3, 4, 5, 6].map((seed) => firstReversal(seed)));
+    expect(starts.size).toBeGreaterThan(3);
+    const angles = new Set(
+      [1, 2, 3, 4, 5, 6].map(
+        (seed) => SPINNING_BAR.create(PLAYERS, { practice: false, seed }).angle,
+      ),
+    );
+    expect(angles.size).toBeGreaterThan(1);
   });
 
   test('plays whole matches between bots, the expert ahead of the easy one', () => {
