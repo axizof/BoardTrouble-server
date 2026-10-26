@@ -1,4 +1,5 @@
 import type { BotLevel } from '../../bots/boardBot';
+import { breakTies, type TieBreak } from '../../dice/dice';
 import type { PlayerId } from '../../game/types';
 import type { Rng } from '../../random/rng';
 import { BOARD_REFLEX } from '../boardReflex/boardReflex';
@@ -47,6 +48,8 @@ export const ARENA_TIMES = {
   botsIntro: 3000,
   countdown: 3000,
   result: 6000,
+  /** Chaque lancer de départage des ex aequo allonge le résultat de tant (il se montre). */
+  tieRoll: 2200,
 } as const;
 
 /**
@@ -61,7 +64,11 @@ export type ArenaRunView = {
   stageEndsIn: number | null;
   players: PlayerId[];
   ready: PlayerId[];
+  /** Le classement du mini-jeu, ex aequo groupés (ce qu'affiche le résultat d'abord). */
   ranking: PlayerId[][] | null;
+  /** Les lancers qui départagent les ex aequo, dans l'ordre où les montrer, et l'ordre final. */
+  tieBreaks: TieBreak[];
+  order: PlayerId[] | null;
 };
 
 export class ArenaRun {
@@ -76,6 +83,8 @@ export class ArenaRun {
   #stageAt: number;
   #state: ArenaState;
   #ranking: PlayerId[][] | null = null;
+  #tieBreaks: TieBreak[] = [];
+  #order: PlayerId[] | null = null;
 
   /** `bots` : le niveau de chaque joueur tenu par un bot ; les autres sont des humains. */
   constructor(
@@ -140,8 +149,11 @@ export class ArenaRun {
       }
       if (this.#game.isOver(this.#state)) {
         this.#ranking = this.#game.ranking(this.#state);
+        // Les ex aequo se départagent aux dés ici, pour que le résultat le montre ; le moteur
+        // reçoit ensuite un classement sans égalité.
+        ({ order: this.#order, tieBreaks: this.#tieBreaks } = breakTies(this.#ranking, rng));
         this.#stage = 'result';
-        this.#stageAt = now + ARENA_TIMES.result;
+        this.#stageAt = now + ARENA_TIMES.result + this.#tieBreaks.length * ARENA_TIMES.tieRoll;
       }
     }
   }
@@ -151,9 +163,9 @@ export class ArenaRun {
     return this.#ranking !== null && this.#stage === 'result' && now >= this.#stageAt;
   }
 
-  /** Le classement complet, une fois la partie finie ; null avant. */
+  /** Le classement final, sans égalité (les ex aequo départagés aux dés), une fois la partie finie ; null avant. */
   get ranking(): PlayerId[][] | null {
-    return this.#ranking;
+    return this.#order?.map((id) => [id]) ?? null;
   }
 
   view(now: number): ArenaRunView {
@@ -170,6 +182,8 @@ export class ArenaRun {
       ready: [...this.#ready],
       arena: this.#state,
       ranking: this.#ranking,
+      tieBreaks: this.#tieBreaks,
+      order: this.#order,
     } as ArenaRunView;
   }
 
