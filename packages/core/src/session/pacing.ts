@@ -1,3 +1,4 @@
+import { TIE_ROLL_TIME } from '../dice/dice';
 import type { GameEvent } from '../game/types';
 import { viewEvents } from '../game/views';
 
@@ -106,11 +107,14 @@ const UNPACED = new Set<GameEvent['type']>(['introEnded', 'orderRolled']);
  */
 export function animationTime(events: GameEvent[]): number {
   return viewEvents(events, { type: 'spectator' }).reduce(
-    (total, event) =>
-      total +
-      (event.type === 'moved'
-        ? event.path.length * MOVE_STEP_TIME
-        : EVENT_TIME[event.type] * (UNPACED.has(event.type) ? 1 : PACE)),
+    (total, event) => total + eventTime(event),
     0,
   );
+}
+
+function eventTime(event: GameEvent): number {
+  if (event.type === 'moved') return event.path.length * MOVE_STEP_TIME;
+  const base = EVENT_TIME[event.type] * (UNPACED.has(event.type) ? 1 : PACE);
+  // Les relances du départage se montrent au rythme du client, sans le PACE.
+  return event.type === 'orderDrawn' ? base + event.tieBreaks.length * TIE_ROLL_TIME : base;
 }
