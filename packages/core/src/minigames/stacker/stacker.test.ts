@@ -105,6 +105,40 @@ describe('stacker', () => {
     expect(STACKER.ranking(tied)).toEqual([['a', 'b']]);
   });
 
+  test('blocks get faster as the tower grows, a bit unevenly, but the same for everyone', () => {
+    const speeds = () => {
+      let state = STACKER.create(['a', 'b'], { practice: false, seed: 3 });
+      const seen: number[] = [];
+      for (let level = 0; level < 20; level++) {
+        seen.push(fighter(state, 'a').speed);
+        state = dropAt(state, 0);
+        // Le bloc suivant apparaît : on le laisse partir.
+        for (let i = 0; i < 15; i++) state = STACKER.step(state, {});
+      }
+      return seen;
+    };
+    const a = speeds();
+    expect(a.at(-1) ?? 0).toBeGreaterThan((a[0] ?? 0) * 1.8);
+    // D'un étage à l'autre, pas toujours le même écart : la vitesse varie un peu.
+    const steps = new Set(a.slice(1).map((speed, index) => (speed - (a[index] ?? 0)).toFixed(2)));
+    expect(steps.size).toBeGreaterThan(3);
+    // Au même étage, le même bloc pour tous : deux tours de 6 blocs dont le suivant apparaît.
+    const start = STACKER.create(['a', 'b'], { practice: false, seed: 3 });
+    const tower = Array.from({ length: 6 }, () => ({ x: 0, width: BASE_WIDTH }));
+    const ready = {
+      ...start,
+      fighters: start.fighters.map((one) => ({
+        ...one,
+        blocks: tower,
+        movingSince: null,
+        spawnAt: 1,
+      })),
+    };
+    const spawned = STACKER.step(ready, {});
+    expect(fighter(spawned, 'a').speed).toBe(fighter(spawned, 'b').speed);
+    expect(fighter(spawned, 'a').speed).toBeCloseTo(a[5] ?? 0);
+  });
+
   test('the clock stops the match after 45 seconds', () => {
     let state = STACKER.create(['a', 'b'], { practice: false, seed: 1 });
     while (!STACKER.isOver(state)) state = STACKER.step(state, {});
