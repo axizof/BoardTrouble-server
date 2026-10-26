@@ -5,7 +5,8 @@ import { ARENA_STEP, type ArenaInput, IDLE_INPUT } from '../arena/arena';
 import {
   ANSWER_TIME,
   BOARD_REFLEX,
-  REFLEX_ROUNDS,
+  REFLEX_MAX_ROUNDS,
+  REFLEX_TARGET,
   type ReflexState,
   reactionOf,
   reflexShown,
@@ -48,8 +49,6 @@ describe('board reflex', () => {
     expect(PLAYERS.map((id) => fighter(played, id).points)).toEqual([0, 1, 0, 1]);
     expect(fighter(played, 'c').falseStart).toBe(true);
     expect(reactionOf(played, fighter(played, 'b'))).toBeCloseTo(7 * ARENA_STEP);
-    // Qui part trop tôt compte comme s'il n'avait pas appuyé.
-    expect(fighter(played, 'c').totalSteps).toBe(Math.round(ANSWER_TIME / ARENA_STEP));
     expect(reflexShown(played)).toEqual({ type: 'scored', best: 7 * ARENA_STEP });
   });
 
@@ -96,7 +95,19 @@ describe('board reflex', () => {
     expect(waits.size).toBeGreaterThan(3);
   });
 
-  test('plays whole matches between bots, ranked by points then reaction time', () => {
+  test('the first to three points wins: the match stops there, ranked by points', () => {
+    let state = BOARD_REFLEX.create(['a', 'b', 'c'], { practice: false, seed: 4 });
+    // a toujours le plus rapide, b toujours deuxième, c n'appuie jamais.
+    while (!BOARD_REFLEX.isOver(state)) {
+      const { signalAt } = state.round;
+      state = playUntil(state, state.tick + 1, { a: signalAt + 5, b: signalAt + 8 });
+    }
+    expect(state.round.index).toBe(REFLEX_TARGET - 1);
+    expect(fighter(state, 'a').points).toBe(REFLEX_TARGET);
+    expect(BOARD_REFLEX.ranking(state)).toEqual([['a'], ['b', 'c']]);
+  });
+
+  test('plays whole matches between bots, until someone has three points', () => {
     const levels: BotLevel[] = ['easy', 'normal', 'expert', 'normal'];
     const wins: Record<string, number> = {};
     for (let seed = 1; seed <= 30; seed++) {
@@ -111,7 +122,8 @@ describe('board reflex', () => {
         );
         state = BOARD_REFLEX.step(state, inputs);
       }
-      expect(state.round.index).toBe(REFLEX_ROUNDS - 1);
+      const best = Math.max(...state.fighters.map((one) => one.points));
+      expect(best >= REFLEX_TARGET || state.round.index === REFLEX_MAX_ROUNDS - 1).toBe(true);
       const ranking = BOARD_REFLEX.ranking(state);
       expect(ranking.flat().sort()).toEqual([...PLAYERS].sort());
       const first = ranking[0] ?? [];

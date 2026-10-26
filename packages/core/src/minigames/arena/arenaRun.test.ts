@@ -35,6 +35,27 @@ describe('an arena run', () => {
     expect(run.ranking?.flat().sort()).toEqual(['a', 'b', 'c']);
   });
 
+  test('breaks ties with dice during the result, which lasts as long as the rolls', () => {
+    // Trois humains qui n'appuient jamais : personne ne marque, ils finissent tous ex aequo.
+    const run = new ArenaRun('boardReflex', ['a', 'b', 'c'], new Map(), 1, 0);
+    for (const id of ['a', 'b', 'c']) run.setReady(id, 0);
+    const rng = new Rng(2);
+    let now = 0;
+    while (run.stage !== 'result') {
+      now = run.nextWakeAt() ?? now;
+      run.advance(now, rng);
+    }
+    const view = run.view(now);
+    expect(view.ranking).toEqual([['a', 'b', 'c']]);
+    expect(view.tieBreaks.length).toBeGreaterThan(0);
+    expect(view.tieBreaks[0]?.rolls.map(({ playerId }) => playerId)).toEqual(['a', 'b', 'c']);
+    // Le moteur reçoit un classement sans égalité : l'ordre départagé.
+    expect(run.ranking).toEqual(view.order?.map((id) => [id]) ?? null);
+    const shown = ARENA_TIMES.result + view.tieBreaks.length * ARENA_TIMES.tieRoll;
+    expect(run.isDone(now + shown - 1)).toBe(false);
+    expect(run.isDone(now + shown)).toBe(true);
+  });
+
   test('never trusts a client input', () => {
     const run = new ArenaRun('pawnSumo', ['a', 'b'], new Map([['b', 'easy' as const]]), 1, 0);
     run.setInput('a', { move: { x: 50, z: Number.NaN }, primary: 'yes' });

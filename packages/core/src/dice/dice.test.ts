@@ -71,4 +71,35 @@ describe('breakTies', () => {
       expect(middle).toEqual([...middle].sort((x, y) => y - x));
     }
   });
+
+  test('rerolls only the players still tied, for the places they share', () => {
+    for (let seed = 0; seed < 300; seed++) {
+      const { order, tieBreaks } = breakTies([['a'], ['b', 'c', 'd'], ['e', 'f']], new Rng(seed));
+      expect([...order].sort()).toEqual(['a', 'b', 'c', 'd', 'e', 'f']);
+      // Les 2e à 4e places restent aux b, c, d ; les deux dernières aux e, f.
+      expect(order.slice(1, 4).sort()).toEqual(['b', 'c', 'd']);
+      expect(order.slice(4).sort()).toEqual(['e', 'f']);
+      for (const { place, rolls } of tieBreaks) {
+        // Une relance se joue entre ceux qui étaient à égalité, pour leurs places à eux.
+        const shared = order.slice(place, place + rolls.length);
+        expect([...shared].sort()).toEqual(rolls.map(({ playerId }) => playerId).sort());
+      }
+    }
+  });
+
+  test('after three tied rolls, the next one is arranged so that nobody is tied any more', () => {
+    // Un hasard qui fait toujours 3 : trois lancers loyaux à égalité, puis un lancer arrangé.
+    const stuck = Object.assign(new Rng(1), {
+      int: (min: number, max: number) => Math.min(max, Math.max(min, 3)),
+    });
+    const { order, tieBreaks } = breakTies([['a', 'b', 'c']], stuck);
+    expect(tieBreaks).toHaveLength(4);
+    const last = tieBreaks.at(-1)?.rolls ?? [];
+    const totals = last.map(({ dice }) => dice[0] + dice[1]);
+    expect(new Set(totals).size).toBe(3);
+    for (const { dice } of last) for (const die of dice) expect(die).toBeGreaterThanOrEqual(1);
+    for (const { dice } of last) for (const die of dice) expect(die).toBeLessThanOrEqual(6);
+    const byTotal = (id: string) => totals[last.findIndex(({ playerId }) => playerId === id)] ?? 0;
+    expect(order.map(byTotal)).toEqual([...totals].sort((x, y) => y - x));
+  });
 });

@@ -100,17 +100,23 @@ function rollSpecial(rng: Rng, { kind, call }: SpecialDieUse): { value: number; 
   }
 }
 
+/** Un lancer de départage : les ex aequo qui se disputent la place `place` (0 : la première). */
 export type TieBreak = {
-  /** Lancers de deux dés des ex aequo, dans l'ordre d'origine. */
+  place: number;
+  /** Deux dés chacun, dans l'ordre d'origine des joueurs. */
   rolls: { playerId: string; dice: [number, number] }[];
-  /** Ex aequo restants après les dés, départagés au hasard par le Plateau. */
-  randomlyOrdered: string[][];
 };
 
+/** Les lancers loyaux ; encore à égalité après, le suivant est arrangé (sans que ça se voie). */
+const FAIR_TIE_ROLLS = 3;
+
 /**
- * Règle commune d'égalité : les ex aequo lancent deux dés chacun, le plus grand total
- * prend la place la plus haute ; si l'égalité persiste, le Plateau tranche au hasard.
- * `groups` va du meilleur au moins bon, chaque groupe contient des ex aequo.
+ * Règle commune d'égalité : les ex aequo lancent deux dés chacun, le plus grand total prend la
+ * place la plus haute. Ceux encore à égalité relancent entre eux, jusqu'à FAIR_TIE_ROLLS fois ;
+ * au-delà, le lancer suivant est arrangé : un ordre tiré au hasard, et des dés qui lui
+ * correspondent (aucune égalité possible). Chaque groupe ne se départage qu'entre ses places.
+ * `groups` va du meilleur au moins bon, chaque groupe contient des ex aequo. Les lancers sont
+ * dans l'ordre où les montrer.
  */
 export function breakTies(
   groups: readonly (readonly string[])[],
@@ -118,28 +124,50 @@ export function breakTies(
 ): { order: string[]; tieBreaks: TieBreak[] } {
   const order: string[] = [];
   const tieBreaks: TieBreak[] = [];
-
-  for (const group of groups) {
-    if (group.length === 1) {
-      order.push(...group);
-      continue;
+  const settle = (players: readonly string[], place: number, attempt: number) => {
+    if (players.length === 1) {
+      order.push(...players);
+      return;
     }
-    const rolls = group.map((playerId) => ({
-      playerId,
-      dice: [rng.int(1, 6), rng.int(1, 6)] as [number, number],
-    }));
+    const rolls = attempt > FAIR_TIE_ROLLS ? arrangedRolls(players, rng) : fairRolls(players, rng);
+    tieBreaks.push({ place, rolls });
     const byTotal = new Map<number, string[]>();
     for (const { playerId, dice } of rolls) {
       const total = dice[0] + dice[1];
       byTotal.set(total, [...(byTotal.get(total) ?? []), playerId]);
     }
-    const randomlyOrdered: string[][] = [];
+    let next = place;
     for (const total of [...byTotal.keys()].sort((a, b) => b - a)) {
       const tied = byTotal.get(total) ?? [];
-      if (tied.length > 1) randomlyOrdered.push(tied);
-      order.push(...(tied.length > 1 ? rng.shuffle(tied) : tied));
+      settle(tied, next, attempt + 1);
+      next += tied.length;
     }
-    tieBreaks.push({ rolls, randomlyOrdered });
+  };
+  let place = 0;
+  for (const group of groups) {
+    settle(group, place, 1);
+    place += group.length;
   }
   return { order, tieBreaks };
+}
+
+function fairRolls(players: readonly string[], rng: Rng): TieBreak['rolls'] {
+  return players.map((playerId) => ({ playerId, dice: [rng.int(1, 6), rng.int(1, 6)] }));
+}
+
+/** Un ordre au hasard, puis des totaux tous différents, du plus grand au plus petit. */
+function arrangedRolls(players: readonly string[], rng: Rng): TieBreak['rolls'] {
+  const ranked = rng.shuffle([...players]);
+  const totals = rng
+    .shuffle([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+    .slice(0, players.length)
+    .sort((a, b) => b - a);
+  const diceOf = new Map(
+    ranked.map((playerId, index) => {
+      const total = totals[index] ?? 2;
+      const first = rng.int(Math.max(1, total - 6), Math.min(6, total - 1));
+      return [playerId, [first, total - first] as [number, number]];
+    }),
+  );
+  return players.map((playerId) => ({ playerId, dice: diceOf.get(playerId) ?? [1, 1] }));
 }
