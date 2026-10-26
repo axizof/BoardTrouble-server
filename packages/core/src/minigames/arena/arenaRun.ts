@@ -1,6 +1,7 @@
 import type { BotLevel } from '../../bots/boardBot';
 import type { PlayerId } from '../../game/types';
 import type { Rng } from '../../random/rng';
+import { BOARD_REFLEX } from '../boardReflex/boardReflex';
 import type { MinigameId } from '../catalog';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
@@ -22,6 +23,7 @@ export const ARENAS = {
   pawnSumo: PAWN_SUMO,
   meltingPlatform: MELTING_PLATFORM,
   spinningBar: SPINNING_BAR,
+  boardReflex: BOARD_REFLEX,
 } satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
