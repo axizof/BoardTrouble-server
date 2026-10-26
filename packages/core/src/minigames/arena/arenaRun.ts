@@ -7,6 +7,7 @@ import type { MinigameId } from '../catalog';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
 import { SPINNING_BAR } from '../spinningBar/spinningBar';
+import { STACKER } from '../stacker/stacker';
 import {
   ARENA_STEP,
   type ArenaGame,
@@ -25,6 +26,7 @@ export const ARENAS = {
   meltingPlatform: MELTING_PLATFORM,
   spinningBar: SPINNING_BAR,
   boardReflex: BOARD_REFLEX,
+  stacker: STACKER,
 } satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
