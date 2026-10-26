@@ -20,11 +20,14 @@ export const BLOCK_HEIGHT = 0.5;
 export const SWING = 2.2;
 /**
  * Sa vitesse (m/s) : SPEED_START au premier bloc, SPEED_STEP de plus à chaque étage, jusqu'à
- * SPEED_MAX.
+ * SPEED_MAX, et à chaque étage un peu plus ou un peu moins (SPEED_SPREAD, au hasard de la
+ * partie, le même pour tout le monde au même étage) pour qu'on ne lâche pas en rythme.
+ * Plus douce (0,09 par étage), on montait à 20 blocs sans difficulté (retour de test).
  */
 const SPEED_START = 2.2;
-const SPEED_STEP = 0.09;
-const SPEED_MAX = 5.5;
+const SPEED_STEP = 0.15;
+const SPEED_MAX = 6.5;
+const SPEED_SPREAD = 0.12;
 /** Un bloc lâché presque pile (à cet écart près) se pose pile : rien n'est coupé. */
 export const PERFECT_SNAP = 0.07;
 /** Après un bloc posé, le suivant apparaît au bout de ce temps (secondes). */
@@ -44,6 +47,8 @@ export type StackFighter = {
   blocks: StackBlock[];
   /** Le pas où le bloc en mouvement est apparu, ou null (entre deux blocs, ou tour finie). */
   movingSince: number | null;
+  /** La vitesse du bloc en mouvement (m/s), tirée à son apparition. */
+  speed: number;
   /** Le pas où le prochain bloc apparaîtra (après une pose). */
   spawnAt: number | null;
   /** Un bloc lâché à côté : la tour est finie. */
@@ -68,8 +73,10 @@ export function towerHeight(fighter: StackFighter): number {
   return fighter.blocks.length - 1;
 }
 
-function speedAt(level: number): number {
-  return Math.min(SPEED_MAX, SPEED_START + (level - 1) * SPEED_STEP);
+/** La vitesse du bloc de cet étage, dans cette partie. */
+function speedAt(seed: number, level: number): number {
+  const spread = (hashUnit(`${seed}:speed:${level}`) * 2 - 1) * SPEED_SPREAD;
+  return Math.min(SPEED_MAX, SPEED_START + (level - 1) * SPEED_STEP) * (1 + spread);
 }
 
 /**
@@ -79,7 +86,7 @@ function speedAt(level: number): number {
 export function movingBlockX(fighter: StackFighter, tick: number): number | null {
   if (fighter.movingSince === null || fighter.isDone) return null;
   const level = fighter.blocks.length;
-  const travelled = (tick - fighter.movingSince) * ARENA_STEP * speedAt(level);
+  const travelled = (tick - fighter.movingSince) * ARENA_STEP * fighter.speed;
   const lap = SWING * 4;
   const along = travelled % lap;
   // Un aller (0 à 2 SWING) puis un retour : une onde en triangle.
@@ -101,6 +108,7 @@ function create(
       fellAt: null,
       blocks: [{ x: 0, width: BASE_WIDTH }],
       movingSince: 0,
+      speed: speedAt(seed, 1),
       spawnAt: null,
       isDone: false,
       placedAt: 0,
@@ -121,6 +129,7 @@ function step(state: StackState, inputs: Partial<Record<PlayerId, ArenaInput>>):
     next.held = pressing;
     if (next.spawnAt !== null && tick >= next.spawnAt) {
       next.movingSince = tick;
+      next.speed = speedAt(state.seed, next.blocks.length);
       next.spawnAt = null;
     }
     const x = movingBlockX(next, tick);
@@ -206,7 +215,7 @@ function ranking(state: StackState): PlayerId[][] {
  * bloc passe sur sa visée. Son
  * erreur ne change pas pendant qu'un même bloc va et vient.
  */
-const AIM_NOISE: Record<BotLevel, number> = { easy: 0.35, normal: 0.25, expert: 0.225 };
+const AIM_NOISE: Record<BotLevel, number> = { easy: 0.28, normal: 0.19, expert: 0.165 };
 /** Parfois, un raté de main : l'erreur est triplée (de quoi qu'un Expert perde aussi). */
 const SLIP: Record<BotLevel, number> = { easy: 0.08, normal: 0.06, expert: 0.06 };
 const SLIP_FACTOR = 3;
@@ -219,7 +228,7 @@ function botInput(state: StackState, player: PlayerId, level: BotLevel, _rng: Rn
   const top = me.blocks.at(-1);
   if (now === null || next === null || !top || me.held) return IDLE_INPUT;
   const height = me.blocks.length;
-  const haste = speedAt(height) / SPEED_START;
+  const haste = me.speed / SPEED_START;
   const key = `${state.seed}:${player}:${height}`;
   const slip = hashUnit(`${key}:slip`) < SLIP[level] ? SLIP_FACTOR : 1;
   const error = (hashUnit(key) * 2 - 1) * AIM_NOISE[level] * haste * slip;
