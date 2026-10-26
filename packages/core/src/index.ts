@@ -18,6 +18,7 @@ export * from './lobby/players';
 export * from './minigames/arena/arena';
 export * from './minigames/arena/arenaRun';
 export * from './minigames/arena/body';
+export * from './minigames/boardReflex/boardReflex';
 export * from './minigames/catalog';
 export * from './minigames/meltingPlatform/meltingPlatform';
 export * from './minigames/pawnSumo/pawnSumo';

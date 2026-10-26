@@ -72,7 +72,8 @@ describe('a game session', () => {
     }
     expect(waits.roll.length).toBeGreaterThan(10);
     expect(waits.choice.length).toBeGreaterThan(0);
-    expect(Math.min(...waits.roll)).toBeGreaterThanOrEqual(1600);
+    // À l'arrondi près : les heures de réveil d'une arène s'additionnent en pas de 1/30 s.
+    expect(Math.min(...waits.roll)).toBeGreaterThanOrEqual(1600 - 1e-6);
     expect(Math.min(...waits.choice)).toBeGreaterThan(Math.min(...waits.roll));
   });
 
