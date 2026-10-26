@@ -1,5 +1,5 @@
 import type { BotLevel } from '../../bots/boardBot';
-import { breakTies, type TieBreak } from '../../dice/dice';
+import { breakTies, TIE_ROLL_TIME, type TieBreak } from '../../dice/dice';
 import type { PlayerId } from '../../game/types';
 import type { Rng } from '../../random/rng';
 import { BOARD_REFLEX } from '../boardReflex/boardReflex';
@@ -49,7 +49,7 @@ export const ARENA_TIMES = {
   countdown: 3000,
   result: 6000,
   /** Chaque lancer de départage des ex aequo allonge le résultat de tant (il se montre). */
-  tieRoll: 2200,
+  tieRoll: TIE_ROLL_TIME,
 } as const;
 
 /**

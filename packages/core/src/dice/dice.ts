@@ -107,6 +107,13 @@ export type TieBreak = {
   rolls: { playerId: string; dice: [number, number] }[];
 };
 
+/**
+ * Le départage se montre (résultat d'un mini-jeu, tirage de l'ordre) : TIE_LEAD_TIME pour lire
+ * qu'il y a égalité, puis TIE_ROLL_TIME par lancer (millisecondes).
+ */
+export const TIE_LEAD_TIME = 1200;
+export const TIE_ROLL_TIME = 2200;
+
 /** Les lancers loyaux ; encore à égalité après, le suivant est arrangé (sans que ça se voie). */
 const FAIR_TIE_ROLLS = 3;
 
