@@ -23,6 +23,7 @@ export * from './minigames/catalog';
 export * from './minigames/meltingPlatform/meltingPlatform';
 export * from './minigames/pawnSumo/pawnSumo';
 export * from './minigames/spinningBar/spinningBar';
+export * from './minigames/stacker/stacker';
 export * from './random/rng';
 export * from './session/pacing';
 export * from './session/protocol';
