@@ -150,6 +150,10 @@ export class ArenaRun {
             return [id, input];
           }),
         );
+        // Une visée (un clic) ne vaut que pour un pas : la commande reste, pas le clic.
+        for (const [id, input] of this.#inputs) {
+          if (input.target != null) this.#inputs.set(id, { ...input, target: null });
+        }
         this.#state = this.#game.step(state, inputs);
       }
       if (this.#game.isOver(this.#state)) {

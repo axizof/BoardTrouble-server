@@ -59,6 +59,23 @@ describe('an arena run', () => {
     expect(run.isDone(now + shown)).toBe(true);
   });
 
+  test('a click counts for one step only, the rest of the input stays', () => {
+    const run = new ArenaRun('cardMemory', ['a'], new Map(), 1, 0);
+    run.setReady('a', 0);
+    run.setInput('a', { move: { x: 0, z: 0 }, primary: false, target: 4 });
+    const step = 1000 / 30;
+    run.advance(ARENA_TIMES.countdown + step, new Rng(1));
+    const flipped = run.view(0, { type: 'player', playerId: 'a' });
+    if (flipped.minigame !== 'cardMemory') throw new Error('Mémoire attendue');
+    expect(flipped.arena.fighters[0]?.up).toEqual([4]);
+    // Des pas plus tard, toujours la même carte, et rien d'autre : le clic n'a pas duré.
+    run.advance(ARENA_TIMES.countdown + step * 10, new Rng(1));
+    const later = run.view(0, { type: 'player', playerId: 'a' });
+    if (later.minigame !== 'cardMemory') throw new Error('Mémoire attendue');
+    expect(later.arena.fighters[0]?.up).toEqual([4]);
+    expect(later.arena.fighters[0]?.flippedAt).toBe(flipped.arena.fighters[0]?.flippedAt);
+  });
+
   test('never trusts a client input', () => {
     const run = new ArenaRun('pawnSumo', ['a', 'b'], new Map([['b', 'easy' as const]]), 1, 0);
     run.setInput('a', { move: { x: 50, z: Number.NaN }, primary: 'yes' });
