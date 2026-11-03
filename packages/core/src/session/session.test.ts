@@ -87,7 +87,7 @@ describe('a game session', () => {
       for (let wake = session.nextWakeAt(); wake !== null && !ranked; wake = session.nextWakeAt()) {
         const events = session.tick(wake) ?? [];
         drawn ??= events.find((event) => event.type === 'minigameDrawn');
-        const message = session.arenaMessage(wake);
+        const message = session.arenaMessage({ type: 'spectator' }, wake);
         if (message.type === 'arena' && message.run) arenaSeen = true;
         ranked = events.find((event) => event.type === 'minigameRanked');
       }

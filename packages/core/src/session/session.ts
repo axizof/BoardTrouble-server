@@ -216,9 +216,12 @@ export class GameSession {
     this.#arena?.setReady(player, now);
   }
 
-  /** Le message du mini-jeu d'arène en cours (null s'il n'y en a pas). Tout y est public. */
-  arenaMessage(now: number): HostMessage {
-    return { type: 'arena', run: this.#arena?.view(now) ?? null };
+  /**
+   * Le message du mini-jeu d'arène en cours pour `viewer` (null s'il n'y en a pas) : tout y est
+   * public, sauf ce que le mini-jeu cache à ce joueur.
+   */
+  arenaMessage(viewer: Viewer, now: number): HostMessage {
+    return { type: 'arena', run: this.#arena?.view(now, viewer) ?? null };
   }
 
   get isPlayingArena(): boolean {

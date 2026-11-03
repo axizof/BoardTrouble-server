@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import type { Viewer } from '../../game/views';
 import { Rng } from '../../random/rng';
 import { ARENA_TIMES, ArenaRun } from './arenaRun';
+
+const SPECTATOR: Viewer = { type: 'spectator' };
 
 const bots = new Map([
   ['b', 'normal' as const],
@@ -10,12 +13,12 @@ const bots = new Map([
 describe('an arena run', () => {
   test('waits for the human during the intro as long as needed, then counts down', () => {
     const run = new ArenaRun('pawnSumo', ['a', 'b', 'c'], bots, 1, 0);
-    expect(run.view(0).ready.sort()).toEqual(['b', 'c']);
+    expect(run.view(0, SPECTATOR).ready.sort()).toEqual(['b', 'c']);
     // Pas de limite : l'hôte n'a rien à faire tant que le joueur n'est pas prêt.
     expect(run.nextWakeAt()).toBeNull();
     run.advance(600_000, new Rng(1));
     expect(run.stage).toBe('intro');
-    expect(run.view(600_000).stageEndsIn).toBeNull();
+    expect(run.view(600_000, SPECTATOR).stageEndsIn).toBeNull();
     run.setReady('a', 1000);
     expect(run.stage).toBe('countdown');
     expect(run.nextWakeAt()).toBe(1000 + ARENA_TIMES.countdown);
@@ -45,7 +48,7 @@ describe('an arena run', () => {
       now = run.nextWakeAt() ?? now;
       run.advance(now, rng);
     }
-    const view = run.view(now);
+    const view = run.view(now, SPECTATOR);
     expect(view.ranking).toEqual([['a', 'b', 'c']]);
     expect(view.tieBreaks.length).toBeGreaterThan(0);
     expect(view.tieBreaks[0]?.rolls.map(({ playerId }) => playerId)).toEqual(['a', 'b', 'c']);
@@ -62,7 +65,7 @@ describe('an arena run', () => {
     run.setInput('b', { move: { x: 1, z: 0 }, primary: true, secondary: false });
     run.setReady('a', 0);
     run.advance(ARENA_TIMES.countdown + 200, new Rng(1));
-    const view = run.view(0);
+    const view = run.view(0, SPECTATOR);
     if (view.minigame !== 'pawnSumo') throw new Error('Sumo attendu');
     const a = view.arena.fighters.find((fighter) => fighter.id === 'a');
     expect(Math.hypot(a?.vx ?? 0, a?.vz ?? 0)).toBeLessThan(5);

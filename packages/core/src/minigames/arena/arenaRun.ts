@@ -1,8 +1,10 @@
 import type { BotLevel } from '../../bots/boardBot';
 import { breakTies, TIE_ROLL_TIME, type TieBreak } from '../../dice/dice';
 import type { PlayerId } from '../../game/types';
+import type { Viewer } from '../../game/views';
 import type { Rng } from '../../random/rng';
 import { BOARD_REFLEX } from '../boardReflex/boardReflex';
+import { CARD_MEMORY } from '../cardMemory/cardMemory';
 import type { MinigameId } from '../catalog';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
@@ -27,6 +29,7 @@ export const ARENAS = {
   spinningBar: SPINNING_BAR,
   boardReflex: BOARD_REFLEX,
   stacker: STACKER,
+  cardMemory: CARD_MEMORY,
 } satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
@@ -170,7 +173,8 @@ export class ArenaRun {
     return this.#order?.map((id) => [id]) ?? null;
   }
 
-  view(now: number): ArenaRunView {
+  /** Ce que voit `viewer` de la partie : tout, sauf ce que le mini-jeu cache (`viewFor`). */
+  view(now: number, viewer: Viewer): ArenaRunView {
     // L'état vient toujours du jeu de ce mini-jeu (ARENAS[minigame]) : la paire est juste, ce
     // que le typage ne peut pas suivre à travers `#game`.
     return {
@@ -182,7 +186,7 @@ export class ArenaRun {
           : Math.max(0, this.#stageAt - now),
       players: this.players,
       ready: [...this.#ready],
-      arena: this.#state,
+      arena: this.#game.viewFor?.(this.#state, viewer) ?? this.#state,
       ranking: this.#ranking,
       tieBreaks: this.#tieBreaks,
       order: this.#order,
