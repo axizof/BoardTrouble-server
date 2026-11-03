@@ -7,15 +7,21 @@ import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT } from '../aren
 // Mémoire des cartes (02-mini-jeux.md, fiche 10) : chacun sa grille de cartes face cachée, les
 // mêmes paires pour tous, placées autrement. On retourne deux cartes : une paire reste face
 // visible, sinon elles se recachent. Le premier à tout trouver gagne, ou le plus de paires en
-// 60 s. On vise une carte à la souris, ou au curseur (flèches, stick) puis Espace / A. Tout se
+// 60 s. Une erreur se paie : on ne peut plus rien retourner pendant MISTAKE_LOCK secondes.
+// On vise une carte à la souris, ou au curseur (flèches, stick) puis Espace / A. Tout se
 // joue chez l'hôte : un joueur ne reçoit la face d'une carte qu'une fois retournée (`viewFor`).
 
 export const MEMORY_COLUMNS = 5;
 export const MEMORY_ROWS = 4;
 export const MEMORY_PAIRS = (MEMORY_COLUMNS * MEMORY_ROWS) / 2;
 export const MEMORY_TIME_LIMIT = 60;
-/** Deux cartes qui ne vont pas ensemble restent visibles ce temps-là (ou jusqu'à la suivante). */
+/** Deux cartes qui ne vont pas ensemble restent visibles ce temps-là. */
 export const MISMATCH_SHOWN = 0.8;
+/**
+ * Après une erreur, on ne retourne plus rien pendant ce temps (secondes) : retourner au hasard
+ * coûte (retour de test).
+ */
+export const MISTAKE_LOCK = 2;
 /** Une face cachée, dans ce qu'on envoie aux joueurs. */
 export const HIDDEN_FACE = -1;
 /** Le stick ou les flèches ne déplacent le curseur qu'au-delà de cette inclinaison. */
@@ -32,13 +38,14 @@ export type MemoryBoard = {
   up: number[];
   /** Le pas où deux cartes qui ne vont pas ensemble se recachent, ou null. */
   hideAt: number | null;
+  /** Après une erreur, le pas jusqu'où il ne peut plus rien retourner, ou null. */
+  lockedUntil: number | null;
   cursor: number;
   /** La direction tenue au pas précédent : le curseur avance d'une case par appui. */
   heldDirection: { x: number; z: number };
   held: boolean;
   pairs: number;
-  /** Le pas de la dernière paire trouvée, et celui où tout a été trouvé (ou null). */
-  lastPairAt: number;
+  /** Le pas où tout a été trouvé, ou null. */
   finishedAt: number | null;
   /** Le pas où chaque carte a été vue pour la dernière fois (ce dont un bot peut se souvenir). */
   seenAt: (number | null)[];
@@ -77,11 +84,11 @@ function freshBoard(id: PlayerId, faces: number[]): MemoryBoard {
     matched: faces.map(() => false),
     up: [],
     hideAt: null,
+    lockedUntil: null,
     cursor: 0,
     heldDirection: { x: 0, z: 0 },
     held: false,
     pairs: 0,
-    lastPairAt: 0,
     finishedAt: null,
     seenAt: faces.map(() => null),
     flippedAt: 0,
@@ -112,6 +119,7 @@ function play(board: MemoryBoard, input: ArenaInput, tick: number): MemoryBoard 
     next.up = [];
     next.hideAt = null;
   }
+  if (next.lockedUntil !== null && tick >= next.lockedUntil) next.lockedUntil = null;
   const isPress = input.primary && !board.held;
   next.held = input.primary;
   const direction = {
@@ -129,18 +137,17 @@ function play(board: MemoryBoard, input: ArenaInput, tick: number): MemoryBoard 
   const target = input.target;
   const isAimed = typeof target === 'number' && target < next.faces.length;
   if (isAimed) next.cursor = target;
-  if (next.finishedAt !== null || !(isAimed || isPress)) return next;
+  const canFlip = next.finishedAt === null && next.lockedUntil === null;
+  if (!canFlip || !(isAimed || isPress)) return next;
   return flip(next, next.cursor, tick);
 }
 
-/** Il retourne la carte `card` : une paire reste, sinon les deux se recachent un peu après. */
+/**
+ * Il retourne la carte `card` : une paire reste ; sinon les deux se recachent un peu après, et
+ * il est bloqué un moment.
+ */
 function flip(board: MemoryBoard, card: number, tick: number): MemoryBoard {
   if (board.matched[card] || board.up.includes(card)) return board;
-  // Deux cartes encore visibles : elles se recachent tout de suite, on n'attend pas.
-  if (board.up.length >= 2) {
-    board.up = [];
-    board.hideAt = null;
-  }
   board.up.push(card);
   board.seenAt[card] = tick;
   board.flippedAt = tick;
@@ -148,13 +155,13 @@ function flip(board: MemoryBoard, card: number, tick: number): MemoryBoard {
   if (first === undefined || second === undefined) return board;
   if (board.faces[first] !== board.faces[second]) {
     board.hideAt = tick + Math.round(MISMATCH_SHOWN / ARENA_STEP);
+    board.lockedUntil = tick + Math.round(MISTAKE_LOCK / ARENA_STEP);
     return board;
   }
   board.matched[first] = true;
   board.matched[second] = true;
   board.up = [];
   board.pairs += 1;
-  board.lastPairAt = tick;
   if (board.pairs === MEMORY_PAIRS) board.finishedAt = tick;
   return board;
 }
@@ -184,18 +191,19 @@ function isOver(state: MemoryState): boolean {
 }
 
 /**
- * Le classement : le plus de paires, puis le premier à avoir tout trouvé (ou, à paires égales
- * sans avoir fini, le premier arrivé à ce nombre de paires) ; sinon ex aequo.
+ * Le classement : le plus de paires ; entre ceux qui ont tout trouvé, le plus rapide. À paires
+ * égales sans avoir fini, ex aequo : les dés les départagent (rien de caché).
  */
 function ranking(state: MemoryState): PlayerId[][] {
-  const reachedAt = (board: MemoryBoard) => board.finishedAt ?? board.lastPairAt;
+  const finishedAt = (board: MemoryBoard) => board.finishedAt ?? Number.POSITIVE_INFINITY;
   const sorted = [...state.fighters].sort(
-    (a, b) => b.pairs - a.pairs || reachedAt(a) - reachedAt(b),
+    (a, b) => b.pairs - a.pairs || finishedAt(a) - finishedAt(b),
   );
   const groups: PlayerId[][] = [];
   sorted.forEach((board, index) => {
     const before = sorted[index - 1];
-    const isTied = before && before.pairs === board.pairs && reachedAt(before) === reachedAt(board);
+    const isTied =
+      before && before.pairs === board.pairs && finishedAt(before) === finishedAt(board);
     if (isTied) groups.at(-1)?.push(board.id);
     else groups.push([board.id]);
   });
@@ -233,8 +241,8 @@ function botInput(state: MemoryState, player: PlayerId, level: BotLevel, _rng: R
   if (!board || board.finishedAt !== null) return IDLE_INPUT;
   const pause = THINK[level] * (0.8 + 0.4 * hashUnit(`${state.seed}:${player}:${board.flippedAt}`));
   if ((state.tick - board.flippedAt) * ARENA_STEP < pause) return IDLE_INPUT;
-  // Deux cartes qui ne vont pas ensemble : il les regarde le temps qu'elles se recachent.
-  if (board.up.length >= 2) return IDLE_INPUT;
+  // Bloqué après une erreur (il regarde les deux cartes le temps qu'elles se recachent).
+  if (board.lockedUntil !== null || board.up.length >= 2) return IDLE_INPUT;
   const remembers = (card: number) => {
     const seen = board.seenAt[card];
     return (

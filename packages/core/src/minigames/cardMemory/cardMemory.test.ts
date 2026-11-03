@@ -10,6 +10,7 @@ import {
   MEMORY_TIME_LIMIT,
   type MemoryState,
   MISMATCH_SHOWN,
+  MISTAKE_LOCK,
 } from './cardMemory';
 
 const board = (state: MemoryState, id = 'a') => {
@@ -55,11 +56,18 @@ describe('card memory', () => {
     expect(board(later).pairs).toBe(0);
   });
 
-  test('a third card hides the two different ones at once, without waiting', () => {
+  test('after a mistake, no card can be flipped for two seconds', () => {
     const state = CARD_MEMORY.create(['a'], { practice: false, seed: 1 });
-    const { first, other } = cardsOf(state);
-    const third = board(state).faces.findIndex((_, card) => card !== first && card !== other);
-    expect(board(flipAll(state, [first, other, third])).up).toEqual([third]);
+    const { first, twin, other } = cardsOf(state);
+    const missed = flipAll(state, [first, other]);
+    const lock = Math.round(MISTAKE_LOCK / ARENA_STEP);
+    expect(board(missed).lockedUntil).toBe(missed.tick + lock);
+    // Pendant le blocage, viser une carte ne fait rien ; après, si.
+    let later = missed;
+    for (let i = 0; i < lock - 2; i++) later = CARD_MEMORY.step(later, {});
+    expect(board(flipAll(later, [twin])).up).toEqual([]);
+    for (let i = 0; i < 3; i++) later = CARD_MEMORY.step(later, {});
+    expect(board(flipAll(later, [twin])).up).toEqual([twin]);
   });
 
   test('the cursor moves one card per press, and the main button flips the card under it', () => {
@@ -94,7 +102,7 @@ describe('card memory', () => {
     expect(mine.seed).toBe(0);
   });
 
-  test('the first to find everything wins; otherwise the most pairs in 60 seconds', () => {
+  test('the first to find everything wins; then the most pairs, ties for the dice', () => {
     let state = CARD_MEMORY.create(['a', 'b'], { practice: false, seed: 1 });
     const { faces } = board(state);
     const order = faces
@@ -105,6 +113,12 @@ describe('card memory', () => {
     expect(board(state).finishedAt).not.toBeNull();
     expect(CARD_MEMORY.isOver(state)).toBe(false);
     expect(CARD_MEMORY.ranking(state)).toEqual([['a'], ['b']]);
+    // Deux grilles inachevées au même nombre de paires : ex aequo, quelle que soit l'heure.
+    const unfinished = {
+      ...state,
+      fighters: state.fighters.map((one) => ({ ...one, pairs: 4, finishedAt: null })),
+    };
+    expect(CARD_MEMORY.ranking(unfinished)).toEqual([['a', 'b']]);
     while (!CARD_MEMORY.isOver(state)) state = CARD_MEMORY.step(state, {});
     expect(state.tick * ARENA_STEP).toBeCloseTo(MEMORY_TIME_LIMIT, 1);
   });
