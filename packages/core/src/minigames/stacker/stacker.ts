@@ -28,6 +28,21 @@ const SPEED_START = 2.2;
 const SPEED_STEP = 0.15;
 const SPEED_MAX = 6.5;
 const SPEED_SPREAD = 0.12;
+/**
+ * Les étages spéciaux, les mêmes pour tout le monde au même étage (au hasard de la partie) : le
+ * premier à FIRST_SPECIAL, puis un tous les 3 à 5 étages. Ils ne rapportent rien de plus, ils
+ * corsent la montée (retour de test : sinon on monte en rythme). `fast` : le bloc va FAST_FACTOR
+ * fois plus vite (jusqu'à FAST_MAX) ; `pulse` : il alterne lent et rapide pendant sa course,
+ * sa vitesse oscillant de plus ou moins PULSE_DEPTH toutes les PULSE_PERIOD secondes.
+ */
+export type StackSpecial = 'fast' | 'pulse';
+const FIRST_SPECIAL = 5;
+const SPECIAL_GAP = 3;
+const SPECIAL_GAP_SPREAD = 3;
+const FAST_FACTOR = 1.4;
+const FAST_MAX = 8;
+const PULSE_DEPTH = 0.7;
+const PULSE_PERIOD = 1;
 /** Un bloc lâché presque pile (à cet écart près) se pose pile : rien n'est coupé. */
 export const PERFECT_SNAP = 0.07;
 /** Après un bloc posé, le suivant apparaît au bout de ce temps (secondes). */
@@ -47,8 +62,10 @@ export type StackFighter = {
   blocks: StackBlock[];
   /** Le pas où le bloc en mouvement est apparu, ou null (entre deux blocs, ou tour finie). */
   movingSince: number | null;
-  /** La vitesse du bloc en mouvement (m/s), tirée à son apparition. */
+  /** La vitesse du bloc en mouvement (m/s, en moyenne), tirée à son apparition. */
   speed: number;
+  /** Le bloc en mouvement est celui d'un étage spécial, ou null. */
+  special: StackSpecial | null;
   /** Le pas où le prochain bloc apparaîtra (après une pose). */
   spawnAt: number | null;
   /** Un bloc lâché à côté : la tour est finie. */
@@ -79,14 +96,36 @@ function speedAt(seed: number, level: number): number {
   return Math.min(SPEED_MAX, SPEED_START + (level - 1) * SPEED_STEP) * (1 + spread);
 }
 
+/** L'étage `level` est-il spécial dans cette partie, et comment. */
+export function specialAt(seed: number, level: number): StackSpecial | null {
+  let at = FIRST_SPECIAL;
+  while (at < level) {
+    at += SPECIAL_GAP + Math.floor(hashUnit(`${seed}:special:${at}`) * SPECIAL_GAP_SPREAD);
+  }
+  if (at !== level) return null;
+  return hashUnit(`${seed}:special-kind:${level}`) < 0.5 ? 'fast' : 'pulse';
+}
+
+/** Le bloc de l'étage `level` : sa vitesse moyenne et s'il est spécial. */
+function blockAt(seed: number, level: number): { speed: number; special: StackSpecial | null } {
+  const special = specialAt(seed, level);
+  const speed = speedAt(seed, level);
+  return { speed: special === 'fast' ? Math.min(FAST_MAX, speed * FAST_FACTOR) : speed, special };
+}
+
 /**
  * Où est le bloc en mouvement à ce pas (son milieu, sur l'axe), ou null. Il part d'un côté (un
- * étage sur deux de l'autre) et fait l'aller-retour entre -SWING et +SWING.
+ * étage sur deux de l'autre) et fait l'aller-retour entre -SWING et +SWING ; un bloc `pulse`
+ * avance par à-coups (sa vitesse oscille autour de sa moyenne, sans jamais s'arrêter).
  */
 export function movingBlockX(fighter: StackFighter, tick: number): number | null {
   if (fighter.movingSince === null || fighter.isDone) return null;
   const level = fighter.blocks.length;
-  const travelled = (tick - fighter.movingSince) * ARENA_STEP * fighter.speed;
+  const time = (tick - fighter.movingSince) * ARENA_STEP;
+  const wave = (2 * Math.PI) / PULSE_PERIOD;
+  const pulse =
+    fighter.special === 'pulse' ? (PULSE_DEPTH / wave) * (1 - Math.cos(wave * time)) : 0;
+  const travelled = (time + pulse) * fighter.speed;
   const lap = SWING * 4;
   const along = travelled % lap;
   // Un aller (0 à 2 SWING) puis un retour : une onde en triangle.
@@ -108,7 +147,7 @@ function create(
       fellAt: null,
       blocks: [{ x: 0, width: BASE_WIDTH }],
       movingSince: 0,
-      speed: speedAt(seed, 1),
+      ...blockAt(seed, 1),
       spawnAt: null,
       isDone: false,
       placedAt: 0,
@@ -129,7 +168,7 @@ function step(state: StackState, inputs: Partial<Record<PlayerId, ArenaInput>>):
     next.held = pressing;
     if (next.spawnAt !== null && tick >= next.spawnAt) {
       next.movingSince = tick;
-      next.speed = speedAt(state.seed, next.blocks.length);
+      Object.assign(next, blockAt(state.seed, next.blocks.length));
       next.spawnAt = null;
     }
     const x = movingBlockX(next, tick);

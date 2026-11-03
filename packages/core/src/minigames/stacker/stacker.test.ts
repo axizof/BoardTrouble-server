@@ -9,6 +9,7 @@ import {
   STACK_TIME_LIMIT,
   STACKER,
   type StackState,
+  specialAt,
   towerHeight,
 } from './stacker';
 
@@ -137,6 +138,57 @@ describe('stacker', () => {
     const spawned = STACKER.step(ready, {});
     expect(fighter(spawned, 'a').speed).toBe(fighter(spawned, 'b').speed);
     expect(fighter(spawned, 'a').speed).toBeCloseTo(a[5] ?? 0);
+  });
+
+  test('some floors are special, every 3 to 5 floors from the 5th, the same for everyone', () => {
+    const kinds = new Set<string>();
+    for (let seed = 1; seed <= 20; seed++) {
+      const floors = Array.from({ length: 40 }, (_, level) => specialAt(seed, level + 1));
+      const special = floors.flatMap((kind, index) => (kind ? [index + 1] : []));
+      expect(special[0]).toBe(5);
+      special.slice(1).forEach((level, index) => {
+        const gap = level - (special[index] ?? 0);
+        expect(gap).toBeGreaterThanOrEqual(3);
+        expect(gap).toBeLessThanOrEqual(5);
+      });
+      for (const kind of floors) if (kind) kinds.add(kind);
+    }
+    expect([...kinds].sort()).toEqual(['fast', 'pulse']);
+  });
+
+  test('a fast floor moves faster; a pulsing one goes slow and fast in turn, never stopping', () => {
+    const moving = (special: 'fast' | 'pulse' | null, speed = 3) => ({
+      ...fighter(STACKER.create(['a'], { practice: false, seed: 1 })),
+      movingSince: 0,
+      speed,
+      special,
+    });
+    // Sur un quart de seconde, ce qu'il parcourt (avant d'atteindre le bout de sa course).
+    const covered = (one: ReturnType<typeof moving>, from: number) =>
+      Math.abs((movingBlockX(one, from + 7) ?? 0) - (movingBlockX(one, from) ?? 0));
+    const pulse = moving('pulse');
+    const stretches = [0, 7, 14, 21].map((from) => covered(pulse, from));
+    expect(Math.max(...stretches)).toBeGreaterThan(Math.min(...stretches) * 2);
+    expect(Math.min(...stretches)).toBeGreaterThan(0);
+    // Le bloc d'un étage rapide est plus vif que celui d'un étage ordinaire.
+    let seed = 1;
+    while (specialAt(seed, 5) !== 'fast') seed++;
+    let state = STACKER.create(['a'], { practice: false, seed });
+    const before = fighter(state).speed;
+    state = {
+      ...state,
+      fighters: [
+        {
+          ...fighter(state),
+          blocks: Array.from({ length: 5 }, () => ({ x: 0, width: BASE_WIDTH })),
+          movingSince: null,
+          spawnAt: 1,
+        },
+      ],
+    };
+    state = STACKER.step(state, {});
+    expect(fighter(state).special).toBe('fast');
+    expect(fighter(state).speed).toBeGreaterThan(before * 1.5);
   });
 
   test('the clock stops the match after 45 seconds', () => {
