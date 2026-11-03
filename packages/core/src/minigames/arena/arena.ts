@@ -1,5 +1,6 @@
 import type { BotLevel } from '../../bots/boardBot';
 import type { PlayerId } from '../../game/types';
+import type { Viewer } from '../../game/views';
 import type { Rng } from '../../random/rng';
 
 // Les mini-jeux d'arène (01-architecture.md, section 4 : "arène en temps réel") : l'hôte fait
@@ -12,9 +13,15 @@ export const ARENA_STEP = 1 / 30;
 /**
  * Les commandes d'un joueur, communes à toutes les arènes (02-mini-jeux.md, section 1) :
  * déplacement (flèches, ZQSD ou stick gauche, longueur 0 à 1), action principale (Espace / A)
- * et action secondaire (Maj / B), tenues ou non.
+ * et action secondaire (Maj / B), tenues ou non, et ce qu'il vient de viser à la souris
+ * (l'élément cliqué, pour les mini-jeux où l'on choisit : une carte...), ou null.
  */
-export type ArenaInput = { move: { x: number; z: number }; primary: boolean; secondary: boolean };
+export type ArenaInput = {
+  move: { x: number; z: number };
+  primary: boolean;
+  secondary: boolean;
+  target?: number | null;
+};
 
 export const IDLE_INPUT: ArenaInput = { move: { x: 0, z: 0 }, primary: false, secondary: false };
 
@@ -39,7 +46,16 @@ export type ArenaGame<State extends ArenaState> = {
   timeLeft(state: State): number | null;
   /** Le classement complet, du premier au dernier ; les ex aequo partagent un groupe. */
   ranking(state: State): PlayerId[][];
+  /**
+   * Ce que ce joueur (ou un spectateur) a le droit de voir de l'état, pour les mini-jeux qui
+   * cachent quelque chose (01-architecture.md, section 4 : "le serveur garde la solution").
+   * Sans elle, tout est public.
+   */
+  viewFor?(state: State, viewer: Viewer): State;
 };
+
+/** La plus grande visée acceptée (un indice d'élément). */
+const MAX_TARGET = 255;
 
 /** Remet une commande reçue d'un client dans les bornes (le client n'est jamais cru). */
 export function sanitizeInput(input: unknown): ArenaInput {
@@ -56,5 +72,14 @@ export function sanitizeInput(input: unknown): ArenaInput {
     x /= length;
     z /= length;
   }
-  return { move: { x, z }, primary: raw.primary === true, secondary: raw.secondary === true };
+  const target =
+    typeof raw.target === 'number' && Number.isInteger(raw.target) && raw.target >= 0
+      ? Math.min(raw.target, MAX_TARGET)
+      : null;
+  return {
+    move: { x, z },
+    primary: raw.primary === true,
+    secondary: raw.secondary === true,
+    target,
+  };
 }
