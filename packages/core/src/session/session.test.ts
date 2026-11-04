@@ -102,28 +102,36 @@ describe('a game session', () => {
   });
 
   test('plays a placeholder minigame as soon as its intro has been read', () => {
-    for (let seed = 1; seed < 200; seed++) {
+    // Toutes les manches sont des arènes : on joue jusqu'au premier mini-jeu encore provisoire
+    // (duel, 1 contre tous, porte d'adresse, finale).
+    const placeholderSteps = ['awaitDuelResult', 'awaitOneVsAllResult', 'awaitSkillGate'];
+    for (let seed = 1; seed < 20; seed++) {
       const { session } = start({ ...BOTS, ana: 'human' }, seed);
       const ana = { type: 'player', playerId: 'ana' } as const;
-      let now = 0;
-      for (let i = 0; i < 5000; i++) {
+      for (let now = 0, i = 0; i < 400_000; i++) {
         const snapshot = session.snapshot(ana, now);
         const phase = snapshot.type === 'snapshot' ? snapshot.state.phase : null;
-        if (phase?.type === 'minigame') break;
-        now = session.nextWakeAt() ?? now;
+        if (phase === null) break;
+        const isPlaceholder =
+          (phase.type === 'turn' && placeholderSteps.includes(phase.step.type)) ||
+          ((phase.type === 'minigame' || phase.type === 'finale') &&
+            !isArenaMinigame(phase.minigame));
+        if (isPlaceholder) {
+          // Sans "Suivant", le résultat attend le temps d'un mini-jeu provisoire ; Ana a lu : tout de suite.
+          const waiting = session.nextWakeAt() ?? 0;
+          session.minigameReady('ana');
+          const ready = session.nextWakeAt() ?? 0;
+          expect(ready).toBeLessThan(waiting);
+          expect(session.tick(ready)).not.toBeNull();
+          return;
+        }
+        // Une arène attend le "Prêt" d'Ana à sa présentation ; elle joue ensuite sans rien toucher.
+        if (session.nextWakeAt() === null) session.arenaReady('ana', now);
+        const wake = session.nextWakeAt();
+        if (wake === null) break;
+        now = wake;
         session.tick(now);
       }
-      const snapshot = session.snapshot(ana, now);
-      const phase = snapshot.type === 'snapshot' ? snapshot.state.phase : null;
-      if (phase?.type !== 'minigame' || isArenaMinigame(phase.minigame)) continue;
-      // Sans "Suivant", le résultat attend le temps d'un mini-jeu provisoire ; Ana a lu : tout de suite.
-      const waiting = session.nextWakeAt() ?? 0;
-      session.minigameReady('ana');
-      const ready = session.nextWakeAt() ?? 0;
-      expect(ready).toBeLessThan(waiting);
-      const events = session.tick(ready) ?? [];
-      expect(events.map((event) => event.type)).toContain('minigameRanked');
-      return;
     }
     throw new Error('Aucune partie ne tire de mini-jeu provisoire');
   });

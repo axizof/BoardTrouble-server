@@ -8,6 +8,7 @@ import { CARD_MEMORY } from '../cardMemory/cardMemory';
 import type { MinigameId } from '../catalog';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
+import { RHYTHM_TUG } from '../rhythmTugOfWar/rhythmTugOfWar';
 import { SECRET_AUCTION } from '../secretAuction/secretAuction';
 import { SPINNING_BAR } from '../spinningBar/spinningBar';
 import { STACKER } from '../stacker/stacker';
@@ -34,6 +35,7 @@ export const ARENAS = {
   cardMemory: CARD_MEMORY,
   secretAuction: SECRET_AUCTION,
   uniqueStairs: UNIQUE_STAIRS,
+  rhythmTugOfWar: RHYTHM_TUG,
 } satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
