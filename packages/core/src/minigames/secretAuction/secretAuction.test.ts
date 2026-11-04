@@ -42,6 +42,7 @@ describe('secret auction', () => {
     const revealed = bidAll(state, { a: 4, b: 6, c: 2 });
     expect(revealed.phase).toBe('reveal');
     expect(revealed.winner).toBe('b');
+    expect(revealed.wins).toEqual(['b']);
     expect(bidder(revealed, 'b').points).toBe(value);
     expect(PLAYERS.map((id) => bidder(revealed, id).tokens)).toEqual([
       AUCTION_TOKENS - 4,

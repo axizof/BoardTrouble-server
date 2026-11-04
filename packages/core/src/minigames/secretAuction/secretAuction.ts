@@ -56,6 +56,8 @@ export type AuctionState = {
   phaseAt: number;
   /** Qui a remporté le dernier lot révélé (null : personne). */
   winner: PlayerId | null;
+  /** Qui a remporté chaque lot déjà joué, dans l'ordre (null : personne). */
+  wins: (PlayerId | null)[];
   fighters: Bidder[];
 };
 
@@ -99,6 +101,7 @@ function create(
     phase: 'bidding',
     phaseAt: 0,
     winner: null,
+    wins: [],
     fighters: players.map(freshBidder),
   };
 }
@@ -142,7 +145,8 @@ function reveal(state: AuctionState, fighters: Bidder[], tick: number): AuctionS
     lastBid: bidder.bid,
     isLocked: true,
   }));
-  return { ...state, tick, phase: 'reveal', phaseAt: tick, winner, fighters: paid };
+  const wins = [...state.wins, winner];
+  return { ...state, tick, phase: 'reveal', phaseAt: tick, winner, wins, fighters: paid };
 }
 
 /** Le lot suivant (au bac à sable, une nouvelle série recommence quand tout est passé). */
@@ -160,6 +164,7 @@ function nextLot(state: AuctionState, tick: number): AuctionState {
     tick,
     lots: isNewSeries ? shuffledLots(state.seed, tick) : state.lots,
     lot: isNewSeries ? 0 : state.lot + 1,
+    wins: isNewSeries ? [] : state.wins,
     phase: 'bidding',
     phaseAt: tick,
     winner: null,
