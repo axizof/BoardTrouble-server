@@ -23,6 +23,7 @@ export * from './minigames/cardMemory/cardMemory';
 export * from './minigames/catalog';
 export * from './minigames/meltingPlatform/meltingPlatform';
 export * from './minigames/pawnSumo/pawnSumo';
+export * from './minigames/secretAuction/secretAuction';
 export * from './minigames/spinningBar/spinningBar';
 export * from './minigames/stacker/stacker';
 export * from './random/rng';
