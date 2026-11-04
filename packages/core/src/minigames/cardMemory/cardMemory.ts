@@ -233,8 +233,8 @@ function viewFor(state: MemoryState, viewer: Viewer): MemoryState {
  * pour chaque fois qu'il l'a vue. Il retourne une paire qu'il connaît ; sinon une carte jamais
  * vue, puis sa jumelle s'il s'en souvient. Il ne lit une face que s'il l'a vue.
  */
-const THINK: Record<BotLevel, number> = { easy: 1.05, normal: 0.85, expert: 0.8 };
-const MEMORY: Record<BotLevel, number> = { easy: 0.55, normal: 0.76, expert: 0.8 };
+const THINK: Record<BotLevel, number> = { easy: 1.1, normal: 0.9, expert: 0.8 };
+const MEMORY: Record<BotLevel, number> = { easy: 0.5, normal: 0.72, expert: 0.8 };
 
 function botInput(state: MemoryState, player: PlayerId, level: BotLevel, _rng: Rng): ArenaInput {
   const board = state.fighters.find((candidate) => candidate.id === player);
