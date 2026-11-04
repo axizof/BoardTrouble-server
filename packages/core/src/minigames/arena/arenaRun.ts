@@ -8,6 +8,7 @@ import { CARD_MEMORY } from '../cardMemory/cardMemory';
 import type { MinigameId } from '../catalog';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
+import { SECRET_AUCTION } from '../secretAuction/secretAuction';
 import { SPINNING_BAR } from '../spinningBar/spinningBar';
 import { STACKER } from '../stacker/stacker';
 import {
@@ -30,6 +31,7 @@ export const ARENAS = {
   boardReflex: BOARD_REFLEX,
   stacker: STACKER,
   cardMemory: CARD_MEMORY,
+  secretAuction: SECRET_AUCTION,
 } satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
