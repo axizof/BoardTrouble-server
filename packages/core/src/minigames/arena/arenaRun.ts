@@ -11,6 +11,7 @@ import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
 import { SECRET_AUCTION } from '../secretAuction/secretAuction';
 import { SPINNING_BAR } from '../spinningBar/spinningBar';
 import { STACKER } from '../stacker/stacker';
+import { UNIQUE_STAIRS } from '../uniqueStairs/uniqueStairs';
 import {
   ARENA_STEP,
   type ArenaGame,
@@ -32,6 +33,7 @@ export const ARENAS = {
   stacker: STACKER,
   cardMemory: CARD_MEMORY,
   secretAuction: SECRET_AUCTION,
+  uniqueStairs: UNIQUE_STAIRS,
 } satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
