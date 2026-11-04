@@ -3,6 +3,7 @@ import { prepareBoard } from '../board/board';
 import { buildMontTrouble } from '../boards/montTrouble';
 import type { GameEvent } from '../game/types';
 import { naturalAppearance } from '../lobby/players';
+import { isArenaMinigame } from '../minigames/arena/arenaRun';
 import { FOUR_PLAYERS } from '../testing/fixtures';
 import { animationTime } from './pacing';
 import { GameSession, type Seat, type SeatControl } from './session';
@@ -114,7 +115,7 @@ describe('a game session', () => {
       }
       const snapshot = session.snapshot(ana, now);
       const phase = snapshot.type === 'snapshot' ? snapshot.state.phase : null;
-      if (phase?.type !== 'minigame' || phase.minigame === 'pawnSumo') continue;
+      if (phase?.type !== 'minigame' || isArenaMinigame(phase.minigame)) continue;
       // Sans "Suivant", le résultat attend le temps d'un mini-jeu provisoire ; Ana a lu : tout de suite.
       const waiting = session.nextWakeAt() ?? 0;
       session.minigameReady('ana');

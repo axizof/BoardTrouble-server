@@ -26,6 +26,7 @@ export * from './minigames/pawnSumo/pawnSumo';
 export * from './minigames/secretAuction/secretAuction';
 export * from './minigames/spinningBar/spinningBar';
 export * from './minigames/stacker/stacker';
+export * from './minigames/uniqueStairs/uniqueStairs';
 export * from './random/rng';
 export * from './session/pacing';
 export * from './session/protocol';
