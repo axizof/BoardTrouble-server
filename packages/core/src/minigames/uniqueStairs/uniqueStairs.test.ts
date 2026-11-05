@@ -88,7 +88,7 @@ describe('unique stairs', () => {
     expect(UNIQUE_STAIRS.ranking(state)).toEqual([['c'], ['d'], ['a', 'b']]);
   });
 
-  test('otherwise the highest after eight rounds', () => {
+  test('otherwise the highest after the last round', () => {
     let state = UNIQUE_STAIRS.create(PLAYERS, { practice: false, seed: 1 });
     for (let round = 0; round < STAIRS_ROUNDS; round++) {
       state = wait(state, CHOICE_TIME + STAIRS_REVEAL_TIME + 0.1);
