@@ -16,8 +16,8 @@ import {
 
 // Le Gros Dé (02-mini-jeux.md, fiche 28), un 1 contre tous : le joueur seul pilote un dé géant
 // qui bascule d'une case à chaque coup sur une grille, et écrase qui est sur la case où il
-// retombe. Il penche un instant avant de basculer (on lit où il va), peut sauter pour retomber
-// sur les 3 x 3 cases autour de lui, et lancer deux fois par partie des mini-dés enflammés dans
+// retombe. Il penche un instant avant de basculer (on lit où il va), peut sauter deux cases en
+// avant pour retomber sur les 3 x 3 cases autour, et lancer deux fois par partie des mini-dés enflammés dans
 // les quatre directions. Les autres courent et bondissent pour l'esquiver jusqu'au bout du
 // chrono ; le dé gagne s'il les écrase tous. Les coureurs sont les corps des arènes
 // (arena/body.ts) ; le dé, lui, ne quitte jamais sa grille.
@@ -55,6 +55,11 @@ export const SLAM_COOLDOWN = { start: 4, end: 2.5 } as const;
 /** Après le saut, le temps de s'en remettre (en pas). */
 export const SLAM_RECOVER_TICKS = 9;
 /**
+ * Le saut l'emmène tant de cases en avant (retour du test : sur place, il s'esquivait trop
+ * facilement) : vers où l'on pousse, sinon dans le sens de sa dernière bascule.
+ */
+export const SLAM_REACH = 2;
+/**
  * Les mini-dés enflammés (retour du test : le dé doit pouvoir finir le dernier coureur) : tant
  * de lancers par partie. Le dé se charge (les quatre lignes de cases rougissent), puis un mini-dé
  * part dans chaque direction, presque deux fois plus vite que lui, jusqu'au rebord. Il élimine
@@ -70,8 +75,8 @@ export const FIRE_SPEED = 9;
 export const FIRE_HALF = 0.35;
 /** Un mini-dé arrêté (contre le rebord ou un coureur) reste tant de pas, le temps de s'éteindre. */
 export const FIRE_FADE_TICKS = 15;
-/** Les quatre directions des mini-dés. */
-const FIRE_DIRECTIONS = [
+/** Les quatre directions de la grille : celles des mini-dés, des bascules et des sauts. */
+const ROLL_DIRECTIONS = [
   [1, 0],
   [-1, 0],
   [0, 1],
@@ -92,8 +97,8 @@ export type DieMotion =
   | { type: 'idle' }
   /** Il bascule vers (dx, dz), depuis le pas `at` : il penche, puis roule. */
   | { type: 'roll'; dx: number; dz: number; at: number }
-  /** Il saute au pas `at`, et retombe `ticks` pas plus tard. */
-  | { type: 'slam'; at: number; ticks: number }
+  /** Il saute au pas `at`, et retombe `ticks` pas plus tard sur la case (`col`, `row`). */
+  | { type: 'slam'; at: number; ticks: number; col: number; row: number }
   /** Il se charge depuis le pas `at`, puis lance ses mini-dés. */
   | { type: 'fire'; at: number }
   | { type: 'recover'; at: number };
@@ -106,6 +111,8 @@ export type BigDie = {
   motion: DieMotion;
   /** Le pas à partir duquel il peut sauter à nouveau. */
   slamReadyAt: number;
+  /** Le sens de sa dernière bascule (une direction de la grille) : celui du saut, par défaut. */
+  heading: { dx: number; dz: number };
   /** Les lancers de mini-dés qui lui restent, et la touche tenue au pas précédent. */
   throwsLeft: number;
   fireHeld: boolean;
@@ -173,7 +180,7 @@ export function fireLanes(
   const center = cellCenter(die.col, die.row);
   const starts =
     die.motion.type === 'fire'
-      ? FIRE_DIRECTIONS.map(([dx, dz]) => ({
+      ? ROLL_DIRECTIONS.map(([dx, dz]) => ({
           x: center.x + (dx * DIE_CELL) / 2,
           z: center.z + (dz * DIE_CELL) / 2,
           dx,
@@ -225,6 +232,8 @@ function create(
       row: middle,
       motion: { type: 'idle' },
       slamReadyAt: 0,
+      // Vers la caméra : le premier saut, sans direction, part vers le bas de l'écran.
+      heading: { dx: 0, dz: 1 },
       throwsLeft: FIRE_THROWS,
       fireHeld: false,
       top: 6,
@@ -391,6 +400,8 @@ function advanceDie(state: BigDieState, input: ArenaInput, running: DieRunner[])
     crush(state, running, 0);
   }
   if (motion.type === 'slam' && tick - motion.at >= motion.ticks) {
+    die.col = motion.col;
+    die.row = motion.row;
     die.motion = { type: 'recover', at: tick };
     die.slamReadyAt = tick + Math.round(ramp(SLAM_COOLDOWN, state) / ARENA_STEP);
     crush(state, running, 1);
@@ -411,24 +422,41 @@ function advanceDie(state: BigDieState, input: ArenaInput, running: DieRunner[])
     if (!state.practice) die.throwsLeft -= 1;
     return;
   }
+  const pushed = rollDirection(input.move);
+  const isPushing = pushed.dx !== 0 || pushed.dz !== 0;
   if (input.primary && tick >= die.slamReadyAt) {
-    die.motion = { type: 'slam', at: tick, ticks: Math.round(ramp(SLAM_TICKS, state)) };
+    const heading = isPushing ? pushed : die.heading;
+    const landing = slamLanding(die, heading);
+    die.heading = heading;
+    die.motion = { type: 'slam', at: tick, ticks: Math.round(ramp(SLAM_TICKS, state)), ...landing };
     return;
   }
-  const { dx, dz } = rollDirection(input.move);
-  const col = die.col + dx;
-  const row = die.row + dz;
+  const col = die.col + pushed.dx;
+  const row = die.row + pushed.dz;
   const isInside = col >= 0 && row >= 0 && col < DIE_GRID && row < DIE_GRID;
-  if ((dx === 0 && dz === 0) || !isInside) return;
-  die.motion = { type: 'roll', dx, dz, at: tick };
+  if (!isPushing || !isInside) return;
+  die.heading = pushed;
+  die.motion = { type: 'roll', ...pushed, at: tick };
+}
+
+/** Où retombe un saut vers `heading` : SLAM_REACH cases plus loin, sans quitter la planche. */
+function slamLanding(
+  die: BigDie,
+  heading: { dx: number; dz: number },
+): { col: number; row: number } {
+  const inside = (cell: number) => Math.max(0, Math.min(DIE_GRID - 1, cell));
+  return {
+    col: inside(die.col + heading.dx * SLAM_REACH),
+    row: inside(die.row + heading.dz * SLAM_REACH),
+  };
 }
 
 /** Un mini-dé part de chaque face du dé posée au sol. */
 function launchFires(state: BigDieState): void {
   const center = cellCenter(state.die.col, state.die.row);
-  FIRE_DIRECTIONS.forEach(([dx, dz], index) => {
+  ROLL_DIRECTIONS.forEach(([dx, dz], index) => {
     state.fires.push({
-      id: state.tick * FIRE_DIRECTIONS.length + index,
+      id: state.tick * ROLL_DIRECTIONS.length + index,
       x: center.x + (dx * DIE_CELL) / 2,
       z: center.z + (dz * DIE_CELL) / 2,
       dx,
@@ -570,8 +598,20 @@ function dieBotInput(state: BigDieState, level: BotLevel, rng: Rng): ArenaInput 
   const isClose = (runner: DieRunner) =>
     Math.abs(runner.x - center.x) < DIE_CELL * 1.5 &&
     Math.abs(runner.z - center.z) < DIE_CELL * 1.5;
-  if (state.tick >= die.slamReadyAt && running.some(isClose) && rng.chance(DIE_SLAM[level])) {
-    return { ...IDLE_INPUT, primary: true };
+  if (state.tick >= die.slamReadyAt && rng.chance(DIE_SLAM[level])) {
+    // Le saut qui retomberait sur le plus de coureurs, s'il y en a.
+    const hits = ROLL_DIRECTIONS.map(([dx, dz]) => {
+      const { col, row } = slamLanding(die, { dx, dz });
+      const landing = cellCenter(col, row);
+      const count = running.filter(
+        (runner) =>
+          Math.abs(runner.x - landing.x) < DIE_CELL * 1.5 &&
+          Math.abs(runner.z - landing.z) < DIE_CELL * 1.5,
+      ).length;
+      return { dx, dz, count };
+    });
+    const best = hits.reduce((top, hit) => (hit.count > top.count ? hit : top));
+    if (best.count > 0) return { ...IDLE_INPUT, primary: true, move: { x: best.dx, z: best.dz } };
   }
   const isInLine = (runner: DieRunner) =>
     !isClose(runner) &&
@@ -604,7 +644,7 @@ function runnerBotInput(state: BigDieState, me: DieRunner, level: BotLevel, rng:
     zones.push({ ...cellCenter(die.col + motion.dx, die.row + motion.dz), half: DIE_CELL / 2 });
   }
   if (noticed && motion.type === 'slam') {
-    zones.push({ ...cellCenter(die.col, die.row), half: DIE_CELL * 1.5 });
+    zones.push({ ...cellCenter(motion.col, motion.row), half: DIE_CELL * 1.5 });
   }
   const dangers = zones.map(({ x, z, half }) => ({ x, z, halfX: half, halfZ: half }));
   if (noticed || motion.type !== 'fire') dangers.push(...fireLanes(state));
