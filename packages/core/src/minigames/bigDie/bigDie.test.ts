@@ -94,11 +94,13 @@ describe('big die', () => {
     expect(runner(state, 'b').x).toBeLessThan(center.x);
   });
 
-  test('the slam crushes the 3 x 3 cells around it, then must wait', () => {
+  test('the slam leaps two cells ahead, crushes the 3 x 3 cells around, then must wait', () => {
     let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
-    state = place(state, 'b', 4, 4);
-    state = place(state, 'c', 3, 1);
+    // Sans direction, il saute vers le bas de l'écran : de (3, 3) à (3, 5).
+    state = place(state, 'b', 4, 6);
+    state = place(state, 'c', 3, 2);
     state = steps(state, SLAM_TICKS.start + 1, { die: SLAM });
+    expect([state.die.col, state.die.row]).toEqual([3, 5]);
     expect(runner(state, 'b').fellAt).not.toBeNull();
     expect(runner(state, 'c').fellAt).toBeNull();
     const landed = state.tick;
@@ -120,13 +122,24 @@ describe('big die', () => {
     expect(slam.ticks).toBe(SLAM_TICKS.end);
   });
 
+  test('the slam goes where you push, or the way it last rolled, and stays on the board', () => {
+    let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
+    state = steps(state, 1, { die: { ...SLAM, move: { x: 1, z: 0 } } });
+    expect(state.die.motion).toMatchObject({ type: 'slam', col: 5, row: 3 });
+    state = steps(state, SLAM_TICKS.start + SLAM_RECOVER_TICKS);
+    state = steps(state, Math.round(SLAM_COOLDOWN.start / ARENA_STEP));
+    // Il est à une case du bord est : son saut suivant (sans direction) s'arrête au bord.
+    state = steps(state, 1, { die: SLAM });
+    expect(state.die.motion).toMatchObject({ type: 'slam', col: 6, row: 3 });
+  });
+
   test('the die wins only once every runner is crushed', () => {
     let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
-    state = place(state, 'b', 4, 3);
-    state = place(state, 'c', 4, 4);
+    state = place(state, 'b', 4, 5);
+    state = place(state, 'c', 4, 6);
     state = steps(state, SLAM_TICKS.start + 1, { die: SLAM });
     expect(BIG_DIE.isOver(state)).toBe(false);
-    state = place(state, 'd', 2, 3);
+    state = place(state, 'd', 2, 5);
     state = steps(state, SLAM_RECOVER_TICKS);
     state = steps(state, 1 + LEAN_TICKS + ROLL_TICKS, { die: push(-1, 0) });
     expect(BIG_DIE.isOver(state)).toBe(true);
