@@ -16,10 +16,11 @@ import {
 
 // Le Gros Dé (02-mini-jeux.md, fiche 28), un 1 contre tous : le joueur seul pilote un dé géant
 // qui bascule d'une case à chaque coup sur une grille, et écrase qui est sur la case où il
-// retombe. Il penche un instant avant de basculer (on lit où il va), et peut sauter pour
-// retomber sur les 3 x 3 cases autour de lui. Les autres courent et bondissent pour l'esquiver
-// pendant 30 s ; le dé gagne s'il en écrase plus de la moitié. Les coureurs sont les corps des
-// arènes (arena/body.ts) ; le dé, lui, ne quitte jamais sa grille.
+// retombe. Il penche un instant avant de basculer (on lit où il va), peut sauter pour retomber
+// sur les 3 x 3 cases autour de lui, et lancer deux fois par partie des mini-dés enflammés dans
+// les quatre directions. Les autres courent et bondissent pour l'esquiver jusqu'au bout du
+// chrono ; le dé gagne s'il les écrase tous. Les coureurs sont les corps des arènes
+// (arena/body.ts) ; le dé, lui, ne quitte jamais sa grille.
 
 /** Une case de la grille, en mètres : le dé en occupe une. */
 export const DIE_CELL = 1.6;
@@ -30,11 +31,12 @@ export const DIE_CELL = 1.6;
 export const DIE_GRID = 7;
 const BIG_TABLE = 5;
 /**
- * Le chrono, en secondes : les coureurs qui tiennent jusque-là gagnent. À 6, le dé a un coureur
- * de plus à écraser sur la même grille : il a un peu plus de temps.
+ * Le chrono, en secondes : les coureurs qui tiennent jusque-là gagnent. Le dé doit tous les
+ * écraser : 40 s pour trois, 60 s pour cinq (entre bots du même niveau, il gagne alors une
+ * partie sur deux environ, autant à 4 qu'à 6).
  */
-export const DIE_TIME_LIMIT = 30;
-const BIG_TIME_LIMIT = 40;
+export const DIE_TIME_LIMIT = 40;
+const BIG_TIME_LIMIT = 60;
 /**
  * Une bascule, en pas : il penche (ce qu'on lit), puis roule sur l'arête. Soit 0,33 s par case
  * (4,8 m/s), un peu plus vite qu'un coureur (4,5 m/s) dès le début : plus lent, le dé humain
@@ -52,6 +54,29 @@ export const SLAM_TICKS = { start: 24, end: 20 } as const;
 export const SLAM_COOLDOWN = { start: 4, end: 2.5 } as const;
 /** Après le saut, le temps de s'en remettre (en pas). */
 export const SLAM_RECOVER_TICKS = 9;
+/**
+ * Les mini-dés enflammés (retour du test : le dé doit pouvoir finir le dernier coureur) : tant
+ * de lancers par partie. Le dé se charge (les quatre lignes de cases rougissent), puis un mini-dé
+ * part dans chaque direction, presque deux fois plus vite que lui, jusqu'au rebord. Il élimine
+ * le premier coureur qu'il touche et disparaît ; un bond bien placé passe par-dessus.
+ */
+export const FIRE_THROWS = 2;
+export const FIRE_WINDUP_TICKS = 12;
+export const FIRE_SPEED = 9;
+/**
+ * La moitié de la taille d'un mini-dé (m). Un coureur en bond dont les pieds sont plus haut que
+ * ça passe par-dessus : à sa hauteur entière, il fallait bondir à moins de 0,1 s près.
+ */
+export const FIRE_HALF = 0.35;
+/** Un mini-dé arrêté (contre le rebord ou un coureur) reste tant de pas, le temps de s'éteindre. */
+export const FIRE_FADE_TICKS = 15;
+/** Les quatre directions des mini-dés. */
+const FIRE_DIRECTIONS = [
+  [1, 0],
+  [-1, 0],
+  [0, 1],
+  [0, -1],
+] as const;
 /** Le coureur : le marcheur des arènes, avec un bond pour esquiver (comme à la Plateforme). */
 const RUNNER: BodyTuning = { ...WALKER, jumpSpeed: 6 };
 const LEAP_SPEED = 6.5;
@@ -69,6 +94,8 @@ export type DieMotion =
   | { type: 'roll'; dx: number; dz: number; at: number }
   /** Il saute au pas `at`, et retombe `ticks` pas plus tard. */
   | { type: 'slam'; at: number; ticks: number }
+  /** Il se charge depuis le pas `at`, puis lance ses mini-dés. */
+  | { type: 'fire'; at: number }
   | { type: 'recover'; at: number };
 
 export type BigDie = {
@@ -79,6 +106,9 @@ export type BigDie = {
   motion: DieMotion;
   /** Le pas à partir duquel il peut sauter à nouveau. */
   slamReadyAt: number;
+  /** Les lancers de mini-dés qui lui restent, et la touche tenue au pas précédent. */
+  throwsLeft: number;
+  fireHeld: boolean;
   /** Les faces vers le haut, vers le sud (+z) et vers l'est (+x) ; les autres sont à 7 moins elles. */
   top: number;
   south: number;
@@ -94,6 +124,17 @@ export type DieRunner = ArenaBody & {
   fellAt: number | null;
 };
 
+/** Un mini-dé enflammé : où il est, où il va (une direction de la grille), et s'il est arrêté. */
+export type FireDie = {
+  id: number;
+  x: number;
+  z: number;
+  dx: number;
+  dz: number;
+  /** Le pas où il s'est arrêté (rebord ou coureur), ou null s'il roule encore. */
+  endedAt: number | null;
+};
+
 export type BigDieState = {
   tick: number;
   practice: boolean;
@@ -101,6 +142,7 @@ export type BigDieState = {
   die: BigDie;
   /** Les coureurs (le dé n'en fait pas partie). */
   fighters: DieRunner[];
+  fires: FireDie[];
 };
 
 /** Le centre d'une case, sur le plan (la grille est centrée sur l'origine). */
@@ -109,9 +151,45 @@ export function cellCenter(col: number, row: number): { x: number; z: number } {
   return { x: col * DIE_CELL - offset, z: row * DIE_CELL - offset };
 }
 
-/** Les coureurs à écraser pour que le dé gagne : plus de la moitié. */
+/**
+ * Les coureurs à écraser pour que le dé gagne : tous (retour du test : gagner avec un coureur
+ * encore debout, c'était bizarre).
+ */
 export function crushesNeeded(state: BigDieState): number {
-  return Math.floor(state.fighters.length / 2) + 1;
+  return state.fighters.length;
+}
+
+/** Jusqu'où roule un mini-dé (m, depuis le centre) : contre le rebord. */
+const FIRE_EDGE = (DIE_GRID / 2) * DIE_CELL - FIRE_HALF;
+
+/**
+ * Ce que les mini-dés vont balayer : pendant que le dé se charge, ses quatre lignes ; ensuite,
+ * devant chaque mini-dé qui roule, jusqu'au rebord. Des bandes (centre et demi-tailles).
+ */
+export function fireLanes(
+  state: BigDieState,
+): { x: number; z: number; halfX: number; halfZ: number }[] {
+  const { die } = state;
+  const center = cellCenter(die.col, die.row);
+  const starts =
+    die.motion.type === 'fire'
+      ? FIRE_DIRECTIONS.map(([dx, dz]) => ({
+          x: center.x + (dx * DIE_CELL) / 2,
+          z: center.z + (dz * DIE_CELL) / 2,
+          dx,
+          dz,
+        }))
+      : state.fires.filter((fire) => fire.endedAt === null);
+  return starts.map(({ x, z, dx, dz }) => {
+    const endX = dx === 0 ? x : dx * FIRE_EDGE;
+    const endZ = dz === 0 ? z : dz * FIRE_EDGE;
+    return {
+      x: (x + endX) / 2,
+      z: (z + endZ) / 2,
+      halfX: Math.abs(endX - x) / 2 + FIRE_HALF,
+      halfZ: Math.abs(endZ - z) / 2 + FIRE_HALF,
+    };
+  });
 }
 
 export function crushedCount(state: BigDieState): number {
@@ -147,6 +225,8 @@ function create(
       row: middle,
       motion: { type: 'idle' },
       slamReadyAt: 0,
+      throwsLeft: FIRE_THROWS,
+      fireHeld: false,
       top: 6,
       south: 2,
       east: 4,
@@ -164,6 +244,7 @@ function create(
         fellAt: null,
       };
     }),
+    fires: [],
   };
 }
 
@@ -171,7 +252,11 @@ function step(state: BigDieState, inputs: Partial<Record<PlayerId, ArenaInput>>)
   const tick = state.tick + 1;
   const die = { ...state.die };
   const fighters = state.fighters.map((runner) => ({ ...runner }));
-  const next = { ...state, tick, die, fighters };
+  // Les mini-dés arrêtés s'effacent ; les autres sont copiés : ils vont rouler.
+  const fires = state.fires
+    .filter((fire) => fire.endedAt === null || tick - fire.endedAt < FIRE_FADE_TICKS)
+    .map((fire) => ({ ...fire }));
+  const next = { ...state, tick, die, fighters, fires };
   for (const runner of fighters) {
     if (state.practice && runner.crushedAt !== null) respawn(next, runner);
   }
@@ -179,7 +264,42 @@ function step(state: BigDieState, inputs: Partial<Record<PlayerId, ArenaInput>>)
   moveRunners(next, running, inputs);
   const dieInput = inputs[die.id] ?? (state.practice ? dummyDieInput(next) : IDLE_INPUT);
   advanceDie(next, dieInput, running);
+  rollFires(next, running);
   return next;
+}
+
+/** Les mini-dés roulent : le premier coureur touché est éliminé, le rebord les arrête. */
+function rollFires(state: BigDieState, running: DieRunner[]): void {
+  for (const fire of state.fires) {
+    if (fire.endedAt !== null) continue;
+    fire.x += fire.dx * FIRE_SPEED * ARENA_STEP;
+    fire.z += fire.dz * FIRE_SPEED * ARENA_STEP;
+    const victim = running.find(
+      (runner) =>
+        runner.crushedAt === null &&
+        runner.y < FIRE_HALF &&
+        Math.abs(runner.x - fire.x) < FIRE_HALF + RUNNER.radius &&
+        Math.abs(runner.z - fire.z) < FIRE_HALF + RUNNER.radius,
+    );
+    if (victim) {
+      eliminate(state, victim);
+      fire.endedAt = state.tick;
+      continue;
+    }
+    if (Math.abs(fire.x) >= FIRE_EDGE || Math.abs(fire.z) >= FIRE_EDGE) {
+      fire.x = Math.max(-FIRE_EDGE, Math.min(FIRE_EDGE, fire.x));
+      fire.z = Math.max(-FIRE_EDGE, Math.min(FIRE_EDGE, fire.z));
+      fire.endedAt = state.tick;
+    }
+  }
+}
+
+/** Écrasé ou brûlé : il reste à plat ; éliminé, sauf au bac à sable. */
+function eliminate(state: BigDieState, runner: DieRunner): void {
+  runner.crushedAt = state.tick;
+  runner.vx = 0;
+  runner.vz = 0;
+  if (!state.practice) runner.fellAt = state.tick;
 }
 
 function moveRunners(
@@ -278,7 +398,19 @@ function advanceDie(state: BigDieState, input: ArenaInput, running: DieRunner[])
   if (motion.type === 'recover' && tick - motion.at >= SLAM_RECOVER_TICKS) {
     die.motion = { type: 'idle' };
   }
+  if (motion.type === 'fire' && tick - motion.at >= FIRE_WINDUP_TICKS) {
+    die.motion = { type: 'idle' };
+    launchFires(state);
+  }
+  const isFirePressed = input.secondary && !die.fireHeld;
+  die.fireHeld = input.secondary;
   if (die.motion.type !== 'idle') return;
+  if (isFirePressed && die.throwsLeft > 0) {
+    die.motion = { type: 'fire', at: tick };
+    // Au bac à sable, les lancers ne s'épuisent pas.
+    if (!state.practice) die.throwsLeft -= 1;
+    return;
+  }
   if (input.primary && tick >= die.slamReadyAt) {
     die.motion = { type: 'slam', at: tick, ticks: Math.round(ramp(SLAM_TICKS, state)) };
     return;
@@ -289,6 +421,21 @@ function advanceDie(state: BigDieState, input: ArenaInput, running: DieRunner[])
   const isInside = col >= 0 && row >= 0 && col < DIE_GRID && row < DIE_GRID;
   if ((dx === 0 && dz === 0) || !isInside) return;
   die.motion = { type: 'roll', dx, dz, at: tick };
+}
+
+/** Un mini-dé part de chaque face du dé posée au sol. */
+function launchFires(state: BigDieState): void {
+  const center = cellCenter(state.die.col, state.die.row);
+  FIRE_DIRECTIONS.forEach(([dx, dz], index) => {
+    state.fires.push({
+      id: state.tick * FIRE_DIRECTIONS.length + index,
+      x: center.x + (dx * DIE_CELL) / 2,
+      z: center.z + (dz * DIE_CELL) / 2,
+      dx,
+      dz,
+      endedAt: null,
+    });
+  });
 }
 
 /** La direction de la bascule : l'axe où l'on pousse le plus, s'il y en a un franchement. */
@@ -315,7 +462,7 @@ function land(die: BigDie, dx: number, dz: number): void {
  * le touche seulement est repoussé.
  */
 function crush(state: BigDieState, running: DieRunner[], reach: number): void {
-  const { die, tick } = state;
+  const { die } = state;
   const center = cellCenter(die.col, die.row);
   const half = DIE_CELL * (reach + 0.5);
   for (const runner of running) {
@@ -324,10 +471,7 @@ function crush(state: BigDieState, running: DieRunner[], reach: number): void {
       shoveOut(runner, die.col, die.row, true);
       continue;
     }
-    runner.crushedAt = tick;
-    runner.vx = 0;
-    runner.vz = 0;
-    if (!state.practice) runner.fellAt = tick;
+    eliminate(state, runner);
   }
 }
 
@@ -395,6 +539,8 @@ function ranking(state: BigDieState): PlayerId[][] {
 const DIE_PAUSE: Record<BotLevel, number> = { easy: 0.85, normal: 0.6, expert: 0.2 };
 const DIE_LEAD: Record<BotLevel, number> = { easy: 0, normal: 0.25, expert: 0.45 };
 const DIE_SLAM: Record<BotLevel, number> = { easy: 0.04, normal: 0.12, expert: 0.25 };
+/** Ses mini-dés : une chance à chaque pas quand un coureur est dans ses lignes, pas collé à lui. */
+const DIE_FIRE: Record<BotLevel, number> = { easy: 0.03, normal: 0.08, expert: 0.2 };
 /**
  * Le bot coureur fuit le dé et les murs, s'écarte des autres (le dé vise les groupes), et sort
  * de la case où le dé va retomber, en bondissant s'il le faut. Son niveau règle quand il remarque
@@ -404,6 +550,8 @@ const RUNNER_NOTICE: Record<BotLevel, number> = { easy: 5, normal: 3, expert: 1 
 const RUNNER_NOISE: Record<BotLevel, number> = { easy: 2.5, normal: 1.2, expert: 0.5 };
 const RUNNER_LEAP: Record<BotLevel, number> = { easy: 0.25, normal: 0.4, expert: 0.8 };
 const FLEE_DIRECTIONS = 16;
+/** Un mini-dé à cette distance (m) : c'est le moment de bondir par-dessus. */
+const FIRE_JUMP_RANGE = 1.3;
 const FLEE_LOOK = 1.5;
 
 function botInput(state: BigDieState, player: PlayerId, level: BotLevel, rng: Rng): ArenaInput {
@@ -425,6 +573,12 @@ function dieBotInput(state: BigDieState, level: BotLevel, rng: Rng): ArenaInput 
   if (state.tick >= die.slamReadyAt && running.some(isClose) && rng.chance(DIE_SLAM[level])) {
     return { ...IDLE_INPUT, primary: true };
   }
+  const isInLine = (runner: DieRunner) =>
+    !isClose(runner) &&
+    (Math.abs(runner.x - center.x) < DIE_CELL / 2 || Math.abs(runner.z - center.z) < DIE_CELL / 2);
+  if (die.throwsLeft > 0 && running.some(isInLine) && rng.chance(DIE_FIRE[level])) {
+    return { ...IDLE_INPUT, secondary: true };
+  }
   const score = (runner: DieRunner) =>
     running.reduce(
       (sum, other) =>
@@ -443,20 +597,27 @@ function runnerBotInput(state: BigDieState, me: DieRunner, level: BotLevel, rng:
   const { motion } = die;
   const noticed =
     motion.type !== 'idle' && tick - ('at' in motion ? motion.at : tick) >= RUNNER_NOTICE[level];
-  // La zone où le dé va retomber, s'il l'a remarqué : sa case d'arrivée, ou les 3 x 3 du saut.
-  const danger =
-    noticed && motion.type === 'roll'
-      ? { ...cellCenter(die.col + motion.dx, die.row + motion.dz), half: DIE_CELL / 2 }
-      : noticed && motion.type === 'slam'
-        ? { ...cellCenter(die.col, die.row), half: DIE_CELL * 1.5 }
-        : null;
+  // Ce qu'il fuit, une fois remarqué : la case d'arrivée du dé, les 3 x 3 du saut, et les lignes
+  // des mini-dés (des bandes : centre et demi-tailles).
+  const zones: { x: number; z: number; half: number }[] = [];
+  if (noticed && motion.type === 'roll') {
+    zones.push({ ...cellCenter(die.col + motion.dx, die.row + motion.dz), half: DIE_CELL / 2 });
+  }
+  if (noticed && motion.type === 'slam') {
+    zones.push({ ...cellCenter(die.col, die.row), half: DIE_CELL * 1.5 });
+  }
+  const dangers = zones.map(({ x, z, half }) => ({ x, z, halfX: half, halfZ: half }));
+  if (noticed || motion.type !== 'fire') dangers.push(...fireLanes(state));
+  const isIn = (x: number, z: number) =>
+    dangers.some(
+      (zone) =>
+        Math.abs(x - zone.x) < zone.halfX + RUNNER.radius &&
+        Math.abs(z - zone.z) < zone.halfZ + RUNNER.radius,
+    );
   const center = cellCenter(die.col, die.row);
   const edge = (DIE_GRID / 2) * DIE_CELL;
   const others = state.fighters.filter((one) => one !== me && one.crushedAt === null);
-  const isInDanger =
-    danger !== null &&
-    Math.abs(me.x - danger.x) < danger.half + RUNNER.radius &&
-    Math.abs(me.z - danger.z) < danger.half + RUNNER.radius;
+  const isInDanger = isIn(me.x, me.z);
   let best = { x: 0, z: 0, score: Number.NEGATIVE_INFINITY };
   for (let index = 0; index < FLEE_DIRECTIONS; index++) {
     const angle = (index / FLEE_DIRECTIONS) * Math.PI * 2;
@@ -469,10 +630,7 @@ function runnerBotInput(state: BigDieState, me: DieRunner, level: BotLevel, rng:
       (sum, other) => sum + 1 / (1 + Math.hypot(other.x - px, other.z - pz)),
       0,
     );
-    const inDanger =
-      danger !== null &&
-      Math.abs(px - danger.x) < danger.half + RUNNER.radius &&
-      Math.abs(pz - danger.z) < danger.half + RUNNER.radius;
+    const inDanger = isIn(px, pz);
     const noise = hashUnit(`${state.seed}:${me.id}:${Math.floor(tick / 15)}:${index}`);
     const score =
       Math.min(6, Math.hypot(px - center.x, pz - center.z)) +
@@ -482,7 +640,12 @@ function runnerBotInput(state: BigDieState, me: DieRunner, level: BotLevel, rng:
       noise * RUNNER_NOISE[level];
     if (score > best.score) best = { x, z, score };
   }
-  const leap = isInDanger && !me.held && rng.chance(RUNNER_LEAP[level]);
+  // Il bondit hors de la case du dé, ou par-dessus un mini-dé tout près (s'il y pense).
+  const isFireNear = state.fires.some(
+    (fire) => fire.endedAt === null && Math.hypot(fire.x - me.x, fire.z - me.z) < FIRE_JUMP_RANGE,
+  );
+  const isThreat = motion.type === 'roll' || motion.type === 'slam' || isFireNear;
+  const leap = isInDanger && isThreat && !me.held && rng.chance(RUNNER_LEAP[level]);
   return { move: { x: best.x, z: best.z }, primary: leap, secondary: false };
 }
 
