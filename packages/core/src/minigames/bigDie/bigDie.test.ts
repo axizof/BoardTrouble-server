@@ -180,6 +180,17 @@ describe('big die', () => {
     expect(state.die.motion.type).not.toBe('fire');
   });
 
+  test('a runner leaps only once per match', () => {
+    let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
+    const leap = { b: { ...IDLE_INPUT, primary: true } };
+    state = steps(state, 1, leap);
+    expect(runner(state, 'b').onGround).toBe(false);
+    expect(runner(state, 'b').leapsLeft).toBe(0);
+    state = steps(state, 40);
+    state = steps(state, 1, leap);
+    expect(runner(state, 'b').onGround).toBe(true);
+  });
+
   test('a well-timed leap clears a fire die', () => {
     let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
     state = place(state, 'b', 6, 3);

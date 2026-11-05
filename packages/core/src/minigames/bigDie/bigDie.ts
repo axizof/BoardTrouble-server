@@ -32,11 +32,11 @@ export const DIE_GRID = 7;
 const BIG_TABLE = 5;
 /**
  * Le chrono, en secondes : les coureurs qui tiennent jusque-là gagnent. Le dé doit tous les
- * écraser : 40 s pour trois, 60 s pour cinq (entre bots du même niveau, il gagne alors une
- * partie sur deux environ, autant à 4 qu'à 6).
+ * écraser : 30 s pour trois, 45 s pour cinq. Depuis que les coureurs n'ont plus qu'un bond, il
+ * gagne entre bots Normaux ou Experts 6 à 7 parties sur 10 à 4 (avec 40 et 60 s : 9 sur 10).
  */
-export const DIE_TIME_LIMIT = 40;
-const BIG_TIME_LIMIT = 60;
+export const DIE_TIME_LIMIT = 30;
+const BIG_TIME_LIMIT = 45;
 /**
  * Une bascule, en pas : il penche (ce qu'on lit), puis roule sur l'arête. Soit 0,33 s par case
  * (4,8 m/s), un peu plus vite qu'un coureur (4,5 m/s) dès le début : plus lent, le dé humain
@@ -82,9 +82,17 @@ const ROLL_DIRECTIONS = [
   [0, 1],
   [0, -1],
 ] as const;
-/** Le coureur : le marcheur des arènes, avec un bond pour esquiver (comme à la Plateforme). */
-const RUNNER: BodyTuning = { ...WALKER, jumpSpeed: 6 };
+/**
+ * Le coureur : le marcheur des arènes, un peu plus rapide que le dé (5,4 m/s contre 4,8) : sans
+ * bond à volonté, c'est en gardant ses distances qu'il lui échappe. Et un bond pour esquiver.
+ */
+const RUNNER: BodyTuning = { ...WALKER, walkSpeed: 5.4, jumpSpeed: 6 };
 const LEAP_SPEED = 6.5;
+/**
+ * Les bonds d'un coureur par partie (retour du test : à volonté, le bond sauvait de tout). Au bac
+ * à sable, ils ne s'épuisent pas.
+ */
+export const RUNNER_LEAPS = 1;
 /** Ce qui touche le dé sans être écrasé est repoussé, sonné un instant. */
 const SHOVE_SPEED = 3;
 const SHOVE_STUN = 0.3;
@@ -125,6 +133,8 @@ export type BigDie = {
 export type DieRunner = ArenaBody & {
   /** La touche de bond tenue au pas précédent : il bondit quand on appuie, pas en tenant. */
   held: boolean;
+  /** Les bonds qui lui restent. */
+  leapsLeft: number;
   /** Le pas où il a été écrasé (au bac à sable, il revient), ou null. */
   crushedAt: number | null;
   /** Le pas où il est éliminé, ou null (jamais au bac à sable). */
@@ -249,6 +259,7 @@ function create(
       return {
         ...createBody(id, x, z, Math.atan2(x, z)),
         held: false,
+        leapsLeft: RUNNER_LEAPS,
         crushedAt: null,
         fellAt: null,
       };
@@ -320,10 +331,13 @@ function moveRunners(
   for (const runner of running) {
     const input = inputs[runner.id] ?? IDLE_INPUT;
     walkBody(runner, input.move, RUNNER, ARENA_STEP);
-    if (input.primary && !runner.held && !isAirborne(runner)) {
+    if (input.primary && !runner.held && !isAirborne(runner) && runner.leapsLeft > 0) {
       jumpBody(runner, RUNNER);
-      // Le saut peut être refusé (sonné) : il ne bondit que s'il a décollé.
-      if (runner.vy > 0) leap(runner, input.move);
+      // Le saut peut être refusé (sonné) : il ne bondit (et ne le dépense) que s'il a décollé.
+      if (runner.vy > 0) {
+        leap(runner, input.move);
+        if (!state.practice) runner.leapsLeft -= 1;
+      }
     }
     runner.held = input.primary;
     if (Math.hypot(input.move.x, input.move.z) <= 0.1 && !isAirborne(runner)) braced.add(runner.id);
@@ -578,6 +592,16 @@ const RUNNER_NOTICE: Record<BotLevel, number> = { easy: 5, normal: 3, expert: 1 
 const RUNNER_NOISE: Record<BotLevel, number> = { easy: 2.5, normal: 1.2, expert: 0.5 };
 const RUNNER_LEAP: Record<BotLevel, number> = { easy: 0.25, normal: 0.4, expert: 0.8 };
 const FLEE_DIRECTIONS = 16;
+/**
+ * Il garde tant de place (m) entre lui et les rebords : dans un coin, le dé le coince (sans son
+ * bond illimité, les bots s'y faisaient tous écraser).
+ */
+const RUNNER_WALL_ROOM = 2;
+/** Un pas de marge (en cases) autour de la ligne du dé : il ne s'y colle pas. */
+const RUNNER_MARGIN = 0.3;
+/** Il sort d'une zone avec tant de marge (m), et compte tant de temps (s) pour réagir. */
+const EXIT_STEP = 0.1;
+const REACTION_MARGIN = 0.1;
 /** Un mini-dé à cette distance (m) : c'est le moment de bondir par-dessus. */
 const FIRE_JUMP_RANGE = 1.3;
 const FLEE_LOOK = 1.5;
@@ -646,6 +670,13 @@ function runnerBotInput(state: BigDieState, me: DieRunner, level: BotLevel, rng:
   if (noticed && motion.type === 'slam') {
     zones.push({ ...cellCenter(motion.col, motion.row), half: DIE_CELL * 1.5 });
   }
+  // Posé, le dé peut basculer à tout moment sur une case voisine : il ne reste pas collé à lui
+  // (ni ne fuit à travers sa case).
+  if (motion.type === 'idle' || motion.type === 'recover' || motion.type === 'fire') {
+    for (const [dx, dz] of [[0, 0], ...ROLL_DIRECTIONS]) {
+      zones.push({ ...cellCenter(die.col + dx, die.row + dz), half: DIE_CELL / 2 });
+    }
+  }
   const dangers = zones.map(({ x, z, half }) => ({ x, z, halfX: half, halfZ: half }));
   if (noticed || motion.type !== 'fire') dangers.push(...fireLanes(state));
   const isIn = (x: number, z: number) =>
@@ -671,12 +702,21 @@ function runnerBotInput(state: BigDieState, me: DieRunner, level: BotLevel, rng:
       0,
     );
     const inDanger = isIn(px, pz);
+    // Les cases d'où il ne pourrait plus s'échapper : collées au dé (sa prochaine bascule), et
+    // celles de son saut, s'il est prêt. Il s'en tient loin plutôt que de compter sur son bond.
+    const cols = Math.abs(px - center.x) / DIE_CELL;
+    const rows = Math.abs(pz - center.z) / DIE_CELL;
+    const isNextToDie = Math.min(cols, rows) < 0.5 + RUNNER_MARGIN && Math.max(cols, rows) < 1.5;
+    const isInSlamReach =
+      tick >= die.slamReadyAt && Math.min(cols, rows) < 1.5 && Math.max(cols, rows) < 3.5;
     const noise = hashUnit(`${state.seed}:${me.id}:${Math.floor(tick / 15)}:${index}`);
     const score =
       Math.min(6, Math.hypot(px - center.x, pz - center.z)) +
-      Math.min(0, wall - 1.2) * 3 -
+      Math.min(0, wall - RUNNER_WALL_ROOM) * 6 -
       crowd * 1.5 -
-      (inDanger ? 20 : 0) +
+      (inDanger ? 20 : 0) -
+      (isNextToDie ? 10 : 0) -
+      (isInSlamReach ? 3 : 0) +
       noise * RUNNER_NOISE[level];
     if (score > best.score) best = { x, z, score };
   }
@@ -684,9 +724,46 @@ function runnerBotInput(state: BigDieState, me: DieRunner, level: BotLevel, rng:
   const isFireNear = state.fires.some(
     (fire) => fire.endedAt === null && Math.hypot(fire.x - me.x, fire.z - me.z) < FIRE_JUMP_RANGE,
   );
-  const isThreat = motion.type === 'roll' || motion.type === 'slam' || isFireNear;
-  const leap = isInDanger && isThreat && !me.held && rng.chance(RUNNER_LEAP[level]);
-  return { move: { x: best.x, z: best.z }, primary: leap, secondary: false };
+  // Son seul bond, gardé pour le dernier moment : le dé retombe bientôt, ou un mini-dé arrive.
+  const landsIn =
+    motion.type === 'roll'
+      ? LEAN_TICKS + ROLL_TICKS - (tick - motion.at)
+      : motion.type === 'slam'
+        ? motion.ticks - (tick - motion.at)
+        : Number.POSITIVE_INFINITY;
+  // Dans une zone : il en sort par le côté le plus court (sans foncer dans le rebord ni dans une
+  // autre zone), et ne bondit que si, en courant, il n'y arriverait pas à temps.
+  const exit = isInDanger ? escapeRoute(me, dangers, isIn) : null;
+  const isTooFar =
+    exit !== null && exit.distance / RUNNER.walkSpeed > landsIn * ARENA_STEP - REACTION_MARGIN;
+  const isThreat = isTooFar || isFireNear;
+  const leap =
+    isInDanger && isThreat && me.leapsLeft > 0 && !me.held && rng.chance(RUNNER_LEAP[level]);
+  const move = exit ?? best;
+  return { move: { x: move.x, z: move.z }, primary: leap, secondary: false };
+}
+
+/** La sortie la plus courte des zones où il est : une direction de la grille, et la distance. */
+function escapeRoute(
+  me: DieRunner,
+  zones: { x: number; z: number; halfX: number; halfZ: number }[],
+  isIn: (x: number, z: number) => boolean,
+): { x: number; z: number; distance: number } | null {
+  const edge = (DIE_GRID / 2) * DIE_CELL - RUNNER.radius;
+  let route: { x: number; z: number; distance: number } | null = null;
+  for (const zone of zones) {
+    const reachX = zone.halfX + RUNNER.radius + EXIT_STEP;
+    const reachZ = zone.halfZ + RUNNER.radius + EXIT_STEP;
+    if (Math.abs(me.x - zone.x) >= reachX || Math.abs(me.z - zone.z) >= reachZ) continue;
+    for (const [dx, dz] of ROLL_DIRECTIONS) {
+      const toX = dx === 0 ? me.x : zone.x + dx * reachX;
+      const toZ = dz === 0 ? me.z : zone.z + dz * reachZ;
+      if (Math.abs(toX) > edge || Math.abs(toZ) > edge || isIn(toX, toZ)) continue;
+      const distance = Math.hypot(toX - me.x, toZ - me.z);
+      if (!route || distance < route.distance) route = { x: dx, z: dz, distance };
+    }
+  }
+  return route;
 }
 
 /** Une valeur entre 0 et 1, toujours la même pour un même texte. */
