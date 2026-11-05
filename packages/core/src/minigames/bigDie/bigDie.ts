@@ -121,9 +121,11 @@ export type BigDie = {
   slamReadyAt: number;
   /** Le sens de sa dernière bascule (une direction de la grille) : celui du saut, par défaut. */
   heading: { dx: number; dz: number };
-  /** Les lancers de mini-dés qui lui restent, et la touche tenue au pas précédent. */
+  /** Les lancers de mini-dés qui lui restent. */
   throwsLeft: number;
-  fireHeld: boolean;
+  /** Les touches tenues au pas précédent (on agit à l'appui), et l'action demandée en attente. */
+  held: { primary: boolean; secondary: boolean };
+  queued: 'slam' | 'fire' | null;
   /** Les faces vers le haut, vers le sud (+z) et vers l'est (+x) ; les autres sont à 7 moins elles. */
   top: number;
   south: number;
@@ -245,7 +247,8 @@ function create(
       // Vers la caméra : le premier saut, sans direction, part vers le bas de l'écran.
       heading: { dx: 0, dz: 1 },
       throwsLeft: FIRE_THROWS,
-      fireHeld: false,
+      held: { primary: false, secondary: false },
+      queued: null,
       top: 6,
       south: 2,
       east: 4,
@@ -427,10 +430,14 @@ function advanceDie(state: BigDieState, input: ArenaInput, running: DieRunner[])
     die.motion = { type: 'idle' };
     launchFires(state);
   }
-  const isFirePressed = input.secondary && !die.fireHeld;
-  die.fireHeld = input.secondary;
+  // Un appui pendant une bascule ou un saut attend que le dé soit libre (au lieu de se perdre).
+  if (input.primary && !die.held.primary) die.queued = 'slam';
+  if (input.secondary && !die.held.secondary) die.queued = 'fire';
+  die.held = { primary: input.primary, secondary: input.secondary };
   if (die.motion.type !== 'idle') return;
-  if (isFirePressed && die.throwsLeft > 0) {
+  const queued = die.queued;
+  die.queued = null;
+  if (queued === 'fire' && die.throwsLeft > 0) {
     die.motion = { type: 'fire', at: tick };
     // Au bac à sable, les lancers ne s'épuisent pas.
     if (!state.practice) die.throwsLeft -= 1;
@@ -438,7 +445,8 @@ function advanceDie(state: BigDieState, input: ArenaInput, running: DieRunner[])
   }
   const pushed = rollDirection(input.move);
   const isPushing = pushed.dx !== 0 || pushed.dz !== 0;
-  if (input.primary && tick >= die.slamReadyAt) {
+  // Espace tenu saute dès que le saut est prêt ; un appui pendant l'attente est oublié.
+  if ((queued === 'slam' || input.primary) && tick >= die.slamReadyAt) {
     const heading = isPushing ? pushed : die.heading;
     const landing = slamLanding(die, heading);
     die.heading = heading;

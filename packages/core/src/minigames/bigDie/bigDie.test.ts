@@ -180,6 +180,19 @@ describe('big die', () => {
     expect(state.die.motion.type).not.toBe('fire');
   });
 
+  test('a press while the die rolls acts as soon as it lands, even if released', () => {
+    let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
+    state = steps(state, 1, { die: push(1, 0) });
+    state = steps(state, 2, { die: FIRE });
+    state = steps(state, LEAN_TICKS + ROLL_TICKS);
+    expect(state.die.motion.type).toBe('fire');
+    state = steps(state, FIRE_WINDUP_TICKS);
+    state = steps(state, 1, { die: push(1, 0) });
+    state = steps(state, 2, { die: SLAM });
+    state = steps(state, LEAN_TICKS + ROLL_TICKS);
+    expect(state.die.motion.type).toBe('slam');
+  });
+
   test('a runner leaps only once per match', () => {
     let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
     const leap = { b: { ...IDLE_INPUT, primary: true } };
