@@ -7,15 +7,20 @@ import {
   type BigDieState,
   cellCenter,
   DIE_TIME_LIMIT,
+  FIRE_THROWS,
+  FIRE_WINDUP_TICKS,
+  fireLanes,
   LEAN_TICKS,
   ROLL_TICKS,
   SLAM_COOLDOWN,
+  SLAM_RECOVER_TICKS,
   SLAM_TICKS,
 } from './bigDie';
 
 const PLAYERS = ['die', 'b', 'c', 'd'];
 const push = (x: number, z: number): ArenaInput => ({ ...IDLE_INPUT, move: { x, z } });
 const SLAM: ArenaInput = { ...IDLE_INPUT, primary: true };
+const FIRE: ArenaInput = { ...IDLE_INPUT, secondary: true };
 
 function steps(state: BigDieState, count: number, inputs = {}): BigDieState {
   let next = state;
@@ -115,13 +120,65 @@ describe('big die', () => {
     expect(slam.ticks).toBe(SLAM_TICKS.end);
   });
 
-  test('crushing more than half of the runners wins for the die', () => {
+  test('the die wins only once every runner is crushed', () => {
     let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
     state = place(state, 'b', 4, 3);
     state = place(state, 'c', 4, 4);
     state = steps(state, SLAM_TICKS.start + 1, { die: SLAM });
+    expect(BIG_DIE.isOver(state)).toBe(false);
+    state = place(state, 'd', 2, 3);
+    state = steps(state, SLAM_RECOVER_TICKS);
+    state = steps(state, 1 + LEAN_TICKS + ROLL_TICKS, { die: push(-1, 0) });
     expect(BIG_DIE.isOver(state)).toBe(true);
     expect(BIG_DIE.ranking(state)).toEqual([['die'], ['b', 'c', 'd']]);
+  });
+
+  test('fire dice light their lanes, then roll out four ways and burn the first runner hit', () => {
+    let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
+    // Deux coureurs à l'est, l'un derrière l'autre ; le troisième hors des lignes.
+    state = place(state, 'b', 5, 3);
+    state = place(state, 'c', 6, 3);
+    state = place(state, 'd', 1, 1);
+    state = steps(state, 1, { die: FIRE });
+    expect(state.die.motion.type).toBe('fire');
+    expect(fireLanes(state)).toHaveLength(4);
+    state = steps(state, FIRE_WINDUP_TICKS);
+    expect(state.fires).toHaveLength(4);
+    state = steps(state, 30);
+    expect(runner(state, 'b').fellAt).not.toBeNull();
+    // Le mini-dé s'est arrêté sur le premier : le second est sauf.
+    expect(runner(state, 'c').fellAt).toBeNull();
+    expect(runner(state, 'd').fellAt).toBeNull();
+    expect(state.fires.every((fire) => fire.endedAt !== null)).toBe(true);
+    expect(fireLanes(state)).toHaveLength(0);
+  });
+
+  test('only two throws per match, one per press', () => {
+    let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
+    state = steps(state, 60, { die: FIRE });
+    expect(state.die.throwsLeft).toBe(FIRE_THROWS - 1);
+    for (let i = 0; i < 4; i++) {
+      state = steps(state, 1);
+      state = steps(state, FIRE_WINDUP_TICKS + 1, { die: FIRE });
+    }
+    expect(state.die.throwsLeft).toBe(0);
+    state = steps(state, 1);
+    state = steps(state, 1, { die: FIRE });
+    expect(state.die.motion.type).not.toBe('fire');
+  });
+
+  test('a well-timed leap clears a fire die', () => {
+    let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
+    state = place(state, 'b', 6, 3);
+    state = steps(state, 1, { die: FIRE });
+    state = steps(state, FIRE_WINDUP_TICKS);
+    // Il bondit sur place quand le mini-dé arrive.
+    while ((state.fires.find((fire) => fire.dx === 1)?.x ?? 0) < runner(state, 'b').x - 2.2) {
+      state = steps(state, 1);
+    }
+    state = steps(state, 1, { b: { ...IDLE_INPUT, primary: true, move: { x: 1, z: 0 } } });
+    state = steps(state, 20);
+    expect(runner(state, 'b').fellAt).toBeNull();
   });
 
   test('the runners win if they hold out until the clock', () => {
