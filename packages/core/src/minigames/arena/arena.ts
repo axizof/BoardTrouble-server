@@ -37,8 +37,12 @@ export type ArenaGame<State extends ArenaState> = {
   /**
    * `practice` : le bac à sable de la présentation, sans fin de partie ni danger qui monte.
    * `seed` : propre à chaque partie (ce qui varie d'une partie à l'autre en dépend).
+   * `solo` : en 1 contre tous, le joueur seul face aux autres.
    */
-  create(players: PlayerId[], options: { practice: boolean; seed: number }): State;
+  create(
+    players: PlayerId[],
+    options: { practice: boolean; seed: number; solo?: PlayerId | null },
+  ): State;
   step(state: State, inputs: Partial<Record<PlayerId, ArenaInput>>): State;
   botInput(state: State, player: PlayerId, level: BotLevel, rng: Rng): ArenaInput;
   isOver(state: State): boolean;
