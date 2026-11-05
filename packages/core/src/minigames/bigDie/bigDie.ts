@@ -36,15 +36,18 @@ const BIG_TABLE = 5;
 export const DIE_TIME_LIMIT = 30;
 const BIG_TIME_LIMIT = 40;
 /**
- * Une bascule, en pas : il penche (ce qu'on lit, toujours aussi long), puis roule sur l'arête.
- * Le dé presse de plus en plus au fil du chrono (retour du premier test : la fin doit devenir
- * difficile pour les coureurs) : chaque durée va de `start` (au début) à `end` (à la fin). Soit
- * 0,37 s par case au début (4,4 m/s, un peu moins vite qu'un coureur à 4,5 : il doit coincer),
- * 0,33 s à la fin (4,8 m/s). Plus vite, il gagnait 8 parties sur 10 entre bots.
+ * Une bascule, en pas : il penche (ce qu'on lit), puis roule sur l'arête. Soit 0,33 s par case
+ * (4,8 m/s), un peu plus vite qu'un coureur (4,5 m/s) dès le début : plus lent, le dé humain
+ * n'écrasait presque personne (premiers tests). Plus vite encore, même sur les 5 dernières
+ * secondes, il gagnait près de 9 parties sur 10 entre bots.
  */
 export const LEAN_TICKS = 4;
-export const ROLL_TICKS = { start: 7, end: 6 } as const;
-/** Le saut écrasant, en pas d'air (0,8 s puis 0,67 s), et l'attente avant le suivant (s). */
+export const ROLL_TICKS = 6;
+/**
+ * Le saut presse au fil du chrono (retour du test : la fin doit devenir difficile) : chaque
+ * durée va de `start` (au début) à `end` (à la fin). En pas d'air (0,8 s puis 0,67 s), et
+ * l'attente avant le suivant (s).
+ */
 export const SLAM_TICKS = { start: 24, end: 20 } as const;
 export const SLAM_COOLDOWN = { start: 4, end: 2.5 } as const;
 /** Après le saut, le temps de s'en remettre (en pas). */
@@ -62,8 +65,8 @@ const DUMMY_ROLL_EVERY = 30;
 
 export type DieMotion =
   | { type: 'idle' }
-  /** Il bascule vers (dx, dz), depuis le pas `at` : il penche LEAN_TICKS, puis roule `roll` pas. */
-  | { type: 'roll'; dx: number; dz: number; at: number; roll: number }
+  /** Il bascule vers (dx, dz), depuis le pas `at` : il penche, puis roule. */
+  | { type: 'roll'; dx: number; dz: number; at: number }
   /** Il saute au pas `at`, et retombe `ticks` pas plus tard. */
   | { type: 'slam'; at: number; ticks: number }
   | { type: 'recover'; at: number };
@@ -262,7 +265,7 @@ function shoveOut(runner: DieRunner, col: number, row: number, shove: boolean): 
 function advanceDie(state: BigDieState, input: ArenaInput, running: DieRunner[]): void {
   const { die, tick } = state;
   const { motion } = die;
-  if (motion.type === 'roll' && tick - motion.at >= LEAN_TICKS + motion.roll) {
+  if (motion.type === 'roll' && tick - motion.at >= LEAN_TICKS + ROLL_TICKS) {
     land(die, motion.dx, motion.dz);
     die.motion = { type: 'idle' };
     crush(state, running, 0);
@@ -285,7 +288,7 @@ function advanceDie(state: BigDieState, input: ArenaInput, running: DieRunner[])
   const row = die.row + dz;
   const isInside = col >= 0 && row >= 0 && col < DIE_GRID && row < DIE_GRID;
   if ((dx === 0 && dz === 0) || !isInside) return;
-  die.motion = { type: 'roll', dx, dz, at: tick, roll: Math.round(ramp(ROLL_TICKS, state)) };
+  die.motion = { type: 'roll', dx, dz, at: tick };
 }
 
 /** La direction de la bascule : l'axe où l'on pousse le plus, s'il y en a un franchement. */
