@@ -10,7 +10,7 @@ import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT } from '../aren
 // fin de la manche), sinon le plus haut au bout de STAIRS_ROUNDS manches. Tant qu'un choix n'est
 // pas révélé, l'hôte ne l'envoie qu'à son joueur.
 
-export const STAIRS_ROUNDS = 8;
+export const STAIRS_ROUNDS = 10;
 /** Le temps pour choisir (secondes) : qui n'a rien choisi reste sur place. */
 export const CHOICE_TIME = 10;
 /** Les choix révélés (et la montée) restent ce temps-là avant la manche suivante. */
