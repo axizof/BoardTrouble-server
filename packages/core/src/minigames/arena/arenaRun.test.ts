@@ -88,4 +88,30 @@ describe('an arena run', () => {
     expect(Math.hypot(a?.vx ?? 0, a?.vz ?? 0)).toBeLessThan(5);
     expect(a?.dashing).toBe(0);
   });
+
+  test('in 1 vs all, the lone player wins or loses on their own, with no tie to break', () => {
+    const rng = new Rng(4);
+    const run = new ArenaRun(
+      'bigDie',
+      ['a', 'b', 'c', 'd'],
+      new Map([
+        ['b', 'easy' as const],
+        ['c', 'easy' as const],
+        ['d', 'easy' as const],
+      ]),
+      1,
+      0,
+      'a',
+    );
+    run.setReady('a', 0);
+    let now = 0;
+    while (!run.isDone(now) && now < 300_000) {
+      now = run.nextWakeAt() ?? now;
+      run.advance(now, rng);
+    }
+    // Le dé humain ne bouge pas : les coureurs gagnent ensemble, sans départage.
+    expect(run.soloWon).toBe(false);
+    expect(run.view(now, SPECTATOR).tieBreaks).toEqual([]);
+    expect(run.ranking?.at(-1)).toEqual(['a']);
+  });
 });

@@ -57,6 +57,9 @@ const BOT_SEED_OFFSET = 0x5eed;
 
 export type SubmitResult = { ok: true; events: GameEvent[] } | { ok: false; error: IntentError };
 
+/** Un mini-jeu d'arène à jouer : qui y joue, et le joueur seul d'un 1 contre tous (ou null). */
+type ArenaToPlay = { minigame: MinigameId; players: PlayerId[]; solo: PlayerId | null };
+
 /**
  * Une partie hébergée : l'état complet, les places, et le rythme. Les horloges viennent de
  * l'appelant (`now`, en millisecondes) : la session ne lance aucun minuteur, ce qui la rend
@@ -228,22 +231,28 @@ export class GameSession {
     return this.#arena !== null;
   }
 
-  /** Le mini-jeu d'arène que la partie attend, et qui le joue ; null sinon. */
-  #arenaToPlay(): { minigame: MinigameId; players: PlayerId[] } | null {
+  /**
+   * Le mini-jeu d'arène que la partie attend, qui le joue, et le joueur seul d'un 1 contre tous ;
+   * null sinon.
+   */
+  #arenaToPlay(): ArenaToPlay | null {
     const { phase } = this.#state;
+    const everyone = this.#state.players.map((player) => player.id);
     if (phase.type === 'minigame' || phase.type === 'bonusMinigame') {
       return isArenaMinigame(phase.minigame)
-        ? { minigame: phase.minigame, players: this.#state.players.map((player) => player.id) }
+        ? { minigame: phase.minigame, players: everyone, solo: null }
         : null;
     }
     if (phase.type === 'finale' && isArenaMinigame(phase.minigame)) {
-      return { minigame: phase.minigame, players: phase.contenders };
+      return { minigame: phase.minigame, players: phase.contenders, solo: null };
     }
-    return null;
+    if (phase.type !== 'turn' || phase.step.type !== 'awaitOneVsAllResult') return null;
+    const { minigame } = phase.step;
+    return isArenaMinigame(minigame) ? { minigame, players: everyone, solo: phase.playerId } : null;
   }
 
   /** Lance l'arène une fois les animations jouées, la fait avancer, puis rend son classement. */
-  #playArena(to: { minigame: MinigameId; players: PlayerId[] }, now: number): GameEvent[] {
+  #playArena(to: ArenaToPlay, now: number): GameEvent[] {
     if (!isArenaMinigame(to.minigame)) return [];
     if (!this.#arena) {
       const bots = new Map(
@@ -252,20 +261,23 @@ export class GameSession {
           return control && control !== 'human' ? [[id, control]] : [];
         }),
       );
-      this.#arena = new ArenaRun(to.minigame, to.players, bots, this.#botRng.int(1, 1e9), now);
+      const seed = this.#botRng.int(1, 1e9);
+      this.#arena = new ArenaRun(to.minigame, to.players, bots, seed, now, to.solo);
       return [];
     }
     this.#arena.advance(now, this.#botRng);
-    const ranking = this.#arena.ranking;
+    const { ranking, soloWon } = this.#arena;
     if (!ranking || !this.#arena.isDone(now)) return [];
     this.#arena = null;
     const { phase } = this.#state;
     const intent: Intent =
-      phase.type === 'finale'
-        ? { type: 'submitFinaleResult', ranking }
-        : phase.type === 'bonusMinigame'
-          ? { type: 'submitBonusMinigameResult', ranking }
-          : { type: 'submitMinigameResult', ranking };
+      soloWon !== null
+        ? { type: 'submitOneVsAllResult', soloWon }
+        : phase.type === 'finale'
+          ? { type: 'submitFinaleResult', ranking }
+          : phase.type === 'bonusMinigame'
+            ? { type: 'submitBonusMinigameResult', ranking }
+            : { type: 'submitMinigameResult', ranking };
     const result = this.submit({ type: 'system' }, intent, now);
     if (!result.ok) throw new Error(`Classement d'arène refusé : ${result.error}`);
     return result.events;
@@ -291,10 +303,10 @@ export class GameSession {
     if (phase.type === 'minigame' || phase.type === 'bonusMinigame' || phase.type === 'finale') {
       return !isArenaMinigame(phase.minigame);
     }
-    return (
-      phase.type === 'turn' &&
-      ['awaitDuelResult', 'awaitOneVsAllResult', 'awaitSkillGate'].includes(phase.step.type)
-    );
+    if (phase.type !== 'turn') return false;
+    const { step } = phase;
+    if (step.type === 'awaitOneVsAllResult') return !isArenaMinigame(step.minigame);
+    return step.type === 'awaitDuelResult' || step.type === 'awaitSkillGate';
   }
 
   #decisionEndsIn(now: number): number | null {

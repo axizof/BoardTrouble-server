@@ -101,6 +101,25 @@ describe('a game session', () => {
     throw new Error('Aucune partie ne tire le Sumo en premier');
   });
 
+  test('plays a 1-vs-all arena with the lone player on their own side, then rewards them', () => {
+    for (let seed = 1; seed < 400; seed++) {
+      const { session } = start(BOTS, seed);
+      let solo: string | null = null;
+      let ended: GameEvent | undefined;
+      for (let wake = session.nextWakeAt(); wake !== null && !ended; wake = session.nextWakeAt()) {
+        const events = session.tick(wake) ?? [];
+        const message = session.arenaMessage({ type: 'spectator' }, wake);
+        if (message.type === 'arena' && message.run?.minigame === 'bigDie') solo = message.run.solo;
+        ended = events.find((event) => event.type === 'oneVsAllEnded');
+      }
+      if (solo === null || ended?.type !== 'oneVsAllEnded') continue;
+      expect(ended.solo).toBe(solo);
+      expect(session.isPlayingArena).toBe(false);
+      return;
+    }
+    throw new Error('Aucune partie ne joue le Gros Dé en 1 contre tous');
+  });
+
   test('plays a placeholder minigame as soon as its intro has been read', () => {
     // Toutes les manches sont des arènes : on joue jusqu'au premier mini-jeu encore provisoire
     // (duel, 1 contre tous, porte d'adresse, finale).
@@ -113,7 +132,9 @@ describe('a game session', () => {
         const phase = snapshot.type === 'snapshot' ? snapshot.state.phase : null;
         if (phase === null) break;
         const isPlaceholder =
-          (phase.type === 'turn' && placeholderSteps.includes(phase.step.type)) ||
+          (phase.type === 'turn' &&
+            placeholderSteps.includes(phase.step.type) &&
+            !(phase.step.type === 'awaitOneVsAllResult' && isArenaMinigame(phase.step.minigame))) ||
           ((phase.type === 'minigame' || phase.type === 'finale') &&
             !isArenaMinigame(phase.minigame));
         if (isPlaceholder) {

@@ -3,6 +3,7 @@ import { breakTies, TIE_ROLL_TIME, type TieBreak } from '../../dice/dice';
 import type { PlayerId } from '../../game/types';
 import type { Viewer } from '../../game/views';
 import type { Rng } from '../../random/rng';
+import { BIG_DIE } from '../bigDie/bigDie';
 import { BOARD_REFLEX } from '../boardReflex/boardReflex';
 import { CARD_MEMORY } from '../cardMemory/cardMemory';
 import type { MinigameId } from '../catalog';
@@ -36,6 +37,7 @@ export const ARENAS = {
   secretAuction: SECRET_AUCTION,
   uniqueStairs: UNIQUE_STAIRS,
   rhythmTugOfWar: RHYTHM_TUG,
+  bigDie: BIG_DIE,
 } satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
@@ -71,6 +73,8 @@ export type ArenaRunView = {
   [M in ArenaMinigame]: { minigame: M; arena: ArenaStates[M] };
 }[ArenaMinigame] & {
   stage: ArenaStage;
+  /** En 1 contre tous, le joueur seul face aux autres ; null sinon. */
+  solo: PlayerId | null;
   /** Millisecondes avant la fin de l'étape, au moment de l'envoi ; null pendant le jeu. */
   stageEndsIn: number | null;
   players: PlayerId[];
@@ -85,6 +89,7 @@ export type ArenaRunView = {
 export class ArenaRun {
   readonly minigame: ArenaMinigame;
   readonly players: PlayerId[];
+  readonly solo: PlayerId | null;
   readonly #game: ArenaGame<ArenaState>;
   readonly #bots: Map<PlayerId, BotLevel>;
   readonly #ready = new Set<PlayerId>();
@@ -97,20 +102,25 @@ export class ArenaRun {
   #tieBreaks: TieBreak[] = [];
   #order: PlayerId[] | null = null;
 
-  /** `bots` : le niveau de chaque joueur tenu par un bot ; les autres sont des humains. */
+  /**
+   * `bots` : le niveau de chaque joueur tenu par un bot ; les autres sont des humains. `solo` :
+   * en 1 contre tous, le joueur seul.
+   */
   constructor(
     minigame: ArenaMinigame,
     players: PlayerId[],
     bots: Map<PlayerId, BotLevel>,
     seed: number,
     now: number,
+    solo: PlayerId | null = null,
   ) {
     this.minigame = minigame;
     this.players = players;
+    this.solo = solo;
     this.#game = ARENAS[minigame];
     this.#bots = bots;
     for (const id of players) if (bots.has(id)) this.#ready.add(id);
-    this.#state = this.#game.create(players, { practice: false, seed });
+    this.#state = this.#game.create(players, { practice: false, seed, solo });
     const isBotsOnly = players.every((id) => bots.has(id));
     this.#stageAt = isBotsOnly ? now + ARENA_TIMES.botsIntro : Number.POSITIVE_INFINITY;
   }
@@ -165,8 +175,10 @@ export class ArenaRun {
       if (this.#game.isOver(this.#state)) {
         this.#ranking = this.#game.ranking(this.#state);
         // Les ex aequo se départagent aux dés ici, pour que le résultat le montre ; le moteur
-        // reçoit ensuite un classement sans égalité.
-        ({ order: this.#order, tieBreaks: this.#tieBreaks } = breakTies(this.#ranking, rng));
+        // reçoit ensuite un classement sans égalité. En 1 contre tous, seul compte le camp gagnant.
+        ({ order: this.#order, tieBreaks: this.#tieBreaks } = this.solo
+          ? { order: this.#ranking.flat(), tieBreaks: [] }
+          : breakTies(this.#ranking, rng));
         this.#stage = 'result';
         this.#stageAt = now + ARENA_TIMES.result + this.#tieBreaks.length * ARENA_TIMES.tieRoll;
       }
@@ -183,6 +195,13 @@ export class ArenaRun {
     return this.#order?.map((id) => [id]) ?? null;
   }
 
+  /** En 1 contre tous, une fois la partie finie : le joueur seul l'a emporté ; null avant. */
+  get soloWon(): boolean | null {
+    if (!this.solo || !this.#ranking) return null;
+    const [first] = this.#ranking;
+    return first?.length === 1 && first[0] === this.solo;
+  }
+
   /** Ce que voit `viewer` de la partie : tout, sauf ce que le mini-jeu cache (`viewFor`). */
   view(now: number, viewer: Viewer): ArenaRunView {
     // L'état vient toujours du jeu de ce mini-jeu (ARENAS[minigame]) : la paire est juste, ce
@@ -190,6 +209,7 @@ export class ArenaRun {
     return {
       minigame: this.minigame,
       stage: this.#stage,
+      solo: this.solo,
       stageEndsIn:
         this.#stage === 'play' || !Number.isFinite(this.#stageAt)
           ? null
