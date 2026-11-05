@@ -53,7 +53,7 @@ describe('big die', () => {
 
   test('it leans, then tumbles onto the next cell and turns its faces', () => {
     let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
-    state = steps(state, LEAN_TICKS + ROLL_TICKS, { die: push(1, 0) });
+    state = steps(state, LEAN_TICKS + ROLL_TICKS.start, { die: push(1, 0) });
     expect(state.die.col).toBe(3);
     state = steps(state, 1);
     expect(state.die.col).toBe(4);
@@ -64,7 +64,7 @@ describe('big die', () => {
 
   test('it never rolls off the grid', () => {
     let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
-    state = steps(state, 10 * (LEAN_TICKS + ROLL_TICKS), { die: push(-1, 0) });
+    state = steps(state, 10 * (LEAN_TICKS + ROLL_TICKS.start), { die: push(-1, 0) });
     expect(state.die.col).toBe(0);
   });
 
@@ -74,7 +74,7 @@ describe('big die', () => {
     // Juste à côté de la case d'arrivée, le corps dedans mais le centre dehors.
     state = place(state, 'c', 4, 3, 1.1);
     state = steps(state, 1, { die: push(1, 0) });
-    state = steps(state, LEAN_TICKS + ROLL_TICKS);
+    state = steps(state, LEAN_TICKS + ROLL_TICKS.start);
     expect(runner(state, 'b').fellAt).toBe(state.tick);
     expect(runner(state, 'c').fellAt).toBeNull();
     // Le voisin touchait la case d'arrivée : il est repoussé.
@@ -93,24 +93,38 @@ describe('big die', () => {
     let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
     state = place(state, 'b', 4, 4);
     state = place(state, 'c', 3, 1);
-    state = steps(state, SLAM_TICKS + 1, { die: SLAM });
+    state = steps(state, SLAM_TICKS.start + 1, { die: SLAM });
     expect(runner(state, 'b').fellAt).not.toBeNull();
     expect(runner(state, 'c').fellAt).toBeNull();
     const landed = state.tick;
     state = steps(state, 60, { die: SLAM });
     expect(state.die.motion.type).not.toBe('slam');
-    state = steps(state, Math.round(SLAM_COOLDOWN / ARENA_STEP) - 60, { die: SLAM });
-    expect(state.die.motion).toEqual({
-      type: 'slam',
-      at: landed + Math.round(SLAM_COOLDOWN / ARENA_STEP),
-    });
+    while (state.die.motion.type !== 'slam') state = BIG_DIE.step(state, { die: SLAM });
+    // Un peu moins que l'attente du début : le dé presse déjà, d'un rien.
+    const waited = (state.tick - landed) * ARENA_STEP;
+    expect(waited).toBeLessThanOrEqual(SLAM_COOLDOWN.start);
+    expect(waited).toBeGreaterThan(SLAM_COOLDOWN.start - 0.2);
+  });
+
+  test('the die rolls faster and slams again sooner as the clock runs out', () => {
+    let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
+    state = steps(state, Math.round((DIE_TIME_LIMIT - 1) / ARENA_STEP));
+    state = steps(state, 1, { die: push(1, 0) });
+    const { motion } = state.die;
+    if (motion.type !== 'roll') throw new Error('Bascule attendue');
+    expect(motion.roll).toBe(ROLL_TICKS.end);
+    state = steps(state, LEAN_TICKS + motion.roll);
+    state = steps(state, 1, { die: SLAM });
+    const slam = state.die.motion;
+    if (slam.type !== 'slam') throw new Error('Saut attendu');
+    expect(slam.ticks).toBe(SLAM_TICKS.end);
   });
 
   test('crushing more than half of the runners wins for the die', () => {
     let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
     state = place(state, 'b', 4, 3);
     state = place(state, 'c', 4, 4);
-    state = steps(state, SLAM_TICKS + 1, { die: SLAM });
+    state = steps(state, SLAM_TICKS.start + 1, { die: SLAM });
     expect(BIG_DIE.isOver(state)).toBe(true);
     expect(BIG_DIE.ranking(state)).toEqual([['die'], ['b', 'c', 'd']]);
   });
@@ -119,7 +133,7 @@ describe('big die', () => {
     let state = BIG_DIE.create(PLAYERS, { practice: false, seed: 1, solo: 'die' });
     state = place(state, 'b', 4, 3);
     state = steps(state, 1, { die: push(1, 0) });
-    state = steps(state, LEAN_TICKS + ROLL_TICKS);
+    state = steps(state, LEAN_TICKS + ROLL_TICKS.start);
     expect(BIG_DIE.isOver(state)).toBe(false);
     state = steps(state, Math.round(DIE_TIME_LIMIT / ARENA_STEP));
     expect(BIG_DIE.isOver(state)).toBe(true);
@@ -130,7 +144,7 @@ describe('big die', () => {
     let state = BIG_DIE.create(['you', 'dummy'], { practice: true, seed: 1, solo: 'you' });
     state = place(state, 'dummy', 4, 3);
     state = steps(state, 1, { you: push(1, 0) });
-    state = steps(state, LEAN_TICKS + ROLL_TICKS);
+    state = steps(state, LEAN_TICKS + ROLL_TICKS.start);
     expect(runner(state, 'dummy').crushedAt).not.toBeNull();
     expect(BIG_DIE.isOver(state)).toBe(false);
     state = steps(state, 60, { you: IDLE_INPUT });

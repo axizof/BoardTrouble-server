@@ -36,15 +36,19 @@ const BIG_TABLE = 5;
 export const DIE_TIME_LIMIT = 30;
 const BIG_TIME_LIMIT = 40;
 /**
- * Une bascule, en pas : il penche (ce qu'on lit), puis roule sur l'arête. Soit 0,4 s par case
- * (4 m/s) : un peu moins vite qu'un coureur (4,5 m/s), il doit coincer, pas rattraper.
+ * Une bascule, en pas : il penche (ce qu'on lit, toujours aussi long), puis roule sur l'arête.
+ * Le dé presse de plus en plus au fil du chrono (retour du premier test : la fin doit devenir
+ * difficile pour les coureurs) : chaque durée va de `start` (au début) à `end` (à la fin). Soit
+ * 0,37 s par case au début (4,4 m/s, un peu moins vite qu'un coureur à 4,5 : il doit coincer),
+ * 0,33 s à la fin (4,8 m/s). Plus vite, il gagnait 8 parties sur 10 entre bots.
  */
 export const LEAN_TICKS = 4;
-export const ROLL_TICKS = 7;
-/** Le saut écrasant : en l'air, puis un temps pour s'en remettre ; il revient au bout de... */
-export const SLAM_TICKS = 24;
+export const ROLL_TICKS = { start: 7, end: 6 } as const;
+/** Le saut écrasant, en pas d'air (0,8 s puis 0,67 s), et l'attente avant le suivant (s). */
+export const SLAM_TICKS = { start: 24, end: 20 } as const;
+export const SLAM_COOLDOWN = { start: 4, end: 2.5 } as const;
+/** Après le saut, le temps de s'en remettre (en pas). */
 export const SLAM_RECOVER_TICKS = 9;
-export const SLAM_COOLDOWN = 4;
 /** Le coureur : le marcheur des arènes, avec un bond pour esquiver (comme à la Plateforme). */
 const RUNNER: BodyTuning = { ...WALKER, jumpSpeed: 6 };
 const LEAP_SPEED = 6.5;
@@ -58,9 +62,10 @@ const DUMMY_ROLL_EVERY = 30;
 
 export type DieMotion =
   | { type: 'idle' }
-  /** Il bascule vers (dx, dz), depuis le pas `at` : il penche, puis roule. */
-  | { type: 'roll'; dx: number; dz: number; at: number }
-  | { type: 'slam'; at: number }
+  /** Il bascule vers (dx, dz), depuis le pas `at` : il penche LEAN_TICKS, puis roule `roll` pas. */
+  | { type: 'roll'; dx: number; dz: number; at: number; roll: number }
+  /** Il saute au pas `at`, et retombe `ticks` pas plus tard. */
+  | { type: 'slam'; at: number; ticks: number }
   | { type: 'recover'; at: number };
 
 export type BigDie = {
@@ -110,10 +115,16 @@ export function crushedCount(state: BigDieState): number {
   return state.fighters.filter((runner) => runner.fellAt !== null).length;
 }
 
-/** Où en est le saut (0 au départ, 1 à l'atterrissage), ou null hors d'un saut. */
-export function slamProgress(state: BigDieState): number | null {
-  const { motion } = state.die;
-  return motion.type === 'slam' ? (state.tick - motion.at) / SLAM_TICKS : null;
+/** Où en est le chrono, de 0 (le début) à 1 (la fin) ; 0 au bac à sable. */
+function rush(state: BigDieState): number {
+  const left = timeLeft(state);
+  if (left === null) return 0;
+  return 1 - left / timeLimit(state);
+}
+
+/** Une durée du dé à ce moment de la partie, entre celle du début et celle de la fin. */
+function ramp(range: { start: number; end: number }, state: BigDieState): number {
+  return range.start + (range.end - range.start) * rush(state);
 }
 
 function create(
@@ -251,14 +262,14 @@ function shoveOut(runner: DieRunner, col: number, row: number, shove: boolean): 
 function advanceDie(state: BigDieState, input: ArenaInput, running: DieRunner[]): void {
   const { die, tick } = state;
   const { motion } = die;
-  if (motion.type === 'roll' && tick - motion.at >= LEAN_TICKS + ROLL_TICKS) {
+  if (motion.type === 'roll' && tick - motion.at >= LEAN_TICKS + motion.roll) {
     land(die, motion.dx, motion.dz);
     die.motion = { type: 'idle' };
     crush(state, running, 0);
   }
-  if (motion.type === 'slam' && tick - motion.at >= SLAM_TICKS) {
+  if (motion.type === 'slam' && tick - motion.at >= motion.ticks) {
     die.motion = { type: 'recover', at: tick };
-    die.slamReadyAt = tick + Math.round(SLAM_COOLDOWN / ARENA_STEP);
+    die.slamReadyAt = tick + Math.round(ramp(SLAM_COOLDOWN, state) / ARENA_STEP);
     crush(state, running, 1);
   }
   if (motion.type === 'recover' && tick - motion.at >= SLAM_RECOVER_TICKS) {
@@ -266,14 +277,15 @@ function advanceDie(state: BigDieState, input: ArenaInput, running: DieRunner[])
   }
   if (die.motion.type !== 'idle') return;
   if (input.primary && tick >= die.slamReadyAt) {
-    die.motion = { type: 'slam', at: tick };
+    die.motion = { type: 'slam', at: tick, ticks: Math.round(ramp(SLAM_TICKS, state)) };
     return;
   }
   const { dx, dz } = rollDirection(input.move);
   const col = die.col + dx;
   const row = die.row + dz;
   const isInside = col >= 0 && row >= 0 && col < DIE_GRID && row < DIE_GRID;
-  if ((dx !== 0 || dz !== 0) && isInside) die.motion = { type: 'roll', dx, dz, at: tick };
+  if ((dx === 0 && dz === 0) || !isInside) return;
+  die.motion = { type: 'roll', dx, dz, at: tick, roll: Math.round(ramp(ROLL_TICKS, state)) };
 }
 
 /** La direction de la bascule : l'axe où l'on pousse le plus, s'il y en a un franchement. */
@@ -350,10 +362,13 @@ function dummyDieInput(state: BigDieState): ArenaInput {
   return { ...IDLE_INPUT, move: { x: target.x - center.x, z: target.z - center.z } };
 }
 
+function timeLimit(state: BigDieState): number {
+  return state.fighters.length + 1 >= BIG_TABLE ? BIG_TIME_LIMIT : DIE_TIME_LIMIT;
+}
+
 function timeLeft(state: BigDieState): number | null {
   if (state.practice) return null;
-  const limit = state.fighters.length + 1 >= BIG_TABLE ? BIG_TIME_LIMIT : DIE_TIME_LIMIT;
-  return Math.max(0, limit - state.tick * ARENA_STEP);
+  return Math.max(0, timeLimit(state) - state.tick * ARENA_STEP);
 }
 
 function isOver(state: BigDieState): boolean {
