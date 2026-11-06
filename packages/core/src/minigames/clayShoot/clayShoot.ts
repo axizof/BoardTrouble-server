@@ -3,66 +3,63 @@ import type { PlayerId } from '../../game/types';
 import type { Rng } from '../../random/rng';
 import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT } from '../arena/arena';
 
-// Ball-trap (02-mini-jeux.md, fiche 45, ton idée), un duel (et une finale à deux) : chacun son
-// lanceur, l'un à gauche, l'autre à droite ; à chaque volée, les deux lancent un plateau en même
-// temps, en miroir, à des moments qu'on ne peut pas prévoir. Trois zones de tir dans le ciel
-// (gauche, haut, droite) : on choisit la sienne d'une direction, et on tire quand son plateau la
-// traverse. Deux cartouches par volée. Le lanceur du milieu envoie de temps en temps un plateau
-// argenté, commun : le premier qui le casse marque 2 points. Le plus de points après la
-// dernière volée gagne. Tout se joue dans le plan du ciel, face à la caméra : x à droite, y en
-// haut, en mètres.
+// Ball-trap (02-mini-jeux.md, fiche 45, ton idée), un duel (et une finale à deux). Chacun sa
+// moitié du ciel : à chaque volée, un plateau part dans la sienne (le même en miroir chez
+// l'autre, au même moment), lancé à plat, à des moments et d'endroits qu'on ne peut pas
+// prévoir. On vise librement (souris, stick ou flèches) avec un viseur de la taille d'un
+// plateau, qui ne sort pas de sa moitié (jusqu'au milieu, où passent les argentés), et on tire :
+// la gerbe arrive un instant après, au point visé (il faut viser un peu devant un plateau
+// rapide). Deux cartouches, puis une seconde pour recharger. Un plateau argenté, commun, passe de
+// temps en temps au milieu : le premier qui le casse marque 2 points. Tout se joue dans le plan
+// du ciel, face à la caméra : x à droite, y en haut, en mètres.
 
 /** Les volées, et l'écart au hasard entre deux (secondes). La première part à FIRST_VOLLEY. */
 export const CLAY_VOLLEYS = 10;
 const FIRST_VOLLEY = 2;
-const VOLLEY_GAP_MIN = 2.4;
-const VOLLEY_GAP_MAX = 3.6;
+const VOLLEY_GAP_MIN = 2.2;
+const VOLLEY_GAP_MAX = 3.4;
 /** Les plateaux argentés : combien, et leur décalage au hasard sur leur volée (secondes). */
 export const SILVER_COUNT = 3;
-const SILVER_OFFSET_MIN = -0.4;
+const SILVER_OFFSET_MIN = -0.3;
 const SILVER_OFFSET_MAX = 0.8;
 export const SILVER_POINTS = 2;
-/** Les cartouches, rechargées à chaque volée. */
+/** Le fusil : deux cartouches, puis CLAY_RELOAD_TIME secondes pour recharger. */
 export const SHELLS = 2;
-/** Les zones de tir, dans le plan du ciel, et leur rayon. */
-export type ClayZone = 'left' | 'up' | 'right';
-export const ZONES: Record<ClayZone, { x: number; y: number }> = {
-  left: { x: -3.6, y: 4.2 },
-  up: { x: 0, y: 6.4 },
-  right: { x: 3.6, y: 4.2 },
-};
-export const ZONE_RADIUS = 1.25;
-/** Les lanceurs : le joueur de gauche, celui de droite (en miroir), celui du milieu. */
-export const LAUNCHER_X = 7.5;
-const LAUNCHER_Y = 0.6;
-const GRAVITY = 9.8;
-/** Un plateau monte jusqu'à APEX_MIN à APEX_MAX mètres, en avançant à SPEED_MIN à SPEED_MAX m/s. */
-const APEX_MIN = 4.4;
-const APEX_MAX = 7.2;
-const SPEED_MIN = 4.5;
-const SPEED_MAX = 7.5;
-/** Le plateau argenté monte tout droit, en dérivant un peu d'un côté. */
-const SILVER_APEX = 7.4;
-const SILVER_DRIFT = 1.2;
+export const CLAY_RELOAD_TIME = 1;
+/** La gerbe arrive au point visé SHOT_DELAY secondes après le tir. */
+export const SHOT_DELAY = 0.1;
+/** Le rayon d'un plateau, et la marge de la gerbe autour : touché à cette distance du point visé. */
+export const DISC_RADIUS = 0.35;
+export const HIT_RADIUS = 0.5;
+/** Le ciel : sa demi-largeur et ses hauteurs (le viseur y reste). */
+export const SKY_HALF_WIDTH = 9;
+export const SKY_BOTTOM = 0.8;
+export const SKY_TOP = 8;
+/** Chaque viseur va de son bord jusqu'à MIDDLE_REACH au-delà du milieu (là où passent les argentés). */
+export const MIDDLE_REACH = 1.6;
+/** Les plateaux planent : moins de pesanteur qu'une pierre. */
+const GLIDE_GRAVITY = 4;
 /** Après le dernier plateau, la partie finit au bout de ce temps (secondes). */
 const END_PAUSE = 1.5;
-/** Le stick ou les flèches ne changent de zone qu'au-delà de cette inclinaison. */
-const AIM_DEAD_ZONE = 0.5;
-/** La souris choisit la zone la plus proche, à cette distance au plus (mètres). */
-const POINT_REACH = 3.5;
 
-/** Un plateau : à qui il est (null : l'argenté, commun), d'où et comment il part. */
+/**
+ * Un plateau : à qui il est (null : l'argenté, commun), d'où et comment il part. Il vole tant
+ * qu'il est dans le ciel ; `brokenAt` : le pas où il a été cassé, et par qui.
+ */
 export type ClayDisc = {
   id: number;
   owner: PlayerId | null;
   launchAt: number;
   x0: number;
+  y0: number;
   vx: number;
   vy: number;
-  /** Le pas où il a été cassé, et par qui ; null s'il vole encore ou est retombé. */
   brokenAt: number | null;
   brokenBy: PlayerId[];
 };
+
+/** Un tir : le point visé, et les pas où il part et où la gerbe y arrive. */
+export type ClayShot = { owner: PlayerId; x: number; y: number; firedAt: number; landsAt: number };
 
 export type ClayShooter = {
   id: PlayerId;
@@ -70,11 +67,13 @@ export type ClayShooter = {
   fellAt: null;
   points: number;
   shells: number;
-  aim: ClayZone;
-  /** Son dernier tir (le pas, et la zone visée), pour le client ; null avant. */
-  shotAt: number | null;
-  shotZone: ClayZone | null;
+  /** En train de recharger : le pas où le fusil sera prêt ; null sinon. */
+  reloadedAt: number | null;
+  /** Le viseur, dans le plan du ciel. */
+  aimX: number;
+  aimY: number;
   held: boolean;
+  heldReload: boolean;
 };
 
 export type ClayState = {
@@ -82,6 +81,7 @@ export type ClayState = {
   practice: boolean;
   seed: number;
   discs: ClayDisc[];
+  shots: ClayShot[];
   /** La volée en cours (0 avant la première), et le pas où part la suivante. */
   volley: number;
   nextVolleyAt: number;
@@ -97,80 +97,88 @@ function hashUnit(text: string): number {
   return ((hash >>> 0) % 10000) / 10000;
 }
 
+const between = (key: string, min: number, max: number) => min + hashUnit(key) * (max - min);
+
+/** Le côté d'un tireur : -1 la moitié gauche du ciel (le premier), 1 la droite. */
+export function sideOf(state: ClayState, player: PlayerId): -1 | 1 {
+  return state.fighters.findIndex((fighter) => fighter.id === player) % 2 === 0 ? -1 : 1;
+}
+
+/** Où peut aller le viseur de ce côté : sa moitié, jusqu'un peu au-delà du milieu. */
+export function aimBounds(side: -1 | 1): {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+} {
+  return side < 0
+    ? { minX: -SKY_HALF_WIDTH, maxX: MIDDLE_REACH, minY: SKY_BOTTOM, maxY: SKY_TOP }
+    : { minX: -MIDDLE_REACH, maxX: SKY_HALF_WIDTH, minY: SKY_BOTTOM, maxY: SKY_TOP };
+}
+
 /** Où est le plateau à ce pas (fraction comprise), dans le plan du ciel. */
 export function discPosition(disc: ClayDisc, tick: number): { x: number; y: number } {
   const time = Math.max(0, tick - disc.launchAt) * ARENA_STEP;
   return {
     x: disc.x0 + disc.vx * time,
-    y: LAUNCHER_Y + disc.vy * time - 0.5 * GRAVITY * time * time,
+    y: disc.y0 + disc.vy * time - 0.5 * GLIDE_GRAVITY * time * time,
   };
 }
 
-/** Le plateau est en l'air (parti, ni cassé ni retombé). */
+/** Le plateau est en l'air (parti, ni cassé ni sorti du ciel). */
 export function isFlying(disc: ClayDisc, tick: number): boolean {
-  return disc.brokenAt === null && tick >= disc.launchAt && discPosition(disc, tick).y > 0;
-}
-
-export function isInZone(point: { x: number; y: number }, zone: ClayZone): boolean {
-  const center = ZONES[zone];
-  return Math.hypot(point.x - center.x, point.y - center.y) <= ZONE_RADIUS;
-}
-
-/** Le pas où un plateau passe au plus près du centre d'une zone, s'il la traverse ; sinon null. */
-export function zoneCrossing(disc: ClayDisc, zone: ClayZone): number | null {
-  let best: { tick: number; gap: number } | null = null;
-  for (let tick = disc.launchAt; ; tick++) {
-    const point = discPosition(disc, tick);
-    if (point.y < 0) break;
-    const center = ZONES[zone];
-    const gap = Math.hypot(point.x - center.x, point.y - center.y);
-    if (gap <= ZONE_RADIUS && (!best || gap < best.gap)) best = { tick, gap };
-  }
-  return best?.tick ?? null;
+  if (disc.brokenAt !== null || tick < disc.launchAt) return false;
+  const { x, y } = discPosition(disc, tick);
+  return y > 0 && Math.abs(x) < SKY_HALF_WIDTH + 1.5;
 }
 
 /**
- * Le plateau de la volée `volley` pour le joueur de gauche (`side` 1) ou de droite (-1, en
- * miroir) : au hasard de la partie, mais toujours par au moins une zone.
+ * Le plateau de la volée pour un côté (le droit en miroir du gauche) : lancé à plat depuis le
+ * bord, ou d'en bas, vers le milieu ; d'où, à quelle hauteur et à quelle vitesse, au hasard de
+ * la partie (le même des deux côtés).
  */
 function playerDisc(
   seed: number,
   volley: number,
-  side: 1 | -1,
+  side: -1 | 1,
   launchAt: number,
   owner: PlayerId,
   id: number,
 ): ClayDisc {
-  for (let attempt = 0; ; attempt++) {
-    const key = `${seed}:clay:${volley}:${attempt}`;
-    const apex = APEX_MIN + hashUnit(`${key}:apex`) * (APEX_MAX - APEX_MIN);
-    const speed = SPEED_MIN + hashUnit(`${key}:speed`) * (SPEED_MAX - SPEED_MIN);
-    const disc: ClayDisc = {
-      id,
-      owner,
-      launchAt,
-      x0: -side * LAUNCHER_X,
-      vx: side * speed,
-      vy: Math.sqrt(2 * GRAVITY * (apex - LAUNCHER_Y)),
-      brokenAt: null,
-      brokenBy: [],
+  const key = `${seed}:clay:${volley}`;
+  const mirror = (x: number) => (side < 0 ? x : -x);
+  const flight = { id, owner, launchAt, brokenAt: null, brokenBy: [] };
+  if (hashUnit(`${key}:below`) < 0.35) {
+    // D'une fosse devant, il monte en travers du ciel.
+    return {
+      ...flight,
+      x0: mirror(-between(`${key}:x`, 3, 7.5)),
+      y0: 0.2,
+      vx: mirror(between(`${key}:vx`, 1.5, 4)),
+      vy: between(`${key}:vy`, 6.5, 8.5),
     };
-    const isReachable = (['left', 'up', 'right'] as const).some(
-      (zone) => zoneCrossing(disc, zone) !== null,
-    );
-    if (isReachable || attempt >= 20) return disc;
   }
+  // Du bord, à plat, il traverse sa moitié en montant un peu, puis plane et retombe.
+  return {
+    ...flight,
+    x0: mirror(-SKY_HALF_WIDTH - 1),
+    y0: between(`${key}:y`, 1.2, 4.5),
+    vx: mirror(between(`${key}:vx`, 6.5, 10)),
+    vy: between(`${key}:vy`, 1.5, 4.5),
+  };
 }
 
+/** L'argenté : il monte du milieu, en dérivant un peu d'un côté. */
 function silverDisc(seed: number, volley: number, launchAt: number, id: number): ClayDisc {
-  const side = hashUnit(`${seed}:silver:${volley}:side`) < 0.5 ? 1 : -1;
+  const key = `${seed}:silver:${volley}`;
   return {
     id,
     owner: null,
     launchAt,
-    x0: 0,
-    vx: side * SILVER_DRIFT,
-    vy: Math.sqrt(2 * GRAVITY * (SILVER_APEX - LAUNCHER_Y)),
+    x0: between(`${key}:x`, -0.8, 0.8),
+    y0: 0.2,
+    vx: (hashUnit(`${key}:side`) < 0.5 ? 1 : -1) * between(`${key}:vx`, 0.3, 1.2),
+    vy: between(`${key}:vy`, 7, 8.5),
     brokenAt: null,
     brokenBy: [],
   };
@@ -180,7 +188,7 @@ function silverDisc(seed: number, volley: number, launchAt: number, id: number):
 function silverVolleys(seed: number): Set<number> {
   const chosen = new Set<number>();
   for (let k = 0; chosen.size < SILVER_COUNT && k < 100; k++) {
-    chosen.add(1 + Math.floor(hashUnit(`${seed}:silver:${k}`) * (CLAY_VOLLEYS - 1)));
+    chosen.add(2 + Math.floor(hashUnit(`${seed}:silver:${k}`) * (CLAY_VOLLEYS - 1)));
   }
   return chosen;
 }
@@ -194,58 +202,110 @@ function create(
     practice,
     seed,
     discs: [],
+    shots: [],
     volley: 0,
     nextVolleyAt: steps(FIRST_VOLLEY),
-    fighters: players.map((id) => ({
+    fighters: players.map((id, index) => ({
       id,
       fellAt: null,
       points: 0,
       shells: SHELLS,
-      aim: 'up',
-      shotAt: null,
-      shotZone: null,
+      reloadedAt: null,
+      // Au départ, au milieu de sa moitié.
+      aimX: (index % 2 === 0 ? -1 : 1) * SKY_HALF_WIDTH * 0.45,
+      aimY: 4,
       held: false,
+      heldReload: false,
     })),
   };
 }
 
-/** Lance la volée suivante : un plateau par joueur, en miroir, et l'argenté si c'en est une. */
+/** Lance la volée suivante : un plateau par tireur, en miroir, et l'argenté si c'en est une. */
 function launchVolley(state: ClayState, tick: number): void {
   const volley = state.volley + 1;
   let id = state.discs.reduce((most, disc) => Math.max(most, disc.id + 1), 0);
-  state.fighters.forEach((fighter, index) => {
-    state.discs.push(
-      playerDisc(state.seed, volley, index % 2 === 0 ? 1 : -1, tick, fighter.id, id),
-    );
+  for (const fighter of state.fighters) {
+    const side = sideOf(state, fighter.id);
+    state.discs.push(playerDisc(state.seed, volley, side, tick, fighter.id, id));
     id += 1;
-    fighter.shells = SHELLS;
-  });
+  }
   // Au bac à sable, une volée sur trois a son argenté.
-  const isSilver = state.practice ? volley % 3 === 0 : silverVolleys(state.seed).has(volley - 1);
+  const isSilver = state.practice ? volley % 3 === 0 : silverVolleys(state.seed).has(volley);
   if (isSilver) {
-    const offset =
-      SILVER_OFFSET_MIN +
-      hashUnit(`${state.seed}:silver-at:${volley}`) * (SILVER_OFFSET_MAX - SILVER_OFFSET_MIN);
+    const key = `${state.seed}:silver-at:${volley}`;
+    const offset = between(key, SILVER_OFFSET_MIN, SILVER_OFFSET_MAX);
     state.discs.push(silverDisc(state.seed, volley, tick + steps(offset), id));
   }
   state.volley = volley;
-  const gap =
-    VOLLEY_GAP_MIN + hashUnit(`${state.seed}:gap:${volley}`) * (VOLLEY_GAP_MAX - VOLLEY_GAP_MIN);
+  const gap = between(`${state.seed}:gap:${volley}`, VOLLEY_GAP_MIN, VOLLEY_GAP_MAX);
   state.nextVolleyAt = tick + steps(gap);
 }
 
-/** La zone où vise cette commande : une direction (bas ne change rien), sinon la souris. */
-export function clayAimOf(input: ArenaInput, current: ClayZone): ClayZone {
-  const { x, z } = input.move;
-  if (Math.abs(x) >= AIM_DEAD_ZONE && Math.abs(x) >= -z) return x < 0 ? 'left' : 'right';
-  if (z <= -AIM_DEAD_ZONE) return 'up';
-  // La souris vise dans le plan du ciel : le point reçu y porte la hauteur dans `z`.
+/** Le viseur suit le point reçu (souris, ou stick et flèches intégrés par le client), dans sa moitié. */
+function aim(fighter: ClayShooter, input: ArenaInput, side: -1 | 1): void {
   const point = input.point;
-  if (!point) return current;
-  const nearest = (['left', 'up', 'right'] as const)
-    .map((zone) => ({ zone, gap: Math.hypot(point.x - ZONES[zone].x, point.z - ZONES[zone].y) }))
-    .sort((a, b) => a.gap - b.gap)[0];
-  return nearest && nearest.gap <= POINT_REACH ? nearest.zone : current;
+  if (!point) return;
+  const bounds = aimBounds(side);
+  // Le point reçu porte la hauteur dans `z` (le plan du ciel).
+  fighter.aimX = Math.max(bounds.minX, Math.min(bounds.maxX, point.x));
+  fighter.aimY = Math.max(bounds.minY, Math.min(bounds.maxY, point.z));
+}
+
+/** Tirer (s'il a une cartouche et ne recharge pas), recharger à la demande ou fusil vide. */
+function shoot(state: ClayState, fighter: ClayShooter, input: ArenaInput): void {
+  const { tick } = state;
+  if (fighter.reloadedAt !== null && tick >= fighter.reloadedAt) {
+    fighter.shells = SHELLS;
+    fighter.reloadedAt = null;
+  }
+  const isPress = input.primary && !fighter.held;
+  const isReloadPress = input.secondary && !fighter.heldReload;
+  fighter.held = input.primary;
+  fighter.heldReload = input.secondary;
+  if (fighter.reloadedAt === null && isPress && fighter.shells > 0) {
+    fighter.shells -= 1;
+    state.shots.push({
+      owner: fighter.id,
+      x: fighter.aimX,
+      y: fighter.aimY,
+      firedAt: tick,
+      landsAt: tick + steps(SHOT_DELAY),
+    });
+  }
+  const wantsReload = fighter.shells === 0 || (isReloadPress && fighter.shells < SHELLS);
+  if (fighter.reloadedAt === null && wantsReload)
+    fighter.reloadedAt = tick + steps(CLAY_RELOAD_TIME);
+}
+
+/** Les gerbes qui arrivent à ce pas : ce qu'elles cassent (deux sur l'argenté au même pas : 1 point chacun). */
+function landShots(state: ClayState): void {
+  const { tick } = state;
+  const silverHits = new Map<number, PlayerId[]>();
+  for (const shot of state.shots) {
+    if (shot.landsAt !== tick) continue;
+    for (const disc of state.discs) {
+      const isMine = disc.owner === shot.owner || disc.owner === null;
+      if (!isMine || !isFlying(disc, tick)) continue;
+      const { x, y } = discPosition(disc, tick);
+      if (Math.hypot(x - shot.x, y - shot.y) > HIT_RADIUS) continue;
+      if (disc.owner === null) {
+        silverHits.set(disc.id, [...(silverHits.get(disc.id) ?? []), shot.owner]);
+        continue;
+      }
+      Object.assign(disc, { brokenAt: tick, brokenBy: [shot.owner] });
+      const fighter = state.fighters.find((one) => one.id === shot.owner);
+      if (fighter) fighter.points += 1;
+    }
+  }
+  for (const [id, shooters] of silverHits) {
+    const disc = state.discs.find((one) => one.id === id);
+    if (!disc) continue;
+    Object.assign(disc, { brokenAt: tick, brokenBy: shooters });
+    const points = shooters.length === 1 ? SILVER_POINTS : 1;
+    for (const fighter of state.fighters) {
+      if (shooters.includes(fighter.id)) fighter.points += points;
+    }
+  }
 }
 
 function step(state: ClayState, inputs: Partial<Record<PlayerId, ArenaInput>>): ClayState {
@@ -254,59 +314,35 @@ function step(state: ClayState, inputs: Partial<Record<PlayerId, ArenaInput>>): 
     ...state,
     tick,
     discs: state.discs.map((disc) => ({ ...disc })),
+    // Un tir arrivé reste un instant : le client montre sa gerbe.
+    shots: state.shots.filter((shot) => tick - shot.landsAt < steps(1)),
     fighters: state.fighters.map((fighter) => ({ ...fighter })),
   };
   const isLastDone = !state.practice && state.volley >= CLAY_VOLLEYS;
   if (tick >= next.nextVolleyAt && !isLastDone) launchVolley(next, tick);
-  // Les tirs de ce pas, puis ce qu'ils cassent (deux sur l'argenté au même pas : 1 point chacun).
-  const silverHits = new Map<number, PlayerId[]>();
   for (const fighter of next.fighters) {
     const input = inputs[fighter.id] ?? IDLE_INPUT;
-    fighter.aim = clayAimOf(input, fighter.aim);
-    const isPress = input.primary && !fighter.held;
-    fighter.held = input.primary;
-    if (!isPress || fighter.shells <= 0) continue;
-    fighter.shells -= 1;
-    fighter.shotAt = tick;
-    fighter.shotZone = fighter.aim;
-    for (const disc of next.discs) {
-      const isMine = disc.owner === fighter.id || disc.owner === null;
-      if (!isMine || !isFlying(disc, tick) || !isInZone(discPosition(disc, tick), fighter.aim))
-        continue;
-      if (disc.owner === null)
-        silverHits.set(disc.id, [...(silverHits.get(disc.id) ?? []), fighter.id]);
-      else {
-        Object.assign(disc, { brokenAt: tick, brokenBy: [fighter.id] });
-        fighter.points += 1;
-      }
-    }
+    aim(fighter, input, sideOf(next, fighter.id));
+    shoot(next, fighter, input);
   }
-  for (const [id, shooters] of silverHits) {
-    const disc = next.discs.find((one) => one.id === id);
-    if (!disc) continue;
-    Object.assign(disc, { brokenAt: tick, brokenBy: shooters });
-    const points = shooters.length === 1 ? SILVER_POINTS : 1;
-    for (const fighter of next.fighters)
-      if (shooters.includes(fighter.id)) fighter.points += points;
-  }
+  landShots(next);
   // Les plateaux finis depuis un moment s'en vont (le client a montré leurs éclats).
   next.discs = next.discs.filter((disc) => tick - disc.launchAt < steps(8));
   return next;
 }
 
+/** Le pas où un plateau a fini : cassé, ou sorti du ciel. */
+function endOf(disc: ClayDisc): number {
+  if (disc.brokenAt !== null) return disc.brokenAt;
+  let tick = disc.launchAt;
+  while (isFlying(disc, tick)) tick += 1;
+  return tick;
+}
+
 /** Toutes les volées sont parties, et plus rien ne vole depuis un moment. */
 function isOver(state: ClayState): boolean {
   if (state.practice || state.volley < CLAY_VOLLEYS) return false;
-  const lastEnd = Math.max(
-    0,
-    ...state.discs.map((disc) => {
-      if (disc.brokenAt !== null) return disc.brokenAt;
-      // Le pas où il retombe.
-      let tick = disc.launchAt;
-      while (discPosition(disc, tick).y > 0) tick += 1;
-      return tick;
-    }),
-  );
+  const lastEnd = Math.max(0, ...state.discs.map(endOf));
   return state.tick >= lastEnd + steps(END_PAUSE);
 }
 
@@ -320,62 +356,55 @@ function ranking(state: ClayState): PlayerId[][] {
 }
 
 /**
- * Le bot vise une zone que son plateau traverse (le Facile se trompe parfois de zone), et tire
- * quand le plateau y passe au plus près, avec une erreur de timing selon son niveau (tirée une
- * fois par plateau et par cartouche). Raté, il retente avec sa seconde cartouche si le plateau
- * traverse encore une zone. Un plateau argenté en l'air, il le vise d'abord (plus ou moins
- * souvent selon son niveau) s'il passe avant le sien.
+ * Le bot vise comme un joueur au stick : il voit le plateau un temps après son départ, déplace
+ * son viseur à une vitesse bornée vers l'endroit où le plateau sera quand la gerbe arrivera, et
+ * tire dès qu'il est dessus, à son erreur près (tirée une fois par plateau et par cartouche).
+ * Raté, il retire, ou attend la recharge. Un argenté en l'air, il le vise d'abord (plus ou moins
+ * souvent selon son niveau).
  */
-const TIMING: Record<BotLevel, number> = { easy: 0.13, normal: 0.08, expert: 0.05 };
-const WRONG_ZONE: Record<BotLevel, number> = { easy: 0.15, normal: 0.06, expert: 0.02 };
+const REACTION: Record<BotLevel, number> = { easy: 0.35, normal: 0.25, expert: 0.17 };
+const AIM_SPEED: Record<BotLevel, number> = { easy: 9, normal: 12, expert: 16 };
+const AIM_ERROR: Record<BotLevel, number> = { easy: 0.8, normal: 0.7, expert: 0.55 };
 const SILVER_GREED: Record<BotLevel, number> = { easy: 0.3, normal: 0.6, expert: 0.85 };
-const LATE_REACH = steps(0.2);
+/** Il tire quand son viseur est à moins de ça (plus un pas de visée) du point voulu. */
+const ON_TARGET = 0.15;
 
 function botInput(state: ClayState, player: PlayerId, level: BotLevel, _rng: Rng): ArenaInput {
   const me = state.fighters.find((fighter) => fighter.id === player);
   if (!me) return IDLE_INPUT;
   const target = botTarget(state, me, level);
-  if (!target) return IDLE_INPUT;
-  const move =
-    target.zone === 'up' ? { x: 0, z: -1 } : { x: target.zone === 'left' ? -1 : 1, z: 0 };
-  const key = `${state.seed}:${player}:${target.disc.id}:${me.shells}`;
-  const error = steps((hashUnit(key) * 2 - 1) * TIMING[level]);
-  const isTime = state.tick + 1 >= target.at + error;
-  return {
-    move,
-    primary: isTime && me.aim === target.zone && me.shells > 0 && !me.held,
-    secondary: false,
-  };
+  const stay = { ...IDLE_INPUT, point: { x: me.aimX, z: me.aimY } };
+  if (!target) return stay;
+  const lead = steps(SHOT_DELAY) + 1;
+  const key = `${state.seed}:${player}:${target.id}:${me.shells}`;
+  const angle = hashUnit(`${key}:angle`) * Math.PI * 2;
+  const miss = hashUnit(`${key}:miss`) * AIM_ERROR[level];
+  const goal = discPosition(target, state.tick + lead);
+  const wanted = { x: goal.x + Math.cos(angle) * miss, y: goal.y + Math.sin(angle) * miss };
+  const gap = Math.hypot(wanted.x - me.aimX, wanted.y - me.aimY);
+  const most = AIM_SPEED[level] * ARENA_STEP;
+  const t = gap <= most ? 1 : most / gap;
+  const point = { x: me.aimX + (wanted.x - me.aimX) * t, z: me.aimY + (wanted.y - me.aimY) * t };
+  // Une gerbe encore en route : il attend de voir avant de retirer.
+  const isWaiting = state.shots.some((shot) => shot.owner === player && shot.landsAt > state.tick);
+  const canShoot = me.reloadedAt === null && me.shells > 0 && !me.held && !isWaiting;
+  return { ...IDLE_INPUT, point, primary: canShoot && gap <= ON_TARGET + most };
 }
 
-/** Le plateau et la zone que vise le bot, et le pas où il y passe au plus près ; null s'il n'a rien à viser. */
-function botTarget(
-  state: ClayState,
-  me: ClayShooter,
-  level: BotLevel,
-): { disc: ClayDisc; zone: ClayZone; at: number } | null {
-  const options: { disc: ClayDisc; zone: ClayZone; at: number }[] = [];
-  for (const disc of state.discs) {
-    if (disc.owner !== me.id && disc.owner !== null) continue;
-    if (disc.brokenAt !== null || discPosition(disc, state.tick).y < 0) continue;
-    if (
-      disc.owner === null &&
-      hashUnit(`${state.seed}:${me.id}:greed:${disc.id}`) >= SILVER_GREED[level]
-    )
-      continue;
-    for (const zone of ['left', 'up', 'right'] as const) {
-      const at = zoneCrossing(disc, zone);
-      // Un passage tout juste dépassé compte encore : un bot en retard tire après lui.
-      if (at !== null && at + LATE_REACH >= state.tick) options.push({ disc, zone, at });
-    }
-  }
-  const next = options.sort((a, b) => a.at - b.at)[0];
-  if (!next) return null;
-  if (hashUnit(`${state.seed}:${me.id}:wrong:${next.disc.id}`) < WRONG_ZONE[level]) {
-    const wrong = (['left', 'up', 'right'] as const).find((zone) => zone !== next.zone) ?? 'up';
-    return { ...next, zone: wrong };
-  }
-  return next;
+/** Le plateau que le bot vise : un argenté s'il le veut, sinon le sien, vu et à sa portée. */
+function botTarget(state: ClayState, me: ClayShooter, level: BotLevel): ClayDisc | null {
+  const bounds = aimBounds(sideOf(state, me.id));
+  const reaction = steps(REACTION[level]);
+  const lead = steps(SHOT_DELAY) + 1;
+  const targets = state.discs.filter((disc) => {
+    if (disc.owner !== me.id && disc.owner !== null) return false;
+    if (!isFlying(disc, state.tick + lead) || state.tick < disc.launchAt + reaction) return false;
+    const greed = hashUnit(`${state.seed}:${me.id}:greed:${disc.id}`);
+    if (disc.owner === null && greed >= SILVER_GREED[level]) return false;
+    const { x, y } = discPosition(disc, state.tick + lead);
+    return x >= bounds.minX && x <= bounds.maxX && y >= bounds.minY && y <= bounds.maxY;
+  });
+  return targets.find((disc) => disc.owner === null) ?? targets[0] ?? null;
 }
 
 export const CLAY_SHOOT: ArenaGame<ClayState> = {
