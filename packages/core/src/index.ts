@@ -25,6 +25,7 @@ export * from './minigames/cardMemory/cardMemory';
 export * from './minigames/catalog';
 export * from './minigames/meltingPlatform/meltingPlatform';
 export * from './minigames/pawnSumo/pawnSumo';
+export * from './minigames/rampart/rampart';
 export * from './minigames/rhythmTugOfWar/rhythmTugOfWar';
 export * from './minigames/secretAuction/secretAuction';
 export * from './minigames/spinningBar/spinningBar';
