@@ -9,6 +9,7 @@ import { CARD_MEMORY } from '../cardMemory/cardMemory';
 import type { MinigameId } from '../catalog';
 import { CLAY_SHOOT } from '../clayShoot/clayShoot';
 import { HIGH_NOON } from '../highNoon/highNoon';
+import { LAST_ROLL } from '../lastRoll/lastRoll';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
 import { RAMPART } from '../rampart/rampart';
@@ -45,6 +46,7 @@ export const ARENAS = {
   rampart: RAMPART,
   highNoon: HIGH_NOON,
   clayShoot: CLAY_SHOOT,
+  lastRoll: LAST_ROLL,
 } satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
