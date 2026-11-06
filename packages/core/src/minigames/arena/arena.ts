@@ -66,6 +66,11 @@ export type ArenaGame<State extends ArenaState> = {
    * suite.
    */
   reveal?: RevealRules<State>;
+  /**
+   * Pour un défi solo (la porte d'adresse) : le joueur l'a réussi. Sans elle, ce n'est pas un
+   * défi : le classement suffit.
+   */
+  succeeded?(state: State): boolean;
 };
 
 /** La plus grande visée acceptée (un indice d'élément). */

@@ -2,6 +2,7 @@
 // Chaque mini-jeu d'arène, entre bots, à 4 et à 6 joueurs (à 2 pour un duel). Un mini-jeu
 // classique se joue à une table aux niveaux mélangés : on regarde qui gagne selon son niveau.
 // Un 1 contre tous se joue à niveau égal des deux côtés : on regarde si le joueur seul gagne.
+// Un défi solo (la porte d'adresse) se joue seul : on regarde combien de fois il est réussi.
 // Un nouveau mini-jeu d'arène (ARENAS) est simulé sans rien ajouter ici.
 import {
   ARENA_STEP,
@@ -32,7 +33,7 @@ for (let i = 2; i < process.argv.length; i += 2) {
 const games = Number(args.get('--games') ?? 100);
 const only = args.get('--minigame') ?? null;
 
-type Played = { ranking: PlayerId[][]; seconds: number };
+type Played = { ranking: PlayerId[][]; seconds: number; succeeded: boolean | null };
 
 /** Une partie entre bots, jusqu'à la fin. */
 function play(
@@ -51,7 +52,11 @@ function play(
     );
     state = game.step(state, inputs);
   }
-  return { ranking: game.ranking(state), seconds: state.tick * ARENA_STEP };
+  return {
+    ranking: game.ranking(state),
+    seconds: state.tick * ARENA_STEP,
+    succeeded: game.succeeded?.(state) ?? null,
+  };
 }
 
 const percent = (part: number, total: number) =>
@@ -60,8 +65,22 @@ const percent = (part: number, total: number) =>
 function simulate(minigame: ArenaMinigame): void {
   const game = ARENAS[minigame] as ArenaGame<ArenaState>;
   const { occasions } = MINIGAMES[minigame];
-  const tables = occasions.includes('duel') ? [2] : [4, 6];
   console.log(`\n${minigame}`);
+  if (occasions.includes('solo')) {
+    const cells = LEVELS.map((level) => {
+      let wins = 0;
+      let seconds = 0;
+      for (let seed = 1; seed <= games; seed++) {
+        const played = play(game, [level], seed, null);
+        if (played.succeeded) wins += 1;
+        seconds += played.seconds;
+      }
+      return `${level} ${percent(wins, games)} (${(seconds / games).toFixed(0)} s)`;
+    });
+    console.log(`  réussi seul : ${cells.join(' | ')}`);
+    return;
+  }
+  const tables = occasions.includes('duel') ? [2] : [4, 6];
   for (const table of tables) {
     if (occasions.includes('oneVsAll')) {
       const cells = LEVELS.map((level) => {
