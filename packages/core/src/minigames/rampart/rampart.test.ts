@@ -66,13 +66,22 @@ describe('the rampart', () => {
     }
   });
 
-  test('a thrower walks along the ring, never off it', () => {
-    const start = match();
-    const before = thrower(start, 'a');
-    const walked = run(start, { a: { ...IDLE_INPUT, move: { x: 1, z: 0 } } }, 30);
-    const after = thrower(walked, 'a');
-    expect(Math.hypot(after.x, after.z)).toBeCloseTo(RING_RADIUS);
-    expect(Math.abs(after.angle - before.angle)).toBeGreaterThan(0.3);
+  test('right turns a thrower clockwise around the ring, wherever he stands; up and down do nothing', () => {
+    const right = { ...IDLE_INPUT, move: { x: 1, z: 0 } };
+    // En haut de l'écran (derrière le joueur seul), droite va vers la droite.
+    const top = thrower(run(match(), { a: right }, 15), 'a');
+    expect(Math.hypot(top.x, top.z)).toBeCloseTo(RING_RADIUS);
+    expect(top.x).toBeGreaterThan(0.5);
+    // Sur le côté droit du cercle, droite descend vers le bas de l'écran (sans passer par bas).
+    const side = {
+      ...match(),
+      fighters: match().fighters.map((one) =>
+        one.id === 'a' ? { ...one, angle: Math.PI / 2, x: RING_RADIUS, z: 0 } : one,
+      ),
+    };
+    expect(thrower(run(side, { a: right }, 15), 'a').z).toBeGreaterThan(0.5);
+    const up = { ...IDLE_INPUT, move: { x: 0, z: -1 } };
+    expect(thrower(run(side, { a: up }, 15), 'a').angle).toBeCloseTo(Math.PI / 2);
   });
 
   test('a tap throws a slow stone, a full hold a fast one; then a new stone must be picked up', () => {
