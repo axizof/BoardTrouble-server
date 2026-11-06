@@ -122,6 +122,27 @@ describe('a game session', () => {
     throw new Error('Aucune partie ne joue le Gros Dé en 1 contre tous');
   });
 
+  test('plays a duel arena between the two duelists only, then settles the duel', () => {
+    for (let seed = 1; seed < 400; seed++) {
+      const { session } = start(BOTS, seed);
+      let duelists: string[] | null = null;
+      let ended: GameEvent | undefined;
+      for (let wake = session.nextWakeAt(); wake !== null && !ended; wake = session.nextWakeAt()) {
+        const events = session.tick(wake) ?? [];
+        const run = session.arenaMessage({ type: 'spectator' }, wake);
+        const isDuel = run.type === 'arena' && run.run?.minigame === 'clayShoot';
+        if (isDuel && run.run) duelists = run.run.players;
+        ended = events.find((event) => event.type === 'duelEnded');
+      }
+      if (duelists === null || ended?.type !== 'duelEnded') continue;
+      expect(duelists).toHaveLength(2);
+      expect(ended.winner === null || duelists.includes(ended.winner)).toBe(true);
+      expect(session.isPlayingArena).toBe(false);
+      return;
+    }
+    throw new Error('Aucune partie ne joue le Ball-trap en duel');
+  });
+
   test('plays a placeholder minigame as soon as its intro has been read', () => {
     // Toutes les manches sont des arènes : on joue jusqu'au premier mini-jeu encore provisoire
     // (duel, 1 contre tous, porte d'adresse, finale).

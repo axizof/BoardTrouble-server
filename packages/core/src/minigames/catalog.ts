@@ -13,6 +13,7 @@ export type MinigameId =
   | 'bigDie'
   | 'rampart'
   | 'highNoon'
+  | 'clayShoot'
   | 'lastRoll'
   | 'perfectGauge'
   | 'combination';
@@ -39,6 +40,7 @@ export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
   bigDie: { occasions: ['oneVsAll'] },
   rampart: { occasions: ['oneVsAll'] },
   highNoon: { occasions: ['duel', 'finale'], finalists: { min: 2, max: 2 } },
+  clayShoot: { occasions: ['duel', 'finale'], finalists: { min: 2, max: 2 } },
   lastRoll: { occasions: ['finale'], finalists: { min: 2, max: 6 } },
   perfectGauge: { occasions: ['solo'] },
   combination: { occasions: ['solo'] },

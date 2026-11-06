@@ -23,6 +23,7 @@ export * from './minigames/bigDie/bigDie';
 export * from './minigames/boardReflex/boardReflex';
 export * from './minigames/cardMemory/cardMemory';
 export * from './minigames/catalog';
+export * from './minigames/clayShoot/clayShoot';
 export * from './minigames/highNoon/highNoon';
 export * from './minigames/meltingPlatform/meltingPlatform';
 export * from './minigames/pawnSumo/pawnSumo';
