@@ -31,9 +31,12 @@ export const SHOT_DELAY = 0.1;
 /** Le rayon d'un plateau, et la marge de la gerbe autour : touché à cette distance du point visé. */
 export const DISC_RADIUS = 0.35;
 export const HIT_RADIUS = 0.5;
-/** Le ciel : sa demi-largeur et ses hauteurs (le viseur y reste). */
+/**
+ * Le ciel : sa demi-largeur et ses hauteurs (le viseur y reste). Plus bas que SKY_BOTTOM, les
+ * stands et la haie du premier plan le cachent.
+ */
 export const SKY_HALF_WIDTH = 9;
-export const SKY_BOTTOM = 0.8;
+export const SKY_BOTTOM = 1.8;
 export const SKY_TOP = 8;
 /** Chaque viseur va de son bord jusqu'à MIDDLE_REACH au-delà du milieu (là où passent les argentés). */
 export const MIDDLE_REACH = 1.6;
@@ -158,13 +161,14 @@ function playerDisc(
       vy: between(`${key}:vy`, 6.5, 8.5),
     };
   }
-  // Du bord, à plat, il traverse sa moitié en montant un peu, puis plane et retombe.
+  // Du bord, à plat, il traverse sa moitié en montant un peu, puis plane et retombe. Assez haut
+  // pour passer au-dessus des stands (retour de test : lancés trop bas, ils passaient derrière).
   return {
     ...flight,
     x0: mirror(-SKY_HALF_WIDTH - 1),
-    y0: between(`${key}:y`, 1.2, 4.5),
+    y0: between(`${key}:y`, 2.8, 5),
     vx: mirror(between(`${key}:vx`, 6.5, 10)),
-    vy: between(`${key}:vy`, 1.5, 4.5),
+    vy: between(`${key}:vy`, 1.5, 4),
   };
 }
 
