@@ -13,7 +13,6 @@ import {
   RING_RADIUS,
   reloadTime,
   SLOW_STONE,
-  STUMBLE_TIME,
   THROW_CHARGE_TIME,
 } from './rampart';
 
@@ -88,32 +87,19 @@ describe('the rampart', () => {
     expect(run(RAMPART.step(reloaded, { a: press }), {}, 1).stones).toHaveLength(2);
   });
 
-  test('a strike breaks the stone in front, close by, and another can follow at once', () => {
-    // Il regarde la caméra (angle 0) : deux pierres arrivent de là, l'une derrière l'autre.
-    let state = withStones(stone(0, 0, 2.2), stone(1, 0, 4.5));
-    state = RAMPART.step(state, { s: press });
-    expect(state.stones[0]?.end).toBe('struck');
-    state = run(state, { s: IDLE_INPUT }, 1);
-    while ((state.stones[1]?.x ?? 0) ** 2 + (state.stones[1]?.z ?? 0) ** 2 > 2 ** 2) {
-      state = RAMPART.step(state, { s: IDLE_INPUT });
-    }
-    state = RAMPART.step(state, { s: press });
-    expect(state.stones[1]?.end).toBe('struck');
-    expect(state.solo.broken).toBe(2);
-    expect(state.solo.lives).toBe(RAMPART_LIVES);
+  test('a stone entering the zone in front of him breaks on its own', () => {
+    // Il regarde la caméra (angle 0) : la pierre de face casse, celle de côté le touche.
+    const state = run(withStones(stone(0, 0, 4.5), stone(1, Math.PI / 2, 4)), {}, 30);
+    expect(state.stones.map((one) => one.end)).toEqual(['struck', 'hit']);
+    expect(state.solo.broken).toBe(1);
+    expect(state.solo.lives).toBe(RAMPART_LIVES - 1);
   });
 
-  test('striking too early misses and trips him up: he cannot strike again for a while', () => {
-    let state = withStones(stone(0, 0, 6));
-    state = run(state, { s: press }, 1);
-    state = run(state, { s: IDLE_INPUT }, 6);
-    expect(state.solo.stumbleUntil).not.toBeNull();
-    // La pierre arrive pendant qu'il se relève : il a beau frapper, elle le touche.
-    for (let i = 0; i < Math.ceil(STUMBLE_TIME / ARENA_STEP) - 8; i++) {
-      state = RAMPART.step(state, { s: i % 2 === 0 ? press : IDLE_INPUT });
-    }
-    expect(state.stones[0]?.end).toBe('hit');
-    expect(state.solo.lives).toBe(RAMPART_LIVES - 1);
+  test('turning toward a stone from behind breaks it before it reaches him', () => {
+    const back = { ...IDLE_INPUT, move: { x: 0, z: -1 } };
+    const state = run(withStones(stone(0, Math.PI, 5)), { s: back }, 30);
+    expect(state.stones[0]?.end).toBe('struck');
+    expect(state.solo.lives).toBe(RAMPART_LIVES);
   });
 
   test('a stone from behind hits him; three hits and the throwers win', () => {
