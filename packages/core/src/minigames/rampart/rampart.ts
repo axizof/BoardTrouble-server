@@ -205,12 +205,13 @@ function step(state: RampartState, inputs: Partial<Record<PlayerId, ArenaInput>>
   return next;
 }
 
-/** Il tourne sur l'anneau dans le sens où l'on pousse (la part du déplacement le long de l'anneau). */
+/** Il tourne sur l'anneau : droite dans le sens des aiguilles d'une montre, gauche dans l'autre. */
 function moveThrower(thrower: RampartThrower, input: ArenaInput): void {
-  // Le sens de l'anneau à sa place : la tangente, angle croissant.
-  const along = input.move.x * Math.cos(thrower.angle) - input.move.z * Math.sin(thrower.angle);
+  // Gauche et droite seulement, toujours dans le même sens : droite tourne dans le sens des
+  // aiguilles d'une montre vu d'en haut (l'angle décroît). Suivre l'anneau avec la direction
+  // poussée obligeait à passer par haut et bas sur ses côtés (retour de test).
   const before = { x: thrower.x, z: thrower.z };
-  thrower.angle += (along * THROWER_SPEED * ARENA_STEP) / RING_RADIUS;
+  thrower.angle -= (input.move.x * THROWER_SPEED * ARENA_STEP) / RING_RADIUS;
   Object.assign(thrower, seat(thrower.angle));
   thrower.vx = (thrower.x - before.x) / ARENA_STEP;
   thrower.vz = (thrower.z - before.z) / ARENA_STEP;
@@ -414,12 +415,8 @@ function throwerBotInput(
     state.tick * ARENA_STEP * SLOT_DRIFT * (hashUnit(`${state.seed}:drift`) < 0.5 ? 1 : -1);
   const slot = Math.PI + (index / state.fighters.length) * Math.PI * 2 + drift;
   const gap = turnTo(me.angle, slot);
-  // Pour aller vers sa place : le long de l'anneau, dans le sens de l'écart.
-  const tangent = { x: Math.cos(me.angle), z: -Math.sin(me.angle) };
-  const move =
-    Math.abs(gap) > 0.08
-      ? { x: tangent.x * Math.sign(gap), z: tangent.z * Math.sign(gap) }
-      : { x: 0, z: 0 };
+  // Vers sa place : gauche fait croître l'angle, droite le fait décroître.
+  const move = { x: Math.abs(gap) > 0.08 ? -Math.sign(gap) : 0, z: 0 };
   if (me.charge !== null) {
     return {
       move: { x: 0, z: 0 },
