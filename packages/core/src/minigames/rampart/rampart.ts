@@ -30,10 +30,13 @@ export const SLOW_STONE = 5.5;
 export const FAST_STONE = 10.5;
 export const RELOAD_TIME = 1.4;
 /**
- * À plus de RELOAD_THROWERS lanceurs, ramasser prend plus longtemps, d'autant : le joueur seul
- * reçoit à peu près autant de pierres à 4 qu'à 6 (sans ça, il ne gagnait presque plus à 6).
+ * Chaque lanceur au-delà de RELOAD_THROWERS ramasse sa pierre RELOAD_PER_EXTRA secondes plus
+ * lentement : 1,4 s à 4 joueurs, 2,2 s à 5, 3 s à 6. Avant, le temps grandissait juste assez pour
+ * envoyer autant de pierres à 6 qu'à 4 ; mais à 6, elles venaient de plus de directions et les
+ * lanceurs l'emportaient trop (retour de test).
  */
 const RELOAD_THROWERS = 3;
+const RELOAD_PER_EXTRA = 0.8;
 /** Le rayon d'une pierre : deux pierres plus près que deux rayons se cassent l'une l'autre. */
 export const STONE_RADIUS = 0.4;
 /** Une pierre à cette distance du centre touche le joueur seul. */
@@ -133,7 +136,7 @@ export function isInStrike(solo: RampartSolo, stone: { x: number; z: number }): 
 
 /** Le temps pour ramasser une pierre, selon le nombre de lanceurs. */
 export function reloadTime(state: RampartState): number {
-  return RELOAD_TIME * Math.max(1, state.fighters.length / RELOAD_THROWERS);
+  return RELOAD_TIME + Math.max(0, state.fighters.length - RELOAD_THROWERS) * RELOAD_PER_EXTRA;
 }
 
 function seat(angle: number): { x: number; z: number } {
