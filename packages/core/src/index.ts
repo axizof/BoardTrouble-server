@@ -25,6 +25,7 @@ export * from './minigames/cardMemory/cardMemory';
 export * from './minigames/catalog';
 export * from './minigames/clayShoot/clayShoot';
 export * from './minigames/highNoon/highNoon';
+export * from './minigames/lastRoll/lastRoll';
 export * from './minigames/meltingPlatform/meltingPlatform';
 export * from './minigames/pawnSumo/pawnSumo';
 export * from './minigames/rampart/rampart';
