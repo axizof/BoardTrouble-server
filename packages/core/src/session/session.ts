@@ -251,6 +251,10 @@ export class GameSession {
     if (step.type === 'awaitDuelResult' && isArenaMinigame(step.minigame)) {
       return { minigame: step.minigame, players: [phase.playerId, step.opponent], solo: null };
     }
+    // La porte d'adresse : son défi, joué par le joueur du tour seul (les autres regardent).
+    if (step.type === 'awaitSkillGate' && isArenaMinigame(step.minigame)) {
+      return { minigame: step.minigame, players: [phase.playerId], solo: null };
+    }
     if (step.type !== 'awaitOneVsAllResult') return null;
     const { minigame } = step;
     return isArenaMinigame(minigame) ? { minigame, players: everyone, solo: phase.playerId } : null;
@@ -271,7 +275,7 @@ export class GameSession {
       return [];
     }
     this.#arena.advance(now, this.#botRng);
-    const { ranking, soloWon } = this.#arena;
+    const { ranking, soloWon, succeeded } = this.#arena;
     if (!ranking || !this.#arena.isDone(now)) return [];
     this.#arena = null;
     const { phase } = this.#state;
@@ -279,13 +283,15 @@ export class GameSession {
     const intent: Intent =
       soloWon !== null
         ? { type: 'submitOneVsAllResult', soloWon }
-        : isDuel
-          ? { type: 'submitDuelResult', winner: ranking[0]?.[0] ?? null }
-          : phase.type === 'finale'
-            ? { type: 'submitFinaleResult', ranking }
-            : phase.type === 'bonusMinigame'
-              ? { type: 'submitBonusMinigameResult', ranking }
-              : { type: 'submitMinigameResult', ranking };
+        : succeeded !== null
+          ? { type: 'submitSkillGateResult', success: succeeded }
+          : isDuel
+            ? { type: 'submitDuelResult', winner: ranking[0]?.[0] ?? null }
+            : phase.type === 'finale'
+              ? { type: 'submitFinaleResult', ranking }
+              : phase.type === 'bonusMinigame'
+                ? { type: 'submitBonusMinigameResult', ranking }
+                : { type: 'submitMinigameResult', ranking };
     const result = this.submit({ type: 'system' }, intent, now);
     if (!result.ok) throw new Error(`Classement d'arène refusé : ${result.error}`);
     return result.events;
@@ -313,10 +319,11 @@ export class GameSession {
     }
     if (phase.type !== 'turn') return false;
     const { step } = phase;
-    if (step.type === 'awaitOneVsAllResult' || step.type === 'awaitDuelResult') {
-      return !isArenaMinigame(step.minigame);
-    }
-    return step.type === 'awaitSkillGate';
+    const isMinigameStep =
+      step.type === 'awaitOneVsAllResult' ||
+      step.type === 'awaitDuelResult' ||
+      step.type === 'awaitSkillGate';
+    return isMinigameStep && !isArenaMinigame(step.minigame);
   }
 
   #decisionEndsIn(now: number): number | null {

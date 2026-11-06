@@ -8,10 +8,12 @@ import { BOARD_REFLEX } from '../boardReflex/boardReflex';
 import { CARD_MEMORY } from '../cardMemory/cardMemory';
 import type { MinigameId } from '../catalog';
 import { CLAY_SHOOT } from '../clayShoot/clayShoot';
+import { COMBINATION } from '../combination/combination';
 import { HIGH_NOON } from '../highNoon/highNoon';
 import { LAST_ROLL } from '../lastRoll/lastRoll';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
+import { PERFECT_GAUGE } from '../perfectGauge/perfectGauge';
 import { RAMPART } from '../rampart/rampart';
 import { RHYTHM_TUG } from '../rhythmTugOfWar/rhythmTugOfWar';
 import { SECRET_AUCTION } from '../secretAuction/secretAuction';
@@ -47,6 +49,8 @@ export const ARENAS = {
   highNoon: HIGH_NOON,
   clayShoot: CLAY_SHOOT,
   lastRoll: LAST_ROLL,
+  perfectGauge: PERFECT_GAUGE,
+  combination: COMBINATION,
 } satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
@@ -96,6 +100,8 @@ export type ArenaRunView = {
   order: PlayerId[] | null;
   /** Le plan de la révélation de fin, une fois la partie finie ; null sans révélation. */
   reveal: RevealPlan | null;
+  /** Un défi solo fini : réussi ou non ; null avant la fin, ou pour un autre mini-jeu. */
+  succeeded: boolean | null;
 };
 
 export class ArenaRun {
@@ -227,6 +233,12 @@ export class ArenaRun {
     return this.#order?.map((id) => [id]) ?? null;
   }
 
+  /** Un défi solo, une fois fini : le joueur l'a réussi ; null avant, ou pour un autre mini-jeu. */
+  get succeeded(): boolean | null {
+    const check = this.#game.succeeded;
+    return check && this.#ranking ? check(this.#state) : null;
+  }
+
   /** En 1 contre tous, une fois la partie finie : le joueur seul l'a emporté ; null avant. */
   get soloWon(): boolean | null {
     if (!this.solo || !this.#ranking) return null;
@@ -253,6 +265,7 @@ export class ArenaRun {
       tieBreaks: this.#tieBreaks,
       order: this.#order,
       reveal: this.#reveal,
+      succeeded: this.succeeded,
     } as ArenaRunView;
   }
 

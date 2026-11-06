@@ -3,7 +3,6 @@ import { prepareBoard } from '../board/board';
 import { buildMontTrouble } from '../boards/montTrouble';
 import type { GameEvent } from '../game/types';
 import { naturalAppearance } from '../lobby/players';
-import { isArenaMinigame } from '../minigames/arena/arenaRun';
 import { FOUR_PLAYERS } from '../testing/fixtures';
 import { animationTime } from './pacing';
 import { GameSession, type Seat, type SeatControl } from './session';
@@ -66,9 +65,10 @@ describe('a game session', () => {
       const snapshot = session.snapshot({ type: 'spectator' }, wake);
       if (snapshot.type !== 'snapshot') throw new Error('Instantané attendu');
       const { phase } = snapshot.state;
-      // Un 1 contre tous joué en arène pendant le tour avance d'un pas par réveil : ce n'est pas
-      // un choix de bot.
-      if (phase.type === 'turn' && phase.step.type !== 'awaitOneVsAllResult') {
+      // Un mini-jeu joué en arène pendant le tour (1 contre tous, duel, défi de la porte
+      // d'adresse) avance d'un pas par réveil : ce n'est pas un choix de bot.
+      const arenaSteps = ['awaitOneVsAllResult', 'awaitDuelResult', 'awaitSkillGate'];
+      if (phase.type === 'turn' && !arenaSteps.includes(phase.step.type)) {
         (phase.step.type === 'awaitRoll' ? waits.roll : waits.choice).push(wake - ready);
       }
       ready = wake + animationTime(session.tick(wake) ?? []);
@@ -143,41 +143,26 @@ describe('a game session', () => {
     throw new Error('Aucune partie ne joue le Ball-trap en duel');
   });
 
-  test('plays a placeholder minigame as soon as its intro has been read', () => {
-    // Toutes les manches sont des arènes : on joue jusqu'au premier mini-jeu encore provisoire
-    // (duel, 1 contre tous, porte d'adresse, finale).
-    const placeholderSteps = ['awaitDuelResult', 'awaitOneVsAllResult', 'awaitSkillGate'];
-    for (let seed = 1; seed < 20; seed++) {
-      const { session } = start({ ...BOTS, ana: 'human' }, seed);
-      const ana = { type: 'player', playerId: 'ana' } as const;
-      for (let now = 0, i = 0; i < 400_000; i++) {
-        const snapshot = session.snapshot(ana, now);
-        const phase = snapshot.type === 'snapshot' ? snapshot.state.phase : null;
-        if (phase === null) break;
-        const isPlaceholder =
-          (phase.type === 'turn' &&
-            placeholderSteps.includes(phase.step.type) &&
-            !(phase.step.type === 'awaitOneVsAllResult' && isArenaMinigame(phase.step.minigame))) ||
-          ((phase.type === 'minigame' || phase.type === 'finale') &&
-            !isArenaMinigame(phase.minigame));
-        if (isPlaceholder) {
-          // Sans "Suivant", le résultat attend le temps d'un mini-jeu provisoire ; Ana a lu : tout de suite.
-          const waiting = session.nextWakeAt() ?? 0;
-          session.minigameReady('ana');
-          const ready = session.nextWakeAt() ?? 0;
-          expect(ready).toBeLessThan(waiting);
-          expect(session.tick(ready)).not.toBeNull();
-          return;
+  test('plays the skill gate challenge with the gate player alone, then opens or keeps the gate', () => {
+    const challenges = ['perfectGauge', 'combination'];
+    for (let seed = 1; seed < 600; seed++) {
+      const { session } = start(BOTS, seed);
+      let players: string[] | null = null;
+      let gate: GameEvent | undefined;
+      for (let wake = session.nextWakeAt(); wake !== null && !gate; wake = session.nextWakeAt()) {
+        const events = session.tick(wake) ?? [];
+        const message = session.arenaMessage({ type: 'spectator' }, wake);
+        if (message.type === 'arena' && challenges.includes(message.run?.minigame ?? '')) {
+          players = message.run?.players ?? null;
         }
-        // Une arène attend le "Prêt" d'Ana à sa présentation ; elle joue ensuite sans rien toucher.
-        if (session.nextWakeAt() === null) session.arenaReady('ana', now);
-        const wake = session.nextWakeAt();
-        if (wake === null) break;
-        now = wake;
-        session.tick(now);
+        gate = events.find((event) => event.type === 'skillGateResult');
       }
+      if (players === null || gate === undefined) continue;
+      expect(players).toHaveLength(1);
+      expect(session.isPlayingArena).toBe(false);
+      return;
     }
-    throw new Error('Aucune partie ne tire de mini-jeu provisoire');
+    throw new Error("Aucune partie ne joue un défi de la porte d'adresse");
   });
 
   test('gives a human the decision time, then plays a default choice for them', () => {
