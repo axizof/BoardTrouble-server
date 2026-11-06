@@ -7,6 +7,7 @@ import { BIG_DIE } from '../bigDie/bigDie';
 import { BOARD_REFLEX } from '../boardReflex/boardReflex';
 import { CARD_MEMORY } from '../cardMemory/cardMemory';
 import type { MinigameId } from '../catalog';
+import { HIGH_NOON } from '../highNoon/highNoon';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
 import { RAMPART } from '../rampart/rampart';
@@ -41,6 +42,7 @@ export const ARENAS = {
   rhythmTugOfWar: RHYTHM_TUG,
   bigDie: BIG_DIE,
   rampart: RAMPART,
+  highNoon: HIGH_NOON,
 } satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
