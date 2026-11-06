@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { BotLevel } from '../../bots/boardBot';
 import { Rng } from '../../random/rng';
-import { ARENA_STEP, type ArenaInput, IDLE_INPUT } from '../arena/arena';
+import { ARENA_STEP, type ArenaInput, IDLE_INPUT, sanitizeInput } from '../arena/arena';
 import {
   FAST_STONE,
   HIT_DISTANCE,
@@ -109,6 +109,26 @@ describe('the rampart', () => {
     const state = run(withStones(stone(0, Math.PI, 5)), { s: back }, 30);
     expect(state.stones[0]?.end).toBe('struck');
     expect(state.solo.lives).toBe(RAMPART_LIVES);
+  });
+
+  test('pointing the mouse turns him toward it, fast but not at once; keys win over the mouse', () => {
+    // La souris derrière lui (en haut de l'écran) : un demi-tour.
+    const behind = { ...IDLE_INPUT, point: { x: 0, z: -4 } };
+    const first = RAMPART.step(match(), { s: behind });
+    expect(Math.abs(first.solo.facing)).toBeGreaterThan(0.1);
+    expect(Math.abs(first.solo.facing)).toBeLessThan(1);
+    const turned = run(match(), { s: behind }, 10);
+    expect(Math.abs(Math.abs(turned.solo.facing) - Math.PI)).toBeLessThan(0.01);
+    // Une direction au clavier passe avant la souris : il regarde à droite.
+    const keys = { ...behind, move: { x: 1, z: 0 } };
+    expect(run(match(), { s: keys }, 10).solo.facing).toBeCloseTo(Math.PI / 2);
+  });
+
+  test('an aimed point from a client is kept within bounds', () => {
+    expect(sanitizeInput({ point: { x: 2, z: -3 } }).point).toEqual({ x: 2, z: -3 });
+    expect(sanitizeInput({ point: { x: 1e9, z: 0 } }).point).toEqual({ x: 50, z: 0 });
+    expect(sanitizeInput({ point: { x: Number.NaN, z: 0 } }).point).toBeNull();
+    expect(sanitizeInput({ point: 'here' }).point).toBeNull();
   });
 
   test('a stone from behind hits him; three hits and the throwers win', () => {

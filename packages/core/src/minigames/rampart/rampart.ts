@@ -28,15 +28,15 @@ const THROWER_GAP = 1.1;
 export const THROW_CHARGE_TIME = 0.8;
 export const SLOW_STONE = 5.5;
 export const FAST_STONE = 10.5;
-export const RELOAD_TIME = 1.4;
+export const RELOAD_TIME = 1.6;
 /**
  * Chaque lanceur au-delà de RELOAD_THROWERS ramasse sa pierre RELOAD_PER_EXTRA secondes plus
- * lentement : 1,4 s à 4 joueurs, 2,2 s à 5, 3 s à 6. Avant, le temps grandissait juste assez pour
- * envoyer autant de pierres à 6 qu'à 4 ; mais à 6, elles venaient de plus de directions et les
- * lanceurs l'emportaient trop (retour de test).
+ * lentement : 1,6 s à 4 joueurs, 2,6 s à 5, 3,6 s à 6. Avant, le temps grandissait juste assez
+ * pour envoyer autant de pierres à 6 qu'à 4 ; mais à 6, elles venaient de plus de directions et
+ * les lanceurs l'emportaient trop (retours de test : encore un peu trop, en Normal, à 4 et à 6).
  */
 const RELOAD_THROWERS = 3;
-const RELOAD_PER_EXTRA = 0.8;
+const RELOAD_PER_EXTRA = 1;
 /** Le rayon d'une pierre : deux pierres plus près que deux rayons se cassent l'une l'autre. */
 export const STONE_RADIUS = 0.4;
 /** Une pierre à cette distance du centre touche le joueur seul. */
@@ -58,6 +58,8 @@ export const STRIKE_REACH = 2.6;
 export const STRIKE_ARC = Math.PI / 3;
 /** Il se tourne à cette vitesse (radians par seconde) : vite, mais pas d'un coup. */
 const SOLO_TURN_RATE = 12;
+/** La souris trop près de lui ne dit pas de direction (m). */
+const POINT_DEAD_ZONE = 0.3;
 /** Une pierre cassée reste dans l'état ce temps-là : le client montre ses éclats. */
 const BROKEN_KEPT = 1;
 /** Au bac à sable, le lanceur mannequin lance tant de secondes après avoir ramassé sa pierre. */
@@ -270,11 +272,20 @@ function throwStone(state: RampartState, thrower: RampartThrower, input: ArenaIn
   thrower.stoneAt = state.tick + Math.round(reloadTime(state) / ARENA_STEP);
 }
 
-/** Le joueur seul se tourne vers où l'on pousse (c'est tout ce qu'il fait). */
+/**
+ * Le joueur seul se tourne (c'est tout ce qu'il fait) : vers où l'on pousse (clavier, stick), et
+ * sinon vers le point visé à la souris. Toujours à SOLO_TURN_RATE : même à la souris, un
+ * demi-tour prend un quart de seconde.
+ */
 function actSolo(state: RampartState, input: ArenaInput): void {
   const solo = state.solo;
-  if (Math.hypot(input.move.x, input.move.z) <= 0.3) return;
-  const wanted = Math.atan2(input.move.x, input.move.z);
+  const isPushing = Math.hypot(input.move.x, input.move.z) > 0.3;
+  const point = input.point;
+  const isPointing = point != null && Math.hypot(point.x, point.z) > POINT_DEAD_ZONE;
+  if (!isPushing && !isPointing) return;
+  const wanted = isPushing
+    ? Math.atan2(input.move.x, input.move.z)
+    : Math.atan2(point?.x ?? 0, point?.z ?? 0);
   const turn = turnTo(solo.facing, wanted);
   const most = SOLO_TURN_RATE * ARENA_STEP;
   solo.facing += Math.max(-most, Math.min(most, turn));
@@ -370,7 +381,7 @@ const SOLO_SLIP: Record<BotLevel, number> = { easy: 0.06, normal: 0.03, expert: 
  * l'élan qui la fera arriver après les pierres déjà en vol, sans les heurter. Il s'en soucie plus
  * ou moins selon son niveau.
  */
-const THROW_EAGERNESS: Record<BotLevel, number> = { easy: 0.04, normal: 0.06, expert: 0.08 };
+const THROW_EAGERNESS: Record<BotLevel, number> = { easy: 0.035, normal: 0.045, expert: 0.08 };
 const COORDINATION: Record<BotLevel, number> = { easy: 0.3, normal: 0.65, expert: 0.9 };
 /** Deux arrivées plus proches que ça se heurtent presque sûrement (s). */
 const CLASH_GAP = 0.25;

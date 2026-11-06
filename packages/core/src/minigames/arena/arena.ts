@@ -15,13 +15,16 @@ export const ARENA_STEP = 1 / 30;
  * Les commandes d'un joueur, communes à toutes les arènes (02-mini-jeux.md, section 1) :
  * déplacement (flèches, ZQSD ou stick gauche, longueur 0 à 1), action principale (Espace / A)
  * et action secondaire (Maj / B), tenues ou non, et ce qu'il vient de viser à la souris
- * (l'élément cliqué, pour les mini-jeux où l'on choisit : une carte...), ou null.
+ * (l'élément cliqué, pour les mini-jeux où l'on choisit : une carte...), ou null. `point` : le
+ * point du sol sous la souris (mètres), pour les mini-jeux où l'on vise une direction (le
+ * joueur seul du Rempart), ou null.
  */
 export type ArenaInput = {
   move: { x: number; z: number };
   primary: boolean;
   secondary: boolean;
   target?: number | null;
+  point?: { x: number; z: number } | null;
 };
 
 export const IDLE_INPUT: ArenaInput = { move: { x: 0, z: 0 }, primary: false, secondary: false };
@@ -67,6 +70,8 @@ export type ArenaGame<State extends ArenaState> = {
 
 /** La plus grande visée acceptée (un indice d'élément). */
 const MAX_TARGET = 255;
+/** Un point visé au-delà de ça (mètres, sur chaque axe) est ramené à cette limite. */
+const MAX_POINT = 50;
 
 /** Remet une commande reçue d'un client dans les bornes (le client n'est jamais cru). */
 export function sanitizeInput(input: unknown): ArenaInput {
@@ -92,5 +97,15 @@ export function sanitizeInput(input: unknown): ArenaInput {
     primary: raw.primary === true,
     secondary: raw.secondary === true,
     target,
+    point: sanitizePoint(raw.point),
   };
+}
+
+function sanitizePoint(point: unknown): { x: number; z: number } | null {
+  if (typeof point !== 'object' || point === null) return null;
+  const { x, z } = point as Record<string, unknown>;
+  if (typeof x !== 'number' || typeof z !== 'number') return null;
+  if (!Number.isFinite(x) || !Number.isFinite(z)) return null;
+  const clamp = (value: number) => Math.max(-MAX_POINT, Math.min(MAX_POINT, value));
+  return { x: clamp(x), z: clamp(z) };
 }
