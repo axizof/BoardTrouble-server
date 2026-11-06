@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "check": "biome ci . && tsc --noEmit && bun test",
-    "simulate": "bun run tools/simulator/src/main.ts"
+    "simulate": "bun run tools/simulator/src/main.ts",
+    "simulate:minigames": "bun run tools/simulator/src/minigames.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",
