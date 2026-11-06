@@ -61,6 +61,47 @@ const FULL_HIT_STUN = 0.25;
 /** Positions de départ : en cercle, à cette part du rayon. */
 const START_RING = 0.45;
 
+/**
+ * Les missiles (retour de test : il manquait du piment) : de temps en temps, un missile traverse
+ * le plateau en ligne droite, en passant à MISSILE_OFFSET du centre au plus. Il s'annonce
+ * MISSILE_WARNING secondes avant (sa ligne clignote, des bips), puis file à MISSILE_SPEED ; le
+ * premier qu'il touche est éjecté (éliminé), et le missile explose. Le premier part à
+ * FIRST_MISSILE secondes, puis un toutes les MISSILE_EVERY secondes, de moins en moins (une
+ * seconde de moins toutes les 10 s, jusqu'à MISSILE_EVERY_MIN), à MISSILE_JITTER près.
+ */
+const FIRST_MISSILE = 10;
+const MISSILE_EVERY = 9;
+const MISSILE_EVERY_MIN = 4.5;
+const MISSILE_SPEEDUP = 0.1;
+const MISSILE_JITTER = 1;
+/** Au bac à sable : le premier vite, puis à rythme fixe. */
+const PRACTICE_FIRST_MISSILE = 3;
+const PRACTICE_MISSILE_EVERY = 6;
+export const MISSILE_WARNING = 1.5;
+export const MISSILE_SPEED = 11;
+export const MISSILE_RADIUS = 0.35;
+const MISSILE_OFFSET = 2.5;
+/** Il part de là (et s'arrête là), de part et d'autre du centre, hors du plateau. */
+export const MISSILE_REACH = SUMO_RADIUS + 4;
+/** Un missile fini reste dans l'état ce temps-là : le client montre l'explosion. */
+const MISSILE_KEPT = 1;
+
+/**
+ * Un missile : il s'annonce au pas `warnAt`, part au pas `launchAt`, file dans la direction
+ * `angle` (comme `atan2(x, z)`) sur une ligne qui passe à `offset` mètres du centre. `hitAt` :
+ * le pas où il a touché quelqu'un (en `hitX`, `hitZ`), ou null.
+ */
+export type SumoMissile = {
+  id: number;
+  warnAt: number;
+  launchAt: number;
+  angle: number;
+  offset: number;
+  hitAt: number | null;
+  hitX: number;
+  hitZ: number;
+};
+
 export type SumoFighter = ArenaBody & {
   /** Secondes de charge, tant qu'il charge un élan ; null sinon. */
   charge: number | null;
@@ -72,6 +113,8 @@ export type SumoFighter = ArenaBody & {
   held: boolean;
   /** Le pas où il est tombé du plateau, ou null s'il est encore dessus. */
   fellAt: number | null;
+  /** Éjecté par un missile : la direction où il s'envole (le client l'y fait voler), ou null. */
+  blast: { x: number; z: number } | null;
 };
 
 export type SumoState = {
@@ -79,6 +122,11 @@ export type SumoState = {
   practice: boolean;
   seed: number;
   fighters: SumoFighter[];
+  /** Les missiles annoncés, en vol, ou qui viennent de finir. */
+  missiles: SumoMissile[];
+  /** Le pas où le prochain missile s'annonce, et combien sont déjà partis. */
+  nextMissileAt: number;
+  missileCount: number;
 };
 
 /** Secondes écoulées depuis le début de la partie. */
@@ -107,6 +155,43 @@ export function nextCrumble(state: SumoState): { radius: number; in: number } | 
   return { radius: radius + SHRINK_RING, in: at - time };
 }
 
+/** La direction d'un missile, et le point de sa ligne le plus près du centre. */
+export function missileLine(missile: SumoMissile) {
+  const dx = Math.sin(missile.angle);
+  const dz = Math.cos(missile.angle);
+  // La perpendiculaire (à droite de la direction), où la ligne croise le travers du centre.
+  return { dx, dz, px: dz * missile.offset, pz: -dx * missile.offset };
+}
+
+/** Où il en est sur sa ligne (m, 0 au plus près du centre), à ce pas : avant le départ, à son départ. */
+function missileTravel(missile: SumoMissile, tick: number): number {
+  const flown = Math.max(0, tick - missile.launchAt) * ARENA_STEP * MISSILE_SPEED;
+  return flown - MISSILE_REACH;
+}
+
+/** Le pas où il a fini : il a touché quelqu'un, ou il est ressorti de l'autre côté. */
+function missileEndsAt(missile: SumoMissile): number {
+  return (
+    missile.hitAt ?? missile.launchAt + Math.ceil((2 * MISSILE_REACH) / MISSILE_SPEED / ARENA_STEP)
+  );
+}
+
+/** Où est le missile à ce pas (fraction comprise), ou null une fois fini. */
+export function missilePosition(
+  missile: SumoMissile,
+  tick: number,
+): { x: number; z: number } | null {
+  if (tick > missileEndsAt(missile)) return null;
+  const { dx, dz, px, pz } = missileLine(missile);
+  const travel = missileTravel(missile, tick);
+  return { x: px + dx * travel, z: pz + dz * travel };
+}
+
+/** Un missile annoncé ou en vol (pas encore fini) : pour l'alerte et les bots. */
+export function isMissileLive(missile: SumoMissile, tick: number): boolean {
+  return tick <= missileEndsAt(missile);
+}
+
 function create(
   players: PlayerId[],
   { practice, seed }: { practice: boolean; seed: number },
@@ -115,6 +200,9 @@ function create(
     tick: 0,
     practice,
     seed,
+    missiles: [],
+    nextMissileAt: Math.round((practice ? PRACTICE_FIRST_MISSILE : FIRST_MISSILE) / ARENA_STEP),
+    missileCount: 0,
     fighters: players.map((id, index) => {
       const angle = (index / players.length) * Math.PI * 2;
       const reach = players.length === 1 ? 0 : SUMO_RADIUS * START_RING;
@@ -127,7 +215,7 @@ function create(
 }
 
 function freshMoves() {
-  return { charge: null, dashing: 0, power: 0, dashReady: 0, held: false };
+  return { charge: null, dashing: 0, power: 0, dashReady: 0, held: false, blast: null };
 }
 
 function step(state: SumoState, inputs: Partial<Record<PlayerId, ArenaInput>>): SumoState {
@@ -160,7 +248,86 @@ function step(state: SumoState, inputs: Partial<Record<PlayerId, ArenaInput>>): 
       fighter.fellAt = tick;
     }
   }
+  Object.assign(next, launchMissiles(state, tick));
+  next.missiles = next.missiles.map((missile) =>
+    flyMissile(missile, standing, tick, state.practice),
+  );
   return next;
+}
+
+/** Les missiles finis depuis un moment s'en vont ; le prochain s'annonce, s'il est l'heure. */
+function launchMissiles(
+  state: SumoState,
+  tick: number,
+): Pick<SumoState, 'missiles' | 'nextMissileAt' | 'missileCount'> {
+  const kept = Math.round(MISSILE_KEPT / ARENA_STEP);
+  const missiles = state.missiles.filter((missile) => tick <= missileEndsAt(missile) + kept);
+  if (tick < state.nextMissileAt)
+    return { missiles, nextMissileAt: state.nextMissileAt, missileCount: state.missileCount };
+  const count = state.missileCount;
+  const key = `${state.seed}:missile:${count}`;
+  const missile: SumoMissile = {
+    id: count,
+    warnAt: tick,
+    launchAt: tick + Math.round(MISSILE_WARNING / ARENA_STEP),
+    angle: hashUnit(`${key}:angle`) * Math.PI * 2,
+    offset: (hashUnit(`${key}:offset`) * 2 - 1) * MISSILE_OFFSET,
+    hitAt: null,
+    hitX: 0,
+    hitZ: 0,
+  };
+  const every = state.practice
+    ? PRACTICE_MISSILE_EVERY
+    : Math.max(MISSILE_EVERY_MIN, MISSILE_EVERY - tick * ARENA_STEP * MISSILE_SPEEDUP) +
+      (hashUnit(`${key}:gap`) * 2 - 1) * MISSILE_JITTER;
+  return {
+    missiles: [...missiles, missile],
+    nextMissileAt: tick + Math.round(every / ARENA_STEP),
+    missileCount: count + 1,
+  };
+}
+
+/**
+ * Le missile avance d'un pas : le premier joueur sur sa route (le plus en avant sur sa ligne)
+ * est éjecté, vers où va le missile et vers l'extérieur ; le missile explose là. Au bac à sable,
+ * le touché revient au centre.
+ */
+function flyMissile(
+  missile: SumoMissile,
+  fighters: SumoFighter[],
+  tick: number,
+  practice: boolean,
+): SumoMissile {
+  if (missile.hitAt !== null || tick < missile.launchAt || tick > missileEndsAt(missile)) {
+    return missile;
+  }
+  const { dx, dz, px, pz } = missileLine(missile);
+  const from = missileTravel(missile, tick - 1);
+  const to = missileTravel(missile, tick);
+  const reach = WALKER.radius + MISSILE_RADIUS;
+  let hit: { fighter: SumoFighter; along: number } | null = null;
+  for (const fighter of fighters) {
+    if (fighter.fellAt !== null) continue;
+    const along = (fighter.x - px) * dx + (fighter.z - pz) * dz;
+    const across = (fighter.x - px) * dz - (fighter.z - pz) * dx;
+    const isOnRoute = along >= from - reach && along <= to + reach && Math.abs(across) < reach;
+    if (isOnRoute && (!hit || along < hit.along)) hit = { fighter, along };
+  }
+  if (!hit) return missile;
+  const { fighter } = hit;
+  const exploded = { ...missile, hitAt: tick, hitX: fighter.x, hitZ: fighter.z };
+  if (practice) {
+    Object.assign(fighter, createBody(fighter.id, 0, 0, fighter.facing), freshMoves());
+    return exploded;
+  }
+  // Éjecté : dans le sens du missile, et vers l'extérieur du plateau.
+  const out = Math.hypot(fighter.x, fighter.z) || 1;
+  const bx = dx + (0.7 * fighter.x) / out;
+  const bz = dz + (0.7 * fighter.z) / out;
+  const length = Math.hypot(bx, bz) || 1;
+  fighter.blast = { x: bx / length, z: bz / length };
+  fighter.fellAt = tick;
+  return exploded;
 }
 
 /** Les commandes d'un combattant : marcher, charger un élan, foncer. */
@@ -304,6 +471,9 @@ function botInput(state: SumoState, player: PlayerId, level: BotLevel, rng: Rng)
   const radius = sumoRadius(state);
   const others = standing(state).filter((fighter) => fighter.id !== player);
 
+  const dodge = missileEscape(state, me, level, radius);
+  if (dodge) return { move: dodge, primary: false, secondary: false };
+
   // Un élan arrive : il s'écarte de sa ligne, s'il le voit venir. Décidé une fois par pas, avec
   // une chance ramenée au pas pour que la réussite sur un élan entier vaille DODGE_SKILL.
   const threat = others.find((other) => {
@@ -368,6 +538,51 @@ function botInput(state: SumoState, player: PlayerId, level: BotLevel, rng: Rng)
   };
   const isPlaced = Math.hypot(spot.x - me.x, spot.z - me.z) < 0.6;
   return { move: isPlaced ? face : toward(me, spot), primary: false, secondary: false };
+}
+
+/**
+ * La part des missiles qu'un bot voit venir (tirée une fois par missile et par bot), et combien
+ * de secondes avant qu'il n'arrive sur lui il s'écarte. Pas plus tôt : s'écarter dès l'annonce
+ * le faisait errer, et tomber du bord bien plus souvent (l'Expert perdait contre le Facile).
+ */
+const MISSILE_SKILL: Record<BotLevel, number> = { easy: 0.55, normal: 0.8, expert: 0.95 };
+const MISSILE_LEAD = 0.8;
+/** Il s'écarte jusqu'à être à cette distance de la ligne du missile. */
+const MISSILE_CLEARANCE = WALKER.radius + MISSILE_RADIUS + 0.6;
+/** Il ne s'écarte pas vers le bord s'il y arriverait à moins de ça. */
+const MISSILE_EDGE_ROOM = 1.2;
+
+/** Où aller pour sortir de la ligne d'un missile qui arrive sur lui, ou null. */
+function missileEscape(
+  state: SumoState,
+  me: SumoFighter,
+  level: BotLevel,
+  radius: number,
+): { x: number; z: number } | null {
+  for (const missile of state.missiles) {
+    if (missile.hitAt !== null || !isMissileLive(missile, state.tick)) continue;
+    if (hashUnit(`${state.seed}:${me.id}:missile:${missile.id}`) >= MISSILE_SKILL[level]) continue;
+    const { dx, dz, px, pz } = missileLine(missile);
+    const along = (me.x - px) * dx + (me.z - pz) * dz;
+    const across = (me.x - px) * dz - (me.z - pz) * dx;
+    const travel = missileTravel(missile, state.tick);
+    const isPassed = along < travel - MISSILE_CLEARANCE;
+    // Dans combien de secondes il arrive sur lui (attente du départ comprise).
+    const eta =
+      (along - travel) / MISSILE_SPEED + Math.max(0, missile.launchAt - state.tick) * ARENA_STEP;
+    if (isPassed || eta > MISSILE_LEAD || Math.abs(across) >= MISSILE_CLEARANCE) continue;
+    // De son côté de la ligne. Pile dessus : du côté du centre, ou d'un côté tiré pour ce
+    // missile si la ligne passe par le centre (sinon il hésite d'un pas à l'autre). Pas vers le
+    // bord s'il est trop près.
+    const centerAcross = -me.x * dz + me.z * dx;
+    const drawnSide = hashUnit(`${state.seed}:${me.id}:missile-side:${missile.id}`) < 0.5 ? 1 : -1;
+    const onLineSide = Math.abs(centerAcross) > 0.5 ? Math.sign(centerAcross) : drawnSide;
+    let side = Math.abs(across) > 0.05 ? Math.sign(across) : onLineSide;
+    const room = (s: number) => radius - Math.hypot(me.x + dz * s * 1.5, me.z - dx * s * 1.5);
+    if (room(side) < MISSILE_EDGE_ROOM) side = -side;
+    return { x: dz * side, z: -dx * side };
+  }
+  return null;
 }
 
 /** Une valeur entre 0 et 1, toujours la même pour un même texte. */
