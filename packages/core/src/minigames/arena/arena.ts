@@ -2,6 +2,7 @@ import type { BotLevel } from '../../bots/boardBot';
 import type { PlayerId } from '../../game/types';
 import type { Viewer } from '../../game/views';
 import type { Rng } from '../../random/rng';
+import type { RevealRules } from './reveal';
 
 // Les mini-jeux d'arène (01-architecture.md, section 4 : "arène en temps réel") : l'hôte fait
 // tourner la simulation à 30 pas par seconde, les joueurs n'envoient que leurs commandes. Chaque
@@ -56,6 +57,12 @@ export type ArenaGame<State extends ArenaState> = {
    * Sans elle, tout est public.
    */
   viewFor?(state: State, viewer: Viewer): State;
+  /**
+   * Pour les mini-jeux qui finissent par une révélation (la caméra passe du dernier au premier
+   * avant le résultat) : le score qu'elle compare, et ses seuils. Sans elle, le résultat tout de
+   * suite.
+   */
+  reveal?: RevealRules<State>;
 };
 
 /** La plus grande visée acceptée (un indice d'élément). */

@@ -22,6 +22,7 @@ import {
   IDLE_INPUT,
   sanitizeInput,
 } from './arena';
+import { planReveal, type RevealPlan, revealDuration } from './reveal';
 
 // Une partie d'arène hébergée (02-mini-jeux.md, section 1 : présentation, "Prêt", décompte,
 // jeu, résultat). Comme la session, elle ne lance aucun minuteur : l'hôte lui donne l'heure.
@@ -49,7 +50,8 @@ export function isArenaMinigame(minigame: MinigameId): minigame is ArenaMinigame
   return minigame in ARENAS;
 }
 
-export type ArenaStage = 'intro' | 'countdown' | 'play' | 'result';
+/** `reveal` : la révélation de fin, pour les mini-jeux qui en ont une (ArenaGame.reveal). */
+export type ArenaStage = 'intro' | 'countdown' | 'play' | 'reveal' | 'result';
 
 /**
  * Durées des étapes, en millisecondes. La présentation n'a pas de limite : on prend le temps de
@@ -84,6 +86,8 @@ export type ArenaRunView = {
   /** Les lancers qui départagent les ex aequo, dans l'ordre où les montrer, et l'ordre final. */
   tieBreaks: TieBreak[];
   order: PlayerId[] | null;
+  /** Le plan de la révélation de fin, une fois la partie finie ; null sans révélation. */
+  reveal: RevealPlan | null;
 };
 
 export class ArenaRun {
@@ -101,6 +105,7 @@ export class ArenaRun {
   #ranking: PlayerId[][] | null = null;
   #tieBreaks: TieBreak[] = [];
   #order: PlayerId[] | null = null;
+  #reveal: RevealPlan | null = null;
 
   /**
    * `bots` : le niveau de chaque joueur tenu par un bot ; les autres sont des humains. `solo` :
@@ -152,6 +157,7 @@ export class ArenaRun {
   advance(now: number, rng: Rng): void {
     if (this.#stage === 'intro' && now >= this.#stageAt) this.#startCountdown(now);
     if (this.#stage === 'countdown' && now >= this.#stageAt) this.#stage = 'play';
+    if (this.#stage === 'reveal' && now >= this.#stageAt) this.#showResult(now);
     if (this.#stage === 'play') {
       // Le pas dû à cette heure (la marge évite qu'un arrondi fasse rater le pas attendu).
       const due = Math.floor((now - this.#stageAt) / (ARENA_STEP * 1000) + 1e-6);
@@ -179,10 +185,28 @@ export class ArenaRun {
         ({ order: this.#order, tieBreaks: this.#tieBreaks } = this.solo
           ? { order: this.#ranking.flat(), tieBreaks: [] }
           : breakTies(this.#ranking, rng));
-        this.#stage = 'result';
-        this.#stageAt = now + ARENA_TIMES.result + this.#tieBreaks.length * ARENA_TIMES.tieRoll;
+        this.#reveal = this.#planReveal(this.#ranking);
+        if (this.#reveal) {
+          this.#stage = 'reveal';
+          this.#stageAt = now + revealDuration(this.#reveal);
+        } else {
+          this.#showResult(now);
+        }
       }
     }
+  }
+
+  /** La révélation de fin, si le mini-jeu en a une (et qu'il y a plus d'un joueur à montrer). */
+  #planReveal(ranking: PlayerId[][]): RevealPlan | null {
+    const rules = this.#game.reveal;
+    if (!rules || this.solo || this.players.length < 2) return null;
+    const state = this.#state;
+    return planReveal(ranking, (player) => rules.score(state, player), rules);
+  }
+
+  #showResult(now: number): void {
+    this.#stage = 'result';
+    this.#stageAt = now + ARENA_TIMES.result + this.#tieBreaks.length * ARENA_TIMES.tieRoll;
   }
 
   /** Le résultat a été montré : le classement peut partir au moteur. */
@@ -220,6 +244,7 @@ export class ArenaRun {
       ranking: this.#ranking,
       tieBreaks: this.#tieBreaks,
       order: this.#order,
+      reveal: this.#reveal,
     } as ArenaRunView;
   }
 
