@@ -291,4 +291,14 @@ export const STACKER: ArenaGame<StackState> = {
   isOver,
   timeLeft,
   ranking,
+  // Proches : un bloc d'écart au plus ; écrasant : 5 blocs d'avance. Entre bots (tours de 15
+  // blocs en médiane), le suspense tombe une partie sur deux, l'écrasement une sur dix.
+  reveal: {
+    score: (state, player) => {
+      const fighter = state.fighters.find((one) => one.id === player);
+      return fighter ? towerHeight(fighter) : 0;
+    },
+    close: 1,
+    crushing: 5,
+  },
 };

@@ -38,6 +38,44 @@ describe('an arena run', () => {
     expect(run.ranking?.flat().sort()).toEqual(['a', 'b', 'c']);
   });
 
+  test('a minigame with a reveal shows it between the play and the result', () => {
+    const run = new ArenaRun('stacker', ['a', 'b', 'c'], bots, 1, 0);
+    run.setReady('a', 0);
+    const rng = new Rng(4);
+    let now = 0;
+    while (run.stage !== 'reveal' && now < 300_000) {
+      now = run.nextWakeAt() ?? now;
+      run.advance(now, rng);
+    }
+    const view = run.view(now, SPECTATOR);
+    expect(view.reveal?.shots.at(-1)?.kind).toBe('winner');
+    expect(view.reveal?.shots.at(-1)?.players).toEqual(view.ranking?.[0] ?? []);
+    expect(view.stageEndsIn).toBeGreaterThan(0);
+    // La révélation finie, le résultat ; le classement ne part qu'à la fin de celui-ci.
+    now = run.nextWakeAt() ?? now;
+    run.advance(now, rng);
+    expect(run.stage).toBe('result');
+    expect(run.isDone(now)).toBe(false);
+    expect(run.isDone(now + ARENA_TIMES.result + view.tieBreaks.length * ARENA_TIMES.tieRoll)).toBe(
+      true,
+    );
+  });
+
+  test('a minigame without a reveal goes straight to the result', () => {
+    const run = new ArenaRun('pawnSumo', ['a', 'b', 'c'], bots, 1, 0);
+    run.setReady('a', 0);
+    const rng = new Rng(3);
+    let now = 0;
+    const stages = new Set<string>();
+    while (!run.isDone(now) && now < 300_000) {
+      now = run.nextWakeAt() ?? now;
+      run.advance(now, rng);
+      stages.add(run.stage);
+    }
+    expect(stages.has('reveal')).toBe(false);
+    expect(run.view(now, SPECTATOR).reveal).toBeNull();
+  });
+
   test('breaks ties with dice during the result, which lasts as long as the rolls', () => {
     // Trois humains qui n'appuient jamais : personne ne marque, ils finissent tous ex aequo.
     const run = new ArenaRun('boardReflex', ['a', 'b', 'c'], new Map(), 1, 0);
