@@ -66,7 +66,9 @@ describe('a game session', () => {
       const snapshot = session.snapshot({ type: 'spectator' }, wake);
       if (snapshot.type !== 'snapshot') throw new Error('Instantané attendu');
       const { phase } = snapshot.state;
-      if (phase.type === 'turn') {
+      // Un 1 contre tous joué en arène pendant le tour avance d'un pas par réveil : ce n'est pas
+      // un choix de bot.
+      if (phase.type === 'turn' && phase.step.type !== 'awaitOneVsAllResult') {
         (phase.step.type === 'awaitRoll' ? waits.roll : waits.choice).push(wake - ready);
       }
       ready = wake + animationTime(session.tick(wake) ?? []);
