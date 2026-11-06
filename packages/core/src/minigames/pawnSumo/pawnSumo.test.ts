@@ -5,9 +5,14 @@ import { ARENA_STEP, type ArenaInput, IDLE_INPUT } from '../arena/arena';
 import {
   CHARGE_TIME,
   DASH_COOLDOWN,
+  MISSILE_REACH,
+  MISSILE_SPEED,
+  MISSILE_WARNING,
+  missilePosition,
   PAWN_SUMO,
   SUMO_RADIUS,
   SUMO_TIME_LIMIT,
+  type SumoMissile,
   type SumoState,
   sumoRadius,
 } from './pawnSumo';
@@ -155,6 +160,81 @@ describe('pawn sumo', () => {
     const out = { move: { x: 0, z: 1 }, primary: false, secondary: false };
     const state = run(PAWN_SUMO.create(['a'], { practice: true, seed: 1 }), { a: out }, 30 * 90);
     expect(PAWN_SUMO.isOver(state)).toBe(false);
+    expect(fighter(state, 'a').fellAt).toBeNull();
+  });
+
+  /** a et b sur la ligne d'un missile qui part tout de suite vers +x, en passant au centre. */
+  const onMissileRoute = (practice: boolean) => {
+    const state = PAWN_SUMO.create(['a', 'b'], { practice, seed: 1 });
+    const missile: SumoMissile = {
+      id: 0,
+      warnAt: 0,
+      launchAt: 0,
+      angle: Math.PI / 2,
+      offset: 0,
+      hitAt: null,
+      hitX: 0,
+      hitZ: 0,
+    };
+    return {
+      ...state,
+      missiles: [missile],
+      nextMissileAt: Number.POSITIVE_INFINITY,
+      fighters: state.fighters.map((f) => ({ ...f, x: f.id === 'a' ? -2 : 2, z: 0 })),
+    };
+  };
+  const flightSteps = Math.ceil((2 * MISSILE_REACH) / MISSILE_SPEED / ARENA_STEP);
+
+  test('a missile blasts the first one on its route out of the game, then explodes', () => {
+    let state = onMissileRoute(false);
+    while (fighter(state, 'a').fellAt === null && state.tick < flightSteps) {
+      state = PAWN_SUMO.step(state, {});
+    }
+    // a est le premier sur sa route : éjecté vers +x ; b, derrière lui, est épargné.
+    expect(fighter(state, 'a').fellAt).not.toBeNull();
+    expect(fighter(state, 'a').blast?.x ?? 0).toBeGreaterThan(0.5);
+    expect(fighter(state, 'b').fellAt).toBeNull();
+    const [missile] = state.missiles;
+    expect(missile?.hitAt).not.toBeNull();
+    expect(missile && missilePosition(missile, state.tick + 1)).toBeNull();
+    expect(PAWN_SUMO.ranking(state)).toEqual([['b'], ['a']]);
+  });
+
+  test('at practice, the one a missile hits comes back to the center', () => {
+    const state = run(onMissileRoute(true), {}, flightSteps);
+    expect(fighter(state, 'a').fellAt).toBeNull();
+    expect(Math.hypot(fighter(state, 'a').x, fighter(state, 'a').z)).toBeLessThan(0.5);
+    expect(state.missiles[0]?.hitAt).not.toBeNull();
+  });
+
+  test('missiles are announced before they fly, and come more often as the match goes on', () => {
+    let state = PAWN_SUMO.create([], { practice: false, seed: 3 });
+    const warned: number[] = [];
+    while (state.tick * ARENA_STEP < 60) {
+      state = PAWN_SUMO.step(state, {});
+      const fresh = state.missiles.at(-1);
+      if (fresh && fresh.warnAt === state.tick) {
+        expect((fresh.launchAt - fresh.warnAt) * ARENA_STEP).toBeCloseTo(MISSILE_WARNING, 1);
+        warned.push(fresh.warnAt * ARENA_STEP);
+      }
+    }
+    expect(warned[0]).toBeCloseTo(10, 1);
+    const gaps = warned.slice(1).map((at, index) => at - (warned[index] ?? 0));
+    expect(gaps.at(-1) ?? 0).toBeLessThan(gaps[0] ?? 0);
+  });
+
+  test('a bot on the route of a missile steps out of it before it arrives', () => {
+    const start = onMissileRoute(false);
+    // a au centre, sur la route du missile (il y arrive en une seconde) ; b plus loin sur la
+    // même ligne : a le vise en restant dessus, s'il ne voit pas venir le missile.
+    let state = {
+      ...start,
+      fighters: start.fighters.map((f) => ({ ...f, x: f.id === 'a' ? 0 : 5 })),
+    };
+    const rng = new Rng(1);
+    for (let i = 0; i < flightSteps; i++) {
+      state = PAWN_SUMO.step(state, { a: PAWN_SUMO.botInput(state, 'a', 'expert', rng) });
+    }
     expect(fighter(state, 'a').fellAt).toBeNull();
   });
 
