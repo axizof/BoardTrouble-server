@@ -5,9 +5,9 @@ import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT } from '../aren
 import { type ArenaBody, createBody } from '../arena/body';
 
 // Le Rempart (02-mini-jeux.md, fiche 31), un 1 contre tous : le joueur seul tient le centre, les
-// autres tournent autour de lui sur un anneau et lui lancent de grosses pierres. Il se tourne et
-// frappe : le coup casse les pierres devant lui, au plus près ; un coup dans le vide le fait
-// trébucher. Deux pierres qui se touchent en vol se cassent : les lanceurs doivent étaler leurs
+// autres tournent autour de lui sur un anneau et lui lancent de grosses pierres. Il se tourne :
+// toute pierre qui entre dans sa zone, devant lui et au plus près, est cassée d'un coup de massue
+// (tout seul : frapper au bon moment en plus était trop dur, retour de test). Deux pierres qui se touchent en vol se cassent : les lanceurs doivent étaler leurs
 // lancers, et faire arriver leurs pierres l'une après l'autre, de directions différentes. Trois
 // pierres reçues, le joueur seul perd ; s'il tient jusqu'au bout du chrono, il gagne.
 
@@ -46,15 +46,13 @@ export const HIT_DISTANCE = 0.9;
  */
 export const CLASH_WINDOW = 0.12;
 /**
- * Le coup : il dure SWING_TICKS pas ; il casse les pierres à STRIKE_REACH du centre au plus, et à
- * STRIKE_ARC radians au plus de part et d'autre de là où il regarde. Frapper trop tôt rate.
- * Une pierre cassée, il peut refrapper aussitôt ; un coup dans le vide le fait trébucher
- * STUMBLE_TIME secondes (ni coup ni demi-tour).
+ * La zone du joueur seul : à STRIKE_REACH du centre au plus, et à STRIKE_ARC radians au plus de
+ * part et d'autre de là où il regarde. Une pierre qui y entre est cassée aussitôt ; le coup de
+ * massue qui la casse se voit SWING_TICKS pas.
  */
 export const SWING_TICKS = 5;
 export const STRIKE_REACH = 2.6;
 export const STRIKE_ARC = Math.PI / 3;
-export const STUMBLE_TIME = 1;
 /** Il se tourne à cette vitesse (radians par seconde) : vite, mais pas d'un coup. */
 const SOLO_TURN_RATE = 12;
 /** Une pierre cassée reste dans l'état ce temps-là : le client montre ses éclats. */
@@ -64,13 +62,8 @@ const DUMMY_THROW_DELAY = 0.8;
 
 export type RampartSolo = ArenaBody & {
   lives: number;
-  /** La touche tenue au pas précédent : il frappe quand on appuie, pas en tenant. */
-  held: boolean;
-  /** Le pas où son coup en cours a commencé, ou null ; et s'il a déjà cassé une pierre. */
+  /** Le pas de son dernier coup de massue (le client le montre), ou null. */
   swingAt: number | null;
-  swingHit: boolean;
-  /** Il a trébuché : le pas jusqu'où il ne peut plus rien faire, ou null. */
-  stumbleUntil: number | null;
   /** Les pierres qu'il a cassées (stats). */
   broken: number;
 };
@@ -127,17 +120,12 @@ function turnTo(from: number, to: number): number {
   return Math.atan2(Math.sin(to - from), Math.cos(to - from));
 }
 
-/** Le joueur seul frappe en ce moment (son coup est dans ses pas actifs). */
+/** Le joueur seul donne un coup de massue en ce moment. */
 export function isSwinging(solo: RampartSolo, tick: number): boolean {
   return solo.swingAt !== null && tick < solo.swingAt + SWING_TICKS;
 }
 
-/** Il a trébuché et ne s'est pas encore relevé. */
-export function isStumbling(solo: RampartSolo, tick: number): boolean {
-  return solo.stumbleUntil !== null && tick < solo.stumbleUntil;
-}
-
-/** Une pierre que ce coup casserait : assez près du centre, et devant lui. */
+/** Une pierre dans sa zone : assez près du centre, et devant lui. Elle est cassée. */
 export function isInStrike(solo: RampartSolo, stone: { x: number; z: number }): boolean {
   const toward = Math.atan2(stone.x, stone.z);
   return reach(stone) <= STRIKE_REACH && Math.abs(turnTo(solo.facing, toward)) <= STRIKE_ARC;
@@ -166,10 +154,7 @@ function create(
     solo: {
       ...createBody(soloId, 0, 0, 0),
       lives: RAMPART_LIVES,
-      held: false,
       swingAt: null,
-      swingHit: false,
-      stumbleUntil: null,
       broken: 0,
     },
     fighters: throwers.map((id, index) => {
@@ -281,37 +266,19 @@ function throwStone(state: RampartState, thrower: RampartThrower, input: ArenaIn
   thrower.stoneAt = state.tick + Math.round(reloadTime(state) / ARENA_STEP);
 }
 
-/** Le joueur seul : se tourner (pas en trébuchant), frapper à l'appui. */
+/** Le joueur seul se tourne vers où l'on pousse (c'est tout ce qu'il fait). */
 function actSolo(state: RampartState, input: ArenaInput): void {
   const solo = state.solo;
-  const { tick } = state;
-  const pressed = input.primary && !solo.held;
-  solo.held = input.primary;
-  if (isStumbling(solo, tick)) return;
-  solo.stumbleUntil = null;
-  // Son coup fini sans rien casser : il trébuche.
-  if (solo.swingAt !== null && !isSwinging(solo, tick)) {
-    if (!solo.swingHit) solo.stumbleUntil = tick + Math.round(STUMBLE_TIME / ARENA_STEP);
-    solo.swingAt = null;
-    if (solo.stumbleUntil !== null) return;
-  }
-  if (Math.hypot(input.move.x, input.move.z) > 0.3) {
-    const wanted = Math.atan2(input.move.x, input.move.z);
-    const turn = turnTo(solo.facing, wanted);
-    const most = SOLO_TURN_RATE * ARENA_STEP;
-    solo.facing += Math.max(-most, Math.min(most, turn));
-  }
-  // Un nouveau coup : s'il ne frappe pas déjà, ou si son coup a déjà cassé une pierre.
-  const canSwing = solo.swingAt === null || solo.swingHit;
-  if (pressed && canSwing) {
-    solo.swingAt = tick;
-    solo.swingHit = false;
-  }
+  if (Math.hypot(input.move.x, input.move.z) <= 0.3) return;
+  const wanted = Math.atan2(input.move.x, input.move.z);
+  const turn = turnTo(solo.facing, wanted);
+  const most = SOLO_TURN_RATE * ARENA_STEP;
+  solo.facing += Math.max(-most, Math.min(most, turn));
 }
 
 /**
- * Les pierres avancent ; deux qui se touchent se cassent ; le coup en cours casse celles devant
- * le joueur seul ; celles qui l'atteignent le touchent.
+ * Les pierres avancent ; deux qui se touchent se cassent ; celles qui entrent dans la zone du
+ * joueur seul sont cassées ; celles qui l'atteignent le touchent.
  */
 function flyStones(state: RampartState): void {
   const { tick, solo } = state;
@@ -332,9 +299,9 @@ function flyStones(state: RampartState): void {
   }
   for (const stone of flying) {
     if (stone.endedAt !== null) continue;
-    if (isSwinging(solo, tick) && isInStrike(solo, stone)) {
+    if (isInStrike(solo, stone)) {
       Object.assign(stone, { endedAt: tick, end: 'struck' });
-      solo.swingHit = true;
+      solo.swingAt = tick;
       solo.broken += 1;
       continue;
     }
@@ -385,21 +352,19 @@ export function stoneArrival(stone: RampartStone): number {
 }
 
 /**
- * Le joueur seul en bot : il se tourne vers la pierre qui arrive la première, et frappe quand
- * elle est au plus près, avec une erreur de timing selon son niveau (en secondes, tirée une fois
- * par pierre), et parfois un raté franc. Sans pierre en vol, il regarde le lanceur qui prend son
- * élan.
+ * Le joueur seul en bot : il se tourne vers la pierre qui arrive la première parmi celles qu'il a
+ * vues ; sans pierre vue, vers le lanceur le plus avancé dans son élan (comme un joueur, il voit
+ * venir le lancer). Il ne voit une pierre que SOLO_REACTION secondes après son départ, selon son
+ * niveau, et en rate parfois une (SOLO_SLIP, tiré une fois par pierre).
  */
-const SOLO_TIMING: Record<BotLevel, number> = { easy: 0.11, normal: 0.08, expert: 0.05 };
-const SOLO_SLIP: Record<BotLevel, number> = { easy: 0.12, normal: 0.08, expert: 0.04 };
-/** Le moment visé : la pierre à mi-chemin entre la portée du coup et le joueur seul. */
-const STRIKE_AIM = (STRIKE_REACH + HIT_DISTANCE) / 2;
+const SOLO_REACTION: Record<BotLevel, number> = { easy: 0.3, normal: 0.2, expert: 0.1 };
+const SOLO_SLIP: Record<BotLevel, number> = { easy: 0.06, normal: 0.03, expert: 0.01 };
 
 /**
  * Les lanceurs en bot : chacun vise sa place sur l'anneau (répartis, et l'ensemble tourne
  * lentement pour obliger le joueur seul à se retourner) ; quand il a une pierre, il choisit
  * l'élan qui la fera arriver après les pierres déjà en vol, sans les heurter. Il s'en soucie plus
- * ou moins selon son niveau ; l'Expert lance aussitôt sur un joueur seul qui a trébuché.
+ * ou moins selon son niveau.
  */
 const THROW_EAGERNESS: Record<BotLevel, number> = { easy: 0.04, normal: 0.06, expert: 0.08 };
 const COORDINATION: Record<BotLevel, number> = { easy: 0.3, normal: 0.65, expert: 0.9 };
@@ -417,24 +382,22 @@ function botInput(state: RampartState, player: PlayerId, level: BotLevel, rng: R
 }
 
 function soloBotInput(state: RampartState, level: BotLevel): ArenaInput {
-  const { solo, tick } = state;
-  if (isStumbling(solo, tick)) return IDLE_INPUT;
-  const flying = state.stones.filter((stone) => stone.endedAt === null);
-  const next = flying.sort((a, b) => stoneArrival(a) - stoneArrival(b))[0];
+  const reaction = Math.round(SOLO_REACTION[level] / ARENA_STEP);
+  const seen = state.stones.filter(
+    (stone) =>
+      stone.endedAt === null &&
+      state.tick >= stone.thrownAt + reaction &&
+      hashUnit(`${state.seed}:solo:${stone.id}`) >= SOLO_SLIP[level],
+  );
+  const next = seen.sort((a, b) => stoneArrival(a) - stoneArrival(b))[0];
   if (!next) {
-    const charging = state.fighters.find((thrower) => thrower.charge !== null);
+    const charging = state.fighters
+      .filter((thrower) => thrower.charge !== null)
+      .sort((a, b) => (b.charge ?? 0) - (a.charge ?? 0))[0];
     const move = charging ? toward(charging) : { x: 0, z: 0 };
     return { move, primary: false, secondary: false };
   }
-  const move = toward(next);
-  const key = `${state.seed}:solo:${next.id}`;
-  const slip = hashUnit(`${key}:slip`) < SOLO_SLIP[level] ? 3 : 1;
-  const error = (hashUnit(key) * 2 - 1) * SOLO_TIMING[level] * slip;
-  const strikeAt = STRIKE_AIM + error * next.speed;
-  const canSwing = solo.swingAt === null || solo.swingHit;
-  const isFacing = Math.abs(turnTo(solo.facing, Math.atan2(next.x, next.z))) <= STRIKE_ARC;
-  const primary = canSwing && !solo.held && isFacing && reach(next) <= strikeAt;
-  return { move, primary, secondary: false };
+  return { move: toward(next), primary: false, secondary: false };
 }
 
 function throwerBotInput(
@@ -462,9 +425,7 @@ function throwerBotInput(
     };
   }
   if (state.tick < me.stoneAt || me.held) return { move, primary: false, secondary: false };
-  const isOpening = level === 'expert' && isStumbling(state.solo, state.tick);
-  const willThrow = isOpening || rng.chance(THROW_EAGERNESS[level]);
-  return { move, primary: willThrow, secondary: false };
+  return { move, primary: rng.chance(THROW_EAGERNESS[level]), secondary: false };
 }
 
 /**
