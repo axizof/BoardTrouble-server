@@ -16,6 +16,8 @@ import type { Appearance } from '../lobby/players';
 import { ArenaRun } from '../minigames/arena/arenaRun';
 import type { MinigameId } from '../minigames/catalog';
 import { Rng } from '../random/rng';
+import { type GameChronicle, recordAction, startChronicle } from '../recap/chronicle';
+import { recapOf } from '../recap/recap';
 import { animationTime } from './pacing';
 import { type HostMessage, PROTOCOL_VERSION, type SeatView } from './protocol';
 
@@ -55,6 +57,22 @@ const BOT_SEED_OFFSET = 0x5eed;
 
 export type SubmitResult = { ok: true; events: GameEvent[] } | { ok: false; error: IntentError };
 
+/** Version du format de sauvegarde : une sauvegarde d'une autre version n'est pas chargée. */
+export const SESSION_SAVE_VERSION = 1;
+
+/**
+ * Une partie sauvegardée (01-architecture.md, section 9) : de quoi la reprendre. Un mini-jeu
+ * d'arène en cours n'y est pas : il recommence au début à la reprise.
+ */
+export type SessionSave = {
+  version: typeof SESSION_SAVE_VERSION;
+  boardId: string;
+  state: GameState;
+  seats: Record<PlayerId, Seat>;
+  options: SessionOptions;
+  chronicle: GameChronicle;
+};
+
 /** Un mini-jeu d'arène à jouer : qui y joue, et le joueur seul d'un 1 contre tous (ou null). */
 type ArenaToPlay = { minigame: MinigameId; players: PlayerId[]; solo: PlayerId | null };
 
@@ -75,6 +93,8 @@ export class GameSession {
   #readyAt: number;
   /** Le mini-jeu d'arène en cours, ou null. */
   #arena: ArenaRun | null = null;
+  /** Ce que le récap montrera à la fin. */
+  #chronicle: GameChronicle;
 
   private constructor(
     board: Board,
@@ -83,6 +103,7 @@ export class GameSession {
     options: SessionOptions,
     seed: number,
     readyAt: number,
+    chronicle: GameChronicle,
   ) {
     this.board = board;
     this.#state = state;
@@ -90,6 +111,7 @@ export class GameSession {
     this.#options = options;
     this.#botRng = new Rng(seed + BOT_SEED_OFFSET);
     this.#readyAt = readyAt;
+    this.#chronicle = chronicle;
   }
 
   /** Crée la partie : elle commence par la présentation du plateau, puis le tirage de l'ordre. */
@@ -103,10 +125,39 @@ export class GameSession {
     const missing = config.players.filter((player) => seats[player.id] === undefined);
     if (missing.length > 0) throw new Error(`Places sans contrôle : ${missing.map((p) => p.id)}`);
     const state = openGame(board, config);
+    const chronicle = startChronicle(board, state);
     return {
-      session: new GameSession(board, state, seats, options, config.seed, now),
+      session: new GameSession(board, state, seats, options, config.seed, now, chronicle),
       events: [],
     };
+  }
+
+  /**
+   * Reprend une partie sauvegardée, à l'heure `now` ; lève une erreur si la sauvegarde n'est pas
+   * de ce format ou de ce plateau (elle n'est jamais chargée à moitié).
+   */
+  static restore(board: Board, save: SessionSave, now: number): GameSession {
+    if (save.version !== SESSION_SAVE_VERSION) {
+      throw new Error(`Sauvegarde d'une autre version (${save.version})`);
+    }
+    if (save.boardId !== board.definition.id) {
+      throw new Error(`Sauvegarde d'un autre plateau (${save.boardId})`);
+    }
+    const { state, seats, options, chronicle } = structuredClone(save);
+    // Le hasard des bots repart de celui de la partie : il ne change pas les tirages.
+    return new GameSession(board, state, seats, options, state.rngState, now, chronicle);
+  }
+
+  /** La partie à sauvegarder, telle qu'elle est maintenant (sans l'arène en cours). */
+  toSave(): SessionSave {
+    return structuredClone({
+      version: SESSION_SAVE_VERSION,
+      boardId: this.board.definition.id,
+      state: this.#state,
+      seats: this.seats,
+      options: this.#options,
+      chronicle: this.#chronicle,
+    });
   }
 
   get isFinished(): boolean {
@@ -117,6 +168,14 @@ export class GameSession {
   submit(actor: Actor, intent: Intent, now: number): SubmitResult {
     const result = applyIntent(this.board, this.#state, actor, intent);
     if (!result.ok) return result;
+    this.#chronicle = recordAction(
+      this.#chronicle,
+      this.board,
+      actor,
+      this.#state,
+      result.state,
+      result.events,
+    );
     this.#state = result.state;
     this.#readyAt = Math.max(now, this.#readyAt) + animationTime(result.events);
     return { ok: true, events: result.events };
@@ -194,6 +253,12 @@ export class GameSession {
       state: viewState(this.#state, viewer),
       decisionEndsIn: this.#decisionEndsIn(now),
     };
+  }
+
+  /** Le récap de fin de partie (tout y est public), une fois la partie finie ; sinon null. */
+  recapMessage(): HostMessage | null {
+    if (!this.isFinished) return null;
+    return { type: 'recap', recap: recapOf(this.board, this.#state, this.#chronicle) };
   }
 
   /** Un joueur envoie ses commandes d'arène. */

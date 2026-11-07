@@ -37,6 +37,8 @@ export * from './minigames/spinningBar/spinningBar';
 export * from './minigames/stacker/stacker';
 export * from './minigames/uniqueStairs/uniqueStairs';
 export * from './random/rng';
+export * from './recap/chronicle';
+export * from './recap/recap';
 export * from './session/pacing';
 export * from './session/protocol';
 export * from './session/session';
