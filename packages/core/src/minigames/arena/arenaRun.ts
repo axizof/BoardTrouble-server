@@ -33,7 +33,7 @@ import { planReveal, type RevealPlan, revealDuration } from './reveal';
 // Une partie d'arène hébergée (02-mini-jeux.md, section 1 : présentation, "Prêt", décompte,
 // jeu, résultat). Comme la session, elle ne lance aucun minuteur : l'hôte lui donne l'heure.
 
-/** Les arènes jouables. Les autres mini-jeux restent tirés au hasard en attendant. */
+/** L'arène de chaque mini-jeu du catalogue : un mini-jeu n'y entre qu'avec la sienne. */
 export const ARENAS = {
   pawnSumo: PAWN_SUMO,
   meltingPlatform: MELTING_PLATFORM,
@@ -51,16 +51,12 @@ export const ARENAS = {
   lastRoll: LAST_ROLL,
   perfectGauge: PERFECT_GAUGE,
   combination: COMBINATION,
-} satisfies Partial<Record<MinigameId, ArenaGame<ArenaState>>>;
+} satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
 export type ArenaStates = {
   [M in ArenaMinigame]: (typeof ARENAS)[M] extends ArenaGame<infer State> ? State : never;
 };
-
-export function isArenaMinigame(minigame: MinigameId): minigame is ArenaMinigame {
-  return minigame in ARENAS;
-}
 
 /** `reveal` : la révélation de fin, pour les mini-jeux qui en ont une (ArenaGame.reveal). */
 export type ArenaStage = 'intro' | 'countdown' | 'play' | 'reveal' | 'result';

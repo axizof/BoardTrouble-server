@@ -13,11 +13,10 @@ import type {
 } from '../game/types';
 import { type Viewer, viewEvents, viewState } from '../game/views';
 import type { Appearance } from '../lobby/players';
-import { ArenaRun, isArenaMinigame } from '../minigames/arena/arenaRun';
+import { ArenaRun } from '../minigames/arena/arenaRun';
 import type { MinigameId } from '../minigames/catalog';
 import { Rng } from '../random/rng';
 import { animationTime } from './pacing';
-import { placeholderSystemIntent } from './placeholder';
 import { type HostMessage, PROTOCOL_VERSION, type SeatView } from './protocol';
 
 /** Qui contrôle une place : un humain, ou un bot de ce niveau. */
@@ -43,11 +42,10 @@ const BOT_ROLL_TIME = 1600;
 const BOT_CHOICE_TIME = 2400;
 const BOT_OPENING_TIME = 700;
 /**
- * Durée d'un mini-jeu provisoire (voir `placeholderSystemIntent`), quand on ne l'attend pas :
- * en multi avec un chrono, ou entre bots. Sans limite de temps (le solo), l'hôte attend que
- * chaque humain ait lu sa présentation ("Suivant").
+ * La Roue tourne ce temps-là avant que l'hôte tire sa case au hasard. Elle deviendra un test de
+ * timing à arrêter soi-même (CLAUDE.md, "À ne pas oublier").
  */
-const PLACEHOLDER_MINIGAME_TIME = 5000;
+const WHEEL_TIME = 5000;
 /** Un joueur qui laisse passer son chrono : l'hôte choisit pour lui, comme un bot Normal. */
 const STAND_IN_LEVEL: BotLevel = 'normal';
 /** La présentation du plateau dure moins que ça ; au-delà, l'hôte la passe pour le joueur. */
@@ -64,8 +62,8 @@ type ArenaToPlay = { minigame: MinigameId; players: PlayerId[]; solo: PlayerId |
  * Une partie hébergée : l'état complet, les places, et le rythme. Les horloges viennent de
  * l'appelant (`now`, en millisecondes) : la session ne lance aucun minuteur, ce qui la rend
  * testable et utilisable aussi bien dans un Web Worker que sur le serveur. L'hôte appelle
- * `tick` à l'heure donnée par `nextWakeAt` pour faire jouer les bots, les choix par défaut et
- * les mini-jeux provisoires.
+ * `tick` à l'heure donnée par `nextWakeAt` pour faire jouer les bots, les choix par défaut, les
+ * mini-jeux et la Roue.
  */
 export class GameSession {
   readonly board: Board;
@@ -77,8 +75,6 @@ export class GameSession {
   #readyAt: number;
   /** Le mini-jeu d'arène en cours, ou null. */
   #arena: ArenaRun | null = null;
-  /** Les humains qui ont lu la présentation du mini-jeu provisoire en cours. */
-  readonly #minigameReady = new Set<PlayerId>();
 
   private constructor(
     board: Board,
@@ -135,7 +131,7 @@ export class GameSession {
     if (actor === null) return null;
     if (actor.type === 'system') {
       if (this.#arenaToPlay()) return this.#arena ? this.#arena.nextWakeAt() : this.#readyAt;
-      return this.#placeholderWakeAt();
+      return this.#readyAt + WHEEL_TIME;
     }
     if (this.seats[actor.playerId]?.control !== 'human') {
       return this.#readyAt + botThinkTime(this.#state);
@@ -146,8 +142,7 @@ export class GameSession {
 
   /**
    * Joue l'action automatique si son heure est venue : décision d'un bot, choix par défaut
-   * d'un joueur dont le chrono est écoulé, pas d'un mini-jeu d'arène, résultat provisoire des
-   * autres mini-jeux. Renvoie ses événements (une liste vide si seule l'arène a avancé), ou null
+   * d'un joueur dont le chrono est écoulé, pas d'un mini-jeu d'arène, case de la Roue. Renvoie ses événements (une liste vide si seule l'arène a avancé), ou null
    * s'il n'y avait rien à jouer.
    */
   tick(now: number): GameEvent[] | null {
@@ -158,7 +153,7 @@ export class GameSession {
     if (arena) return this.#playArena(arena, now);
     const intent =
       actor.type === 'system'
-        ? placeholderSystemIntent(this.#state, this.#botRng)
+        ? this.#wheelIntent()
         : chooseBoardIntent(
             this.board,
             this.#state,
@@ -170,15 +165,7 @@ export class GameSession {
       throw new Error(`Aucune action automatique (phase ${this.#state.phase.type})`);
     const result = this.submit(actor, intent, now);
     if (!result.ok) throw new Error(`Action automatique refusée : ${result.error}`);
-    if (actor.type === 'system') this.#minigameReady.clear();
     return result.events;
-  }
-
-  /** Un joueur a lu la présentation d'un mini-jeu provisoire ("Suivant"). */
-  minigameReady(player: PlayerId): void {
-    if (this.#isPlaceholderMinigame() && this.seats[player]?.control === 'human') {
-      this.#minigameReady.add(player);
-    }
   }
 
   /** Message d'arrivée dans la partie, pour une place ou un spectateur. */
@@ -239,30 +226,26 @@ export class GameSession {
     const { phase } = this.#state;
     const everyone = this.#state.players.map((player) => player.id);
     if (phase.type === 'minigame' || phase.type === 'bonusMinigame') {
-      return isArenaMinigame(phase.minigame)
-        ? { minigame: phase.minigame, players: everyone, solo: null }
-        : null;
+      return { minigame: phase.minigame, players: everyone, solo: null };
     }
-    if (phase.type === 'finale' && isArenaMinigame(phase.minigame)) {
+    if (phase.type === 'finale') {
       return { minigame: phase.minigame, players: phase.contenders, solo: null };
     }
     if (phase.type !== 'turn') return null;
     const { step } = phase;
-    if (step.type === 'awaitDuelResult' && isArenaMinigame(step.minigame)) {
+    if (step.type === 'awaitDuelResult') {
       return { minigame: step.minigame, players: [phase.playerId, step.opponent], solo: null };
     }
     // La porte d'adresse : son défi, joué par le joueur du tour seul (les autres regardent).
-    if (step.type === 'awaitSkillGate' && isArenaMinigame(step.minigame)) {
+    if (step.type === 'awaitSkillGate') {
       return { minigame: step.minigame, players: [phase.playerId], solo: null };
     }
     if (step.type !== 'awaitOneVsAllResult') return null;
-    const { minigame } = step;
-    return isArenaMinigame(minigame) ? { minigame, players: everyone, solo: phase.playerId } : null;
+    return { minigame: step.minigame, players: everyone, solo: phase.playerId };
   }
 
   /** Lance l'arène une fois les animations jouées, la fait avancer, puis rend son classement. */
   #playArena(to: ArenaToPlay, now: number): GameEvent[] {
-    if (!isArenaMinigame(to.minigame)) return [];
     if (!this.#arena) {
       const bots = new Map(
         to.players.flatMap((id): [PlayerId, BotLevel][] => {
@@ -297,33 +280,14 @@ export class GameSession {
     return result.events;
   }
 
-  /**
-   * Quand tirer le résultat provisoire : dès que tous les humains ont lu la présentation ;
-   * sinon, sans limite de temps, on les attend ; avec un chrono (ou entre bots), au bout de
-   * PLACEHOLDER_MINIGAME_TIME.
-   */
-  #placeholderWakeAt(): number | null {
-    const automatic = this.#readyAt + PLACEHOLDER_MINIGAME_TIME;
-    if (!this.#isPlaceholderMinigame()) return automatic;
-    const humans = Object.keys(this.seats).filter((id) => this.seats[id]?.control === 'human');
-    if (humans.length === 0) return automatic;
-    if (humans.every((id) => this.#minigameReady.has(id))) return this.#readyAt;
-    return this.#options.decisionTime === null ? null : automatic;
-  }
-
-  /** La partie attend le résultat d'un mini-jeu provisoire, dont le client montre la présentation. */
-  #isPlaceholderMinigame(): boolean {
+  /** La case de la Roue, tirée au hasard (null si la partie n'attend pas la Roue). */
+  #wheelIntent(): Intent | null {
     const { phase } = this.#state;
-    if (phase.type === 'minigame' || phase.type === 'bonusMinigame' || phase.type === 'finale') {
-      return !isArenaMinigame(phase.minigame);
-    }
-    if (phase.type !== 'turn') return false;
-    const { step } = phase;
-    const isMinigameStep =
-      step.type === 'awaitOneVsAllResult' ||
-      step.type === 'awaitDuelResult' ||
-      step.type === 'awaitSkillGate';
-    return isMinigameStep && !isArenaMinigame(step.minigame);
+    if (phase.type !== 'turn' || phase.step.type !== 'awaitWheel') return null;
+    return {
+      type: 'submitWheelResult',
+      segment: this.#botRng.int(0, phase.step.segments.length - 1),
+    };
   }
 
   #decisionEndsIn(now: number): number | null {
