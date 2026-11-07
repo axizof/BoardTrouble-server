@@ -372,8 +372,8 @@ export function stoneArrival(stone: RampartStone): number {
  * venir le lancer). Il ne voit une pierre que SOLO_REACTION secondes après son départ, selon son
  * niveau, et en rate parfois une (SOLO_SLIP, tiré une fois par pierre).
  */
-const SOLO_REACTION: Record<BotLevel, number> = { easy: 0.3, normal: 0.2, expert: 0.1 };
-const SOLO_SLIP: Record<BotLevel, number> = { easy: 0.06, normal: 0.03, expert: 0.01 };
+const SOLO_REACTION: Record<BotLevel, number> = { easy: 0.35, normal: 0.3, expert: 0.2 };
+const SOLO_SLIP: Record<BotLevel, number> = { easy: 0.1, normal: 0.07, expert: 0.04 };
 
 /**
  * Les lanceurs en bot : chacun vise sa place sur l'anneau (répartis, et l'ensemble tourne

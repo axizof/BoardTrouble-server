@@ -586,11 +586,11 @@ function ranking(state: BigDieState): PlayerId[][] {
  * là où il sera bientôt, et saute quand quelqu'un est tout près. Son niveau règle son temps de
  * réaction entre deux bascules, son anticipation et son goût pour le saut.
  */
-const DIE_PAUSE: Record<BotLevel, number> = { easy: 0.85, normal: 0.6, expert: 0.2 };
+const DIE_PAUSE: Record<BotLevel, number> = { easy: 0.86, normal: 0.66, expert: 0.3 };
 const DIE_LEAD: Record<BotLevel, number> = { easy: 0, normal: 0.25, expert: 0.45 };
 const DIE_SLAM: Record<BotLevel, number> = { easy: 0.04, normal: 0.12, expert: 0.25 };
 /** Ses mini-dés : une chance à chaque pas quand un coureur est dans ses lignes, pas collé à lui. */
-const DIE_FIRE: Record<BotLevel, number> = { easy: 0.03, normal: 0.08, expert: 0.2 };
+const DIE_FIRE: Record<BotLevel, number> = { easy: 0.03, normal: 0.07, expert: 0.16 };
 /**
  * Le bot coureur fuit le dé et les murs, s'écarte des autres (le dé vise les groupes), et sort
  * de la case où le dé va retomber, en bondissant s'il le faut. Son niveau règle quand il remarque

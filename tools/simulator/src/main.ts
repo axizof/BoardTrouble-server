@@ -1,21 +1,37 @@
-// Simulateur d'équilibrage : bun run simulate -- [--games 2000] [--table 4|6] [--seed 1]
-import { type BotLevel, buildMontTrouble, prepareBoard, type TableSize } from '@board-trouble/core';
+// Simulateur d'équilibrage : bun run simulate -- [--games 300] [--table 4|6] [--seed 1]
+import {
+  ARENA_TIMES,
+  type BotLevel,
+  buildMontTrouble,
+  type MinigameOccasion,
+  prepareBoard,
+  type TableSize,
+} from '@board-trouble/core';
 import { type GameRecord, simulateGame } from './simulate';
 
-// Estimation de durée réelle : mini-jeu avec sa présentation, et un tour animé.
-const MINIGAME_SECONDS = 110;
+/**
+ * Un humain lit la présentation d'un mini-jeu et essaie le bac à sable avant "Prêt" : on compte
+ * 20 s (hypothèse), là où une table de bots la passe en ARENA_TIMES.botsIntro.
+ */
+const HUMAN_INTRO_SECONDS = 20;
 /**
  * Même avantage à 4 et à 6 : l'Expert gagne 2 à 3,7 fois plus souvent que chaque Normal
  * (03-equilibrage.md, mesure 10).
  */
 const EXPERT_TARGET: Record<TableSize, string> = { 4: '40 à 55 %', 6: '30 à 42 %' };
-const TURN_SECONDS = 15;
+const OCCASIONS: { occasion: MinigameOccasion; name: string }[] = [
+  { occasion: 'round', name: 'manches' },
+  { occasion: 'oneVsAll', name: '1 contre tous' },
+  { occasion: 'duel', name: 'duels' },
+  { occasion: 'solo', name: "portes d'adresse" },
+  { occasion: 'finale', name: 'finale' },
+];
 
 const args = new Map<string, string>();
 for (let i = 2; i < process.argv.length; i += 2) {
   args.set(process.argv[i] ?? '', process.argv[i + 1] ?? '');
 }
-const games = Number(args.get('--games') ?? 2000);
+const games = Number(args.get('--games') ?? 300);
 const tableSize = Number(args.get('--table') ?? 4) as TableSize;
 const seed = Number(args.get('--seed') ?? 1);
 if (tableSize !== 4 && tableSize !== 6) throw new Error('--table doit valoir 4 ou 6');
@@ -42,20 +58,42 @@ function run(levels: BotLevel[]): GameRecord[] {
   );
 }
 
+/** La durée avec des humains : celle des bots, plus leur lecture de chaque présentation. */
+function humanMinutes(record: GameRecord): number {
+  const extraIntro = HUMAN_INTRO_SECONDS - ARENA_TIMES.botsIntro / 1000;
+  return (record.seconds + record.arenas.length * extraIntro) / 60;
+}
+
 function report(title: string, records: GameRecord[]): void {
   const rounds = records.map((record) => record.rounds).sort((a, b) => a - b);
-  const minutes = records.map(
-    (record) => ((record.rounds - 1) * MINIGAME_SECONDS + record.turns * TURN_SECONDS) / 60,
+  const minutes = records.map(humanMinutes).sort((a, b) => a - b);
+  const arenaSeconds = records.map((record) =>
+    record.arenas.reduce((sum, arena) => sum + arena.seconds, 0),
   );
   const withLeader = records.filter((record) => record.leaderAtThreeQuarters !== null);
   const leaderWins = withLeader.filter((record) => record.leaderAtThreeQuarters === record.winner);
   const expertGames = records.filter((record) => record.winnerLevel === 'expert').length;
+  const oneVsAll = records.flatMap((record) => record.oneVsAll);
+  const skillGates = records.flatMap((record) => record.skillGates);
 
   console.log(`== ${title}`);
   console.log(
     `  Manches        : moyenne ${average(rounds).toFixed(1)}  (10 % : ${percentile(rounds, 0.1)}, médiane : ${percentile(rounds, 0.5)}, 90 % : ${percentile(rounds, 0.9)})`,
   );
-  console.log(`  Durée estimée  : ${average(minutes).toFixed(0)} min en moyenne`);
+  console.log(
+    `  Durée          : ${average(minutes).toFixed(0)} min avec des humains (10 % : ${percentile(minutes, 0.1).toFixed(0)}, 90 % : ${percentile(minutes, 0.9).toFixed(0)}) ; entre bots ${average(records.map((record) => record.seconds / 60)).toFixed(0)} min, dont ${percent(average(arenaSeconds), average(records.map((record) => record.seconds)))} en mini-jeux`,
+  );
+  const perOccasion = OCCASIONS.map(({ occasion, name }) => {
+    const played = records.flatMap((record) =>
+      record.arenas.filter((arena) => arena.occasion === occasion),
+    );
+    const seconds = average(played.map((arena) => arena.seconds));
+    return `${(played.length / records.length).toFixed(1)} ${name} (${seconds.toFixed(0)} s)`;
+  });
+  console.log(`  Mini-jeux      : ${perOccasion.join(', ')} par partie`);
+  console.log(
+    `  1 contre tous  : le joueur seul gagne ${percent(oneVsAll.filter(Boolean).length, oneVsAll.length)} ; portes d'adresse réussies : ${percent(skillGates.filter(Boolean).length, skillGates.length)}`,
+  );
   console.log(
     `  Leaders        : ${average(records.map((record) => record.leaderChanges)).toFixed(1)} changements par partie`,
   );
