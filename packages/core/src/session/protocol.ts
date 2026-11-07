@@ -3,10 +3,11 @@ import type { GameEvent, GameState, Intent, IntentError, PlayerId } from '../gam
 import type { Appearance } from '../lobby/players';
 import type { ArenaInput } from '../minigames/arena/arena';
 import type { ArenaRunView } from '../minigames/arena/arenaRun';
+import type { GameRecap } from '../recap/recap';
 
 // Messages entre un client et l'hôte de la partie : le serveur en multi, un Web Worker en
 // solo. Les deux parlent exactement ce protocole (01-architecture.md, section 5).
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export type ClientMessage =
   | { type: 'intent'; intent: Intent }
@@ -41,4 +42,6 @@ export type HostMessage =
   /** L'intention du client a été refusée. */
   | { type: 'rejected'; error: IntentError }
   /** Le mini-jeu d'arène en cours (30 fois par seconde pendant le jeu), ou null quand il finit. */
-  | { type: 'arena'; run: ArenaRunView | null };
+  | { type: 'arena'; run: ArenaRunView | null }
+  /** La partie est finie : son récap (classement, graphe, titres, score, stats). */
+  | { type: 'recap'; recap: GameRecap };

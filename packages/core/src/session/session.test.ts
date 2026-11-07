@@ -5,7 +5,7 @@ import type { GameEvent } from '../game/types';
 import { naturalAppearance } from '../lobby/players';
 import { FOUR_PLAYERS } from '../testing/fixtures';
 import { animationTime } from './pacing';
-import { GameSession, type Seat, type SeatControl } from './session';
+import { GameSession, type Seat, type SeatControl, type SessionSave } from './session';
 
 const board = prepareBoard(buildMontTrouble());
 const DECISION_TIME = 20_000;
@@ -268,6 +268,54 @@ describe('a game session', () => {
     expect(session.update({ type: 'spectator' }, [...events, secret], 0)).toMatchObject({
       events,
     });
+  });
+});
+
+describe('saving a game session', () => {
+  /** Fait jouer les bots jusqu'à ce que `until` soit vrai ; renvoie l'heure atteinte. */
+  function playUntil(session: GameSession, until: () => boolean): number {
+    let now = 0;
+    for (let wake = session.nextWakeAt(); wake !== null && !until(); wake = session.nextWakeAt()) {
+      now = wake;
+      session.tick(now);
+    }
+    return now;
+  }
+
+  test('resumes a saved game where it stopped, and plays it to the end', () => {
+    const { session } = start(BOTS, 3);
+    const stoppedAt = playUntil(session, () => {
+      const message = session.update({ type: 'spectator' }, [], 0);
+      return message.type === 'events' && message.state.round >= 6 && !session.isPlayingArena;
+    });
+    // Comme dans le navigateur : la sauvegarde passe par une copie, sans rien de vivant.
+    const save = JSON.parse(JSON.stringify(session.toSave()));
+    const resumed = GameSession.restore(board, save, stoppedAt);
+    expect(resumed.update({ type: 'spectator' }, [], stoppedAt)).toEqual(
+      session.update({ type: 'spectator' }, [], stoppedAt),
+    );
+    playUntil(resumed, () => resumed.isFinished);
+    expect(resumed.isFinished).toBe(true);
+    const recap = resumed.recapMessage();
+    expect(recap?.type === 'recap' && recap.recap.players.ana?.progress.length).toBeGreaterThan(6);
+  });
+
+  test('refuses a save from another format version', () => {
+    const { session } = start(BOTS);
+    const save = { ...session.toSave(), version: 99 } as unknown as SessionSave;
+    expect(() => GameSession.restore(board, save, 0)).toThrow();
+  });
+
+  test('sends no recap before the end, then the winner first', () => {
+    const { session } = start(BOTS, 2);
+    expect(session.recapMessage()).toBeNull();
+    playUntil(session, () => session.isFinished);
+    const message = session.recapMessage();
+    const final = session.update({ type: 'spectator' }, [], 0);
+    if (message?.type !== 'recap' || final.type !== 'events') throw new Error('Récap attendu');
+    expect(final.state.phase.type === 'finished' && final.state.phase.winner).toBe(
+      message.recap.ranking[0] ?? '',
+    );
   });
 });
 
