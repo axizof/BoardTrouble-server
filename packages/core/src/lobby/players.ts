@@ -1,8 +1,18 @@
 // Ce qu'un joueur choisit dans le salon : son pseudo et son apparence. Tout ce qui vient d'un
 // client est revérifié côté serveur (01-architecture.md, section 7).
 
-/** Les 8 animaux jouables (STYLE.md section 5) : même gabarit, même hitbox. */
-export const CHARACTERS = ['fox', 'cow', 'lizard', 'lion', 'cat', 'dog', 'goat', 'wolf'] as const;
+/** Les 9 animaux jouables (STYLE.md section 5) : même gabarit, même hitbox. */
+export const CHARACTERS = [
+  'fox',
+  'cow',
+  'lizard',
+  'lion',
+  'cat',
+  'dog',
+  'goat',
+  'wolf',
+  'duck',
+] as const;
 
 export type CharacterId = (typeof CHARACTERS)[number];
 

@@ -25,8 +25,9 @@ describe('a nickname', () => {
 });
 
 describe('the characters', () => {
-  test('are the eight animals', () => {
-    expect(CHARACTERS).toHaveLength(8);
+  test('are the nine animals', () => {
+    expect(CHARACTERS).toHaveLength(9);
+    expect(isCharacter('duck')).toBe(true);
     expect(isCharacter('fox')).toBe(true);
     expect(isCharacter('dragon')).toBe(false);
   });
