@@ -102,7 +102,7 @@ describe('playing a special die', () => {
     expect(get(after, 'ana').specialDice).toEqual(['trapped']);
   });
 
-  test('a trapped die that misses moves nothing and wakes the Board for a small event', () => {
+  test('a trapped die that misses moves nothing and stirs the Board (its gauge rises)', () => {
     for (let seed = 0; seed < 30; seed++) {
       const { board, state: initial } = setup();
       const state = {
@@ -117,7 +117,9 @@ describe('playing a special die', () => {
       const rolled = events.find((event) => event.type === 'diceRolled');
       if (rolled?.type !== 'diceRolled' || !rolled.roll.trapped) continue;
       expect(events.map((event) => event.type)).toContain('specialDieTrapped');
-      expect(events.map((event) => event.type)).toContain('troubleApplied');
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: 'troubleGauge', reason: 'stir' }),
+      );
       expect(after.phase).toMatchObject({ playerId: 'bob' });
       return;
     }

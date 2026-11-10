@@ -26,7 +26,6 @@ import {
 import { Rng } from '../random/rng';
 import {
   applyTrouble,
-  drawSpaceEvent,
   drawTroubleOptions,
   rewardBonusMinigame,
   type TroubleEventId,
@@ -39,11 +38,12 @@ import {
   GAP_THRESHOLD,
   GAUGE_MAX,
   ROUND_GAIN,
+  stirTrouble,
 } from '../trouble/gauge';
 import { type Context, type Flow, getPlayer, pendingPlayers, removeItem } from './context';
 import { advanceByEffect, gainItem, gainSpecialDie, openChest, recoil } from './effects';
 import { blowWind, runConveyors } from './floors';
-import { attemptGate, chooseDoor, payToll, resolveSkillGate } from './gates';
+import { attemptGate, chooseDoor, finalContenders, payToll, resolveSkillGate } from './gates';
 import { moveWithDice } from './movement';
 import { applyWheelSegment, MAX_BET, placeBet, settleBets } from './spaces';
 import type {
@@ -227,7 +227,7 @@ export function applyIntent(
       break;
     case 'chooseTrouble':
       if (ctx.state.phase.type === 'trouble') chooseTrouble(ctx, intent.event);
-      else resolvePause(ctx, (player) => applyTrouble(ctx, intent.event, player.id, null));
+      else resolvePause(ctx, (player) => applyTrouble(ctx, intent.event, player.id));
       break;
     case 'chooseMinigame':
       if (ctx.state.phase.type === 'minigameChoice') chooseRoundMinigame(ctx, intent.minigame);
@@ -614,11 +614,10 @@ function purposeOf(player: PlayerState): 'move' | 'gate' {
  * passe, il avance du même total au-delà de la porte.
  */
 function playRoll(ctx: Context, player: PlayerState, dice: DiceRoll): void {
-  // Dé Piégé tombé sur une face piégée : on n'avance pas, et le Plateau joue un petit tour.
+  // Dé Piégé tombé sur une face piégée : on n'avance pas, et le Plateau s'agace.
   if (dice.trapped) {
     ctx.events.push({ type: 'specialDieTrapped', playerId: player.id });
-    const event = drawSpaceEvent(ctx.board, ctx.state, ctx.rng);
-    afterAction(ctx, event ? applyTrouble(ctx, event, null, player) : 'continue', 'endTurn');
+    afterAction(ctx, stirTrouble(ctx), 'endTurn');
     return;
   }
   if (player.atGate) {
@@ -756,7 +755,16 @@ function afterAction(ctx: Context, flow: Flow, then: Resume): void {
 function endTurn(ctx: Context): void {
   const { state } = ctx;
   ctx.events.push({ type: 'turnEnded', playerId: activePlayer(ctx).id });
+  // Porte finale ouverte : seuls jouent encore ceux qui peuvent l'atteindre pendant leur tour.
+  const contenders = state.finalGateOpenedBy.length > 0 ? finalContenders(ctx) : null;
   state.turnIndex++;
+  while (
+    contenders &&
+    state.turnIndex < state.turnOrder.length &&
+    !contenders.includes(state.turnOrder[state.turnIndex] ?? '')
+  ) {
+    state.turnIndex++;
+  }
   if (state.turnIndex < state.turnOrder.length) startTurn(ctx);
   else endRound(ctx);
 }
@@ -837,7 +845,7 @@ function gapBetweenFirstAndLast(ctx: Context): number {
 function chooseTrouble(ctx: Context, event: TroubleEventId): void {
   const { phase } = ctx.state;
   if (phase.type !== 'trouble') throw new Error('Pas de TROUBLE en attente');
-  applyTrouble(ctx, event, phase.chooser, null);
+  applyTrouble(ctx, event, phase.chooser);
   if (ctx.state.phase.type === 'trouble') proceedToNextRound(ctx);
 }
 

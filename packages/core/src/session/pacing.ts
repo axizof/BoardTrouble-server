@@ -27,7 +27,8 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
   coinFlipped: 1500,
   // Le temps de lire ce que fait la case (le jeu l'annonce à l'écran ; 1,6 s : trop court).
   spaceTriggered: 2400,
-  itemGained: 1200,
+  // L'objet sort d'un nuage au-dessus du joueur : on a le temps de voir lequel.
+  itemGained: 2000,
   itemRefused: 600,
   itemDiscarded: 600,
   itemUsed: 1200,
@@ -83,10 +84,12 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
   chestOpened: 1800,
   rerolled: 1800,
   troubleGauge: 600,
-  troubleAwakened: 3500,
-  troubleApplied: 2500,
+  // Le Plateau se réveille en colère (l'écran tremble, il parle), puis son TROUBLE se joue, et
+  // le Brouillard ou l'Éruption se montrent case par case.
+  troubleAwakened: 4500,
+  troubleApplied: 4500,
   gustBlew: 1800,
-  overlayEnded: 1000,
+  overlayEnded: 2200,
   roundEvent: 2000,
   bonusMinigameStarted: 2000,
   turnEnded: 300,

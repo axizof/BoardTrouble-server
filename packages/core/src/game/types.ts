@@ -306,7 +306,11 @@ export type GameEvent =
       success: boolean;
     }
   | { type: 'keyUsed'; playerId: PlayerId; spaceId: SpaceId }
-  | { type: 'finalGateOpened'; playerId: PlayerId }
+  /**
+   * Défi de la porte finale réussi. `contenders` : ceux qui jouent encore cette manche et peuvent
+   * l'égaler ; personne, c'est la victoire.
+   */
+  | { type: 'finalGateOpened'; playerId: PlayerId; contenders: PlayerId[] }
   | { type: 'coinFlipped'; playerId: PlayerId; spaceId: SpaceId; heads: boolean }
   | { type: 'spaceTriggered'; playerId: PlayerId; spaceId: SpaceId }
   | { type: 'itemGained'; playerId: PlayerId; item: ItemId; source: ItemSource }
@@ -387,11 +391,16 @@ export type GameEvent =
   | { type: 'mysteryBoxOpened'; playerId: PlayerId; outcome: 'item' | 'trouble' }
   | { type: 'chestOpened'; playerId: PlayerId; chest: 0 | 1; trapped: boolean }
   | { type: 'rerolled'; playerId: PlayerId; previous: DiceRoll; roll: DiceRoll }
-  | { type: 'troubleGauge'; value: number; added: number; reason: 'round' | 'double' | 'gap' }
+  | {
+      type: 'troubleGauge';
+      value: number;
+      added: number;
+      reason: 'round' | 'double' | 'gap' | 'stir';
+    }
   | { type: 'troubleAwakened'; chooser: PlayerId; options: TroubleEventId[] }
   | { type: 'troubleApplied'; event: TroubleEventId; chooser: PlayerId | null }
-  /** TROUBLE Coup de vent autour du joueur : `pushed`, ceux qu'il fait reculer (peut-être personne). */
-  | { type: 'gustBlew'; playerId: PlayerId; pushed: PlayerId[] }
+  /** TROUBLE Coup de vent : tout le plateau recule de `spaces` cases (`pushed` : qui recule). */
+  | { type: 'gustBlew'; spaces: number; pushed: PlayerId[] }
   | { type: 'overlayEnded'; overlay: 'inversion' | 'eruption' | 'fog' }
   | { type: 'roundEvent'; event: RoundEventId; playerId: PlayerId }
   | { type: 'bonusMinigameStarted' }

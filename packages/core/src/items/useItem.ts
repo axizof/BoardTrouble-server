@@ -12,7 +12,8 @@ import {
 import { push } from '../game/floors';
 import type { GameState, IntentError, PlayerId, PlayerState } from '../game/types';
 import { grantMinigameChoice } from '../minigames/selection';
-import { applyTrouble, drawSealOptions, drawSpaceEvent } from '../trouble/events';
+import { drawSealOptions } from '../trouble/events';
+import { stirTrouble } from '../trouble/gauge';
 import { catchUpFactor, drawItem, ITEMS, type ItemId } from './catalog';
 
 const ROCKET_STEPS = 6;
@@ -180,8 +181,7 @@ function openMysteryBox(ctx: Context, user: PlayerState): Flow {
     const catchUp = catchUpFactor(ctx.board, ctx.state, user.id);
     return gainItem(ctx, user, drawItem(ctx.rng, catchUp), 'mysteryBox');
   }
-  const event = drawSpaceEvent(ctx.board, ctx.state, ctx.rng);
-  return event === null ? 'continue' : applyTrouble(ctx, event, null, user);
+  return stirTrouble(ctx);
 }
 
 function useOnTarget(ctx: Context, user: PlayerState, item: ItemId, target: PlayerState): Flow {

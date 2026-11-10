@@ -315,35 +315,32 @@ describe('TROUBLE events', () => {
 });
 
 describe('TROUBLE space and round events', () => {
-  test('a TROUBLE space wakes the Board for a small event right away', () => {
+  test('a TROUBLE space fills the gauge, without any event of its own', () => {
     const { board, state: initial } = setup(
       linearBoard([...emptySpaces(2), { type: 'trouble' }, ...emptySpaces(20)]),
     );
     const state = { ...initial, rngState: rngStateRolling(3) };
-    const { events } = act(board, state, player('ana'), { type: 'roll' });
-    const applied = events.find((event) => event.type === 'troubleApplied');
-    expect(applied?.type === 'troubleApplied' && TROUBLE_CATEGORY[applied.event]).toMatch(
-      /small|mild/,
+    const { events, state: after } = act(board, state, player('ana'), { type: 'roll' });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'troubleGauge', reason: 'stir' }),
     );
+    expect(events.some((event) => event.type === 'troubleApplied')).toBe(false);
+    expect(after.trouble.gauge).toBe(initial.trouble.gauge + 25);
   });
 
-  test('a gust names who it pushes: near players, never those on the start', () => {
-    const { board, state: initial } = setup(
-      linearBoard([...emptySpaces(2), { type: 'trouble' }, ...emptySpaces(30)]),
-    );
-    let state = patch(initial, 'bob', at(5));
-    state = patch(state, 'cam', at(20));
-    let gusts = 0;
-    for (let seed = 0; seed < 3000 && gusts < 3; seed++) {
-      // Un dé à 3 (la case TROUBLE) ; la suite du hasard tire l'événement de la case.
-      if (new Rng(seed).int(1, 6) !== 3) continue;
-      const { events } = act(board, { ...state, rngState: seed }, player('ana'), { type: 'roll' });
-      const gust = events.find((event) => event.type === 'gustBlew');
-      if (!gust) continue;
-      gusts++;
-      expect(gust).toEqual({ type: 'gustBlew', playerId: 'ana', pushed: ['bob'] });
-    }
-    expect(gusts).toBeGreaterThan(0);
+  test('a gust pushes the whole board back, except those on the start', () => {
+    const { board, state: initial } = setup();
+    let state = patch(initial, 'ana', at(30));
+    state = patch(state, 'bob', at(20));
+    state = patch(state, 'cam', at(10));
+    const { events, state: after } = troubleChosen(board, state, 'gust');
+    const gust = events.find((event) => event.type === 'gustBlew');
+    if (gust?.type !== 'gustBlew') throw new Error('Coup de vent attendu');
+    expect([...gust.pushed].sort()).toEqual(['ana', 'bob', 'cam']);
+    expect(gust.spaces).toBeGreaterThanOrEqual(2);
+    expect(gust.spaces).toBeLessThanOrEqual(4);
+    expect(get(after, 'ana').position).toBe(`s${30 - gust.spaces}`);
+    expect(get(after, 'dan').position).toBe('start');
   });
 
   test('a small event lands on a random player at the end of about one round in seven', () => {
