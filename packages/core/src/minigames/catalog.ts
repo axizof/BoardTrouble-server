@@ -1,5 +1,5 @@
-// Mini-jeux qui peuvent être tirés : le premier lot de 02-mini-jeux.md (section 8). Les lots
-// suivants s'ajoutent ici, au fur et à mesure qu'ils sont construits.
+// Mini-jeux qui peuvent être tirés : le premier lot de 02-mini-jeux.md (section 8), puis le lot 2
+// (section 10), au fur et à mesure qu'ils sont construits.
 export type MinigameId =
   | 'meltingPlatform'
   | 'pawnSumo'
@@ -16,7 +16,8 @@ export type MinigameId =
   | 'clayShoot'
   | 'lastRoll'
   | 'perfectGauge'
-  | 'combination';
+  | 'combination'
+  | 'conveyorSort';
 
 /** Moment où l'on joue un mini-jeu. Une manche peut tirer un chacun pour soi ou un jeu d'équipes. */
 export type MinigameOccasion = 'round' | 'oneVsAll' | 'duel' | 'finale' | 'solo';
@@ -44,6 +45,7 @@ export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
   lastRoll: { occasions: ['finale'], finalists: { min: 2, max: 6 } },
   perfectGauge: { occasions: ['solo'] },
   combination: { occasions: ['solo'] },
+  conveyorSort: { occasions: ['round'] },
 };
 
 export const MINIGAME_IDS = Object.keys(MINIGAMES) as MinigameId[];
