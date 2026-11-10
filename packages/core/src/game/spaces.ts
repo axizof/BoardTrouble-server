@@ -2,7 +2,7 @@ import { getSpace, type SpaceId, type WheelSegment } from '../board/board';
 import { SPECIAL_DICE } from '../dice/dice';
 import { startInteraction } from '../interactions/interactions';
 import { catchUpFactor, drawItem } from '../items/catalog';
-import { applyTrouble, drawSpaceEvent } from '../trouble/events';
+import { stirTrouble } from '../trouble/gauge';
 import { type Context, type Flow, getPlayer } from './context';
 import { advanceByEffect, applyHostile, gainItem, gainSpecialDie, isGate, recoil } from './effects';
 import type { GiantDieFace, PlayerId, PlayerState } from './types';
@@ -77,10 +77,8 @@ export function rollGiantDie(ctx: Context, player: PlayerState): Flow {
       );
     case 'squall':
       return startInteraction(ctx, player, 'squall');
-    case 'trouble': {
-      const event = drawSpaceEvent(ctx.board, ctx.state, ctx.rng);
-      return event === null ? 'continue' : applyTrouble(ctx, event, null, player);
-    }
+    case 'trouble':
+      return stirTrouble(ctx);
     case 'specialDie':
       return gainSpecialDie(ctx, player, ctx.rng.pick(SPECIAL_DICE));
   }
@@ -100,10 +98,8 @@ export function applyWheelSegment(ctx: Context, player: PlayerState, segment: Wh
         drawItem(ctx.rng, catchUpFactor(ctx.board, ctx.state, player.id)),
         'itemSpace',
       );
-    case 'trouble': {
-      const event = drawSpaceEvent(ctx.board, ctx.state, ctx.rng);
-      return event === null ? 'continue' : applyTrouble(ctx, event, null, player);
-    }
+    case 'trouble':
+      return stirTrouble(ctx);
     case 'nothing':
       return 'continue';
   }

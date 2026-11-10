@@ -1,4 +1,4 @@
-import { type Board, distanceToGoal, getSpace, linkedSpace, type SpaceId } from '../board/board';
+import { type Board, getSpace, linkedSpace, type SpaceId } from '../board/board';
 import { type Context, type Flow, getPlayer, removeItem } from '../game/context';
 import { advanceByEffect, gainItem, recoil, stepForward, swapPlaces } from '../game/effects';
 import { fallFromEdge, isOnEdge, push } from '../game/floors';
@@ -20,11 +20,10 @@ export type TroubleEventId =
   | 'fog'
   | 'bonusMinigame'
   | 'tax'
-  // Petits TROUBLE, réservés à la case TROUBLE :
   | 'shake'
   | 'gust';
 
-export type TroubleCategory = 'mild' | 'medium' | 'violent' | 'small';
+export type TroubleCategory = 'mild' | 'medium' | 'violent';
 
 export const TROUBLE_CATEGORY: Record<TroubleEventId, TroubleCategory> = {
   grandExchange: 'violent',
@@ -37,13 +36,13 @@ export const TROUBLE_CATEGORY: Record<TroubleEventId, TroubleCategory> = {
   fog: 'mild',
   bonusMinigame: 'mild',
   tax: 'mild',
-  shake: 'small',
-  gust: 'small',
+  // Pour tout le monde, comme les autres (choix de l'utilisateur, 2026-11-10 : il n'y a plus de
+  // petit TROUBLE, le Plateau qui se réveille touche tout le plateau).
+  shake: 'mild',
+  gust: 'medium',
 };
 
 const EVENTS = Object.keys(TROUBLE_CATEGORY) as TroubleEventId[];
-/** Événements possibles sur une case TROUBLE : petits et sans pause de jeu. */
-const SPACE_EVENTS: TroubleEventId[] = ['shake', 'gust', 'tax', 'fog'];
 /**
  * L'option violente n'est proposée qu'une fois sur vingt : le Grand Échange reste très rare
  * (environ une partie sur cinq, Sceau du Plateau compris). Réglé au simulateur (mesure 10).
@@ -51,8 +50,8 @@ const SPACE_EVENTS: TroubleEventId[] = ['shake', 'gust', 'tax', 'fog'];
 const VIOLENT_OPTION_CHANCE = 0.05;
 const OVERLAY_ROUNDS = 2;
 const BONUS_MINIGAME_REWARD = 8;
-const GUST_RANGE = 4;
-const GUST_PUSH = 2;
+const GUST_PUSH: [number, number] = [2, 4];
+const SHAKE_STEPS: [number, number] = [1, 3];
 
 /**
  * Un événement n'est jamais proposé ni tiré s'il n'a aucun effet
@@ -111,12 +110,6 @@ export function drawSealOptions(board: Board, state: GameState, rng: Rng): Troub
   });
 }
 
-/** Petit événement d'une case TROUBLE, tiré au hasard par le Plateau. */
-export function drawSpaceEvent(board: Board, state: GameState, rng: Rng): TroubleEventId | null {
-  const candidates = SPACE_EVENTS.filter((event) => isApplicable(board, state, event));
-  return candidates.length > 0 ? rng.pick(candidates) : null;
-}
-
 /**
  * Le dernier et le premier selon le TROUBLE : classement du plateau, sans les intouchables
  * (porte finale ouverte, Cachot des Filous).
@@ -127,17 +120,8 @@ export function troubleRanking(board: Board, state: GameState): PlayerId[] {
   );
 }
 
-/**
- * Applique un événement. `subject` est le joueur qui a déclenché une case TROUBLE (null
- * pour un réveil de fin de manche). Le Bouclier ne protège pas : le Plateau est au-dessus
- * des règles.
- */
-export function applyTrouble(
-  ctx: Context,
-  event: TroubleEventId,
-  chooser: PlayerId | null,
-  subject: PlayerState | null,
-): Flow {
+/** Applique un événement. Le Bouclier ne protège pas : le Plateau est au-dessus des règles. */
+export function applyTrouble(ctx: Context, event: TroubleEventId, chooser: PlayerId | null): Flow {
   const { board, state, rng } = ctx;
   ctx.events.push({ type: 'troubleApplied', event, chooser });
   const ranking = troubleRanking(board, state);
@@ -211,30 +195,24 @@ export function applyTrouble(
       removeItem(first, best);
       return first === last ? 'continue' : gainItem(ctx, last, best, 'trouble');
     }
-    case 'shake': {
-      if (!subject) return 'continue';
-      const steps = rng.int(1, 3);
-      return rng.chance(0.5) ? advanceByEffect(ctx, subject, steps) : recoil(ctx, subject, steps);
-    }
+    case 'shake':
+      // Le plateau tremble : chacun avance ou recule de 1 à 3 cases.
+      for (const id of ranking) {
+        const player = getPlayer(state, id);
+        const steps = rng.int(...SHAKE_STEPS);
+        if (rng.chance(0.5)) advanceByEffect(ctx, player, steps);
+        else recoil(ctx, player, steps);
+      }
+      return 'continue';
     case 'gust': {
-      if (!subject) return 'continue';
-      const origin = distanceToGoal(board, subject.position);
-      const blown = state.players.filter(
-        (other) =>
-          other !== subject &&
-          !other.jail &&
-          !state.finalGateOpenedBy.includes(other.id) &&
-          // Sur le départ, on ne peut pas reculer : le vent ne les touche pas.
-          other.position !== board.definition.start &&
-          Math.abs(distanceToGoal(board, other.position) - origin) <= GUST_RANGE,
-      );
-      // Annoncé même sans personne autour : on voit le vent passer, et qu'il n'a touché personne.
-      ctx.events.push({
-        type: 'gustBlew',
-        playerId: subject.id,
-        pushed: blown.map((other) => other.id),
-      });
-      for (const other of blown) push(ctx, other, GUST_PUSH);
+      // Tout le plateau recule (une poussée : au bord, on tombe). Ceux qui sont au départ ne
+      // peuvent pas reculer : le vent ne les touche pas.
+      const spaces = rng.int(...GUST_PUSH);
+      const blown = ranking
+        .map((id) => getPlayer(state, id))
+        .filter((player) => player.position !== board.definition.start);
+      ctx.events.push({ type: 'gustBlew', spaces, pushed: blown.map((player) => player.id) });
+      for (const player of blown) push(ctx, player, spaces);
       return 'continue';
     }
   }

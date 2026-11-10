@@ -206,7 +206,7 @@ describe('choosing the next minigame', () => {
 });
 
 describe('the mystery box', () => {
-  test('gives an item most of the time, and otherwise a small TROUBLE on its owner', () => {
+  test('gives an item most of the time, and otherwise stirs the Board', () => {
     let items = 0;
     let troubles = 0;
     for (let seed = 0; seed < 200; seed++) {
@@ -223,9 +223,8 @@ describe('the mystery box', () => {
         expect(after.players.find((p) => p.id === 'ana')?.inventory).toHaveLength(1);
       } else {
         troubles++;
-        const applied = events.find((event) => event.type === 'troubleApplied');
-        expect(applied?.type === 'troubleApplied' && TROUBLE_CATEGORY[applied.event]).toMatch(
-          /small|mild/,
+        expect(events).toContainEqual(
+          expect.objectContaining({ type: 'troubleGauge', reason: 'stir' }),
         );
       }
       expect(after.phase).toMatchObject({ playerId: 'ana', step: { type: 'awaitRoll' } });

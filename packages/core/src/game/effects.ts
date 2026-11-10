@@ -10,7 +10,7 @@ import {
   type ItemId,
 } from '../items/catalog';
 import { kidnap } from '../jail/jail';
-import { applyTrouble, drawSpaceEvent } from '../trouble/events';
+import { stirTrouble } from '../trouble/gauge';
 import { effectiveKind } from '../trouble/overlays';
 import { activePlayerId, type Context, type Flow, removeItem } from './context';
 import { isIce, openNext } from './floors';
@@ -74,10 +74,8 @@ export function resolveArrival(ctx: Context, player: PlayerState, cause: 'dice' 
       if (erupting) return recoil(ctx, player, amount);
       return applyHostile(ctx, player, null, (victim) => recoil(ctx, victim, amount));
     }
-    case 'trouble': {
-      const event = drawSpaceEvent(ctx.board, ctx.state, ctx.rng);
-      return event === null ? 'continue' : applyTrouble(ctx, event, null, player);
-    }
+    case 'trouble':
+      return stirTrouble(ctx);
     case 'squall':
     case 'swap':
     case 'magnet':
