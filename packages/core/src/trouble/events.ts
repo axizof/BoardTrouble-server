@@ -219,12 +219,22 @@ export function applyTrouble(
     case 'gust': {
       if (!subject) return 'continue';
       const origin = distanceToGoal(board, subject.position);
-      for (const other of state.players) {
-        if (other === subject || other.jail || state.finalGateOpenedBy.includes(other.id)) continue;
-        if (Math.abs(distanceToGoal(board, other.position) - origin) <= GUST_RANGE) {
-          push(ctx, other, GUST_PUSH);
-        }
-      }
+      const blown = state.players.filter(
+        (other) =>
+          other !== subject &&
+          !other.jail &&
+          !state.finalGateOpenedBy.includes(other.id) &&
+          // Sur le départ, on ne peut pas reculer : le vent ne les touche pas.
+          other.position !== board.definition.start &&
+          Math.abs(distanceToGoal(board, other.position) - origin) <= GUST_RANGE,
+      );
+      // Annoncé même sans personne autour : on voit le vent passer, et qu'il n'a touché personne.
+      ctx.events.push({
+        type: 'gustBlew',
+        playerId: subject.id,
+        pushed: blown.map((other) => other.id),
+      });
+      for (const other of blown) push(ctx, other, GUST_PUSH);
       return 'continue';
     }
   }
