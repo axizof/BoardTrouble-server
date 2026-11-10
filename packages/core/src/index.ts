@@ -35,6 +35,7 @@ export * from './minigames/perfectGauge/perfectGauge';
 export * from './minigames/rampart/rampart';
 export * from './minigames/rhythmTugOfWar/rhythmTugOfWar';
 export * from './minigames/secretAuction/secretAuction';
+export * from './minigames/skyPhoto/skyPhoto';
 export * from './minigames/spinningBar/spinningBar';
 export * from './minigames/stacker/stacker';
 export * from './minigames/uniqueStairs/uniqueStairs';
