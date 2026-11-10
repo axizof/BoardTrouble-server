@@ -1,7 +1,7 @@
 import type { Context } from '../game/context';
 import type { GameState, PlayerState } from '../game/types';
 import type { Rng } from '../random/rng';
-import { type MinigameId, type MinigameOccasion, minigameCandidates } from './catalog';
+import { MINIGAMES, type MinigameId, type MinigameOccasion, minigameCandidates } from './catalog';
 
 // Choix du mini-jeu (01-vision-et-plateau.md, section 5).
 const CHOICE_OPTIONS = 3;
@@ -68,8 +68,8 @@ function notePlayed(state: GameState, minigame: MinigameId): void {
 
 /**
  * Tirage sans remise de `count` mini-jeux. Le mini-jeu joué juste avant est évité tant qu'il
- * reste un autre choix, et les mini-jeux peu joués dans la partie sont favorisés. Ça reste du
- * hasard : un mini-jeu peut revenir.
+ * reste un autre choix, et les mini-jeux peu joués dans la partie sont favorisés (chacun avec son
+ * poids : une chance pure sort moins souvent). Ça reste du hasard : un mini-jeu peut revenir.
  */
 function weightedDraw(
   state: GameState,
@@ -83,7 +83,7 @@ function weightedDraw(
     const weights = pool.map((id) =>
       id === state.minigames.last && pool.length > 1
         ? 0
-        : 1 / (1 + (state.minigames.played[id] ?? 0)),
+        : (MINIGAMES[id].weight ?? 1) / (1 + (state.minigames.played[id] ?? 0)),
     );
     let roll = rng.next() * weights.reduce((sum, weight) => sum + weight, 0);
     const index = weights.findIndex((weight) => {

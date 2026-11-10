@@ -26,6 +26,7 @@ export * from './minigames/catalog';
 export * from './minigames/clayShoot/clayShoot';
 export * from './minigames/combination/combination';
 export * from './minigames/conveyorSort/conveyorSort';
+export * from './minigames/fallingPlates/fallingPlates';
 export * from './minigames/highNoon/highNoon';
 export * from './minigames/lastRoll/lastRoll';
 export * from './minigames/meltingPlatform/meltingPlatform';

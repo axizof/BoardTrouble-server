@@ -17,7 +17,8 @@ export type MinigameId =
   | 'lastRoll'
   | 'perfectGauge'
   | 'combination'
-  | 'conveyorSort';
+  | 'conveyorSort'
+  | 'fallingPlates';
 
 /** Moment où l'on joue un mini-jeu. Une manche peut tirer un chacun pour soi ou un jeu d'équipes. */
 export type MinigameOccasion = 'round' | 'oneVsAll' | 'duel' | 'finale' | 'solo';
@@ -26,6 +27,8 @@ export type MinigameDefinition = {
   occasions: MinigameOccasion[];
   /** Pour une finale : nombre de finalistes possible. */
   finalists?: { min: number; max: number };
+  /** Sa chance d'être tiré, face aux autres (1 par défaut). */
+  weight?: number;
 };
 
 export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
@@ -46,6 +49,8 @@ export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
   perfectGauge: { occasions: ['solo'] },
   combination: { occasions: ['solo'] },
   conveyorSort: { occasions: ['round'] },
+  // De la chance pure : il ne doit pas sortir trop souvent.
+  fallingPlates: { occasions: ['round'], weight: 0.5 },
 };
 
 export const MINIGAME_IDS = Object.keys(MINIGAMES) as MinigameId[];
