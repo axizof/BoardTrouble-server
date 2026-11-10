@@ -63,12 +63,16 @@ describe('Pile ou chute', () => {
     }
   });
 
-  test('the plate that holds stays unknown until the last second', () => {
+  test('the plate that holds stays unknown until everyone is put back on a plate', () => {
     let state = FALLING_PLATES.create(['a', 'b'], { practice: false, seed: 9 });
-    state = runTo(state, steps(platesTimeline(1).hint) - 1);
+    state = runTo(state, steps(platesTimeline(1).reveal) - 1);
     expect(state.safe).toBeNull();
     state = FALLING_PLATES.step(state, {});
     expect(state.safe).not.toBeNull();
+    // Trop tard pour changer : on ne marche plus, chacun a sa plaque.
+    expect(state.fighters.every((one) => one.plate !== null)).toBe(true);
+    const moved = FALLING_PLATES.step(state, { a: { ...IDLE_INPUT, move: { x: 1, z: 0 } } });
+    expect(moved.fighters[0]?.plate).toBe(state.fighters[0]?.plate);
     // Chez les joueurs, la graine (qui le dirait d'avance) n'est pas envoyée.
     expect(FALLING_PLATES.viewFor?.(state, { type: 'spectator' }).seed).toBe(0);
   });
@@ -133,10 +137,10 @@ describe('Pile ou chute', () => {
   });
 
   test('several still standing after round 10 all win, tied', () => {
-    // On lit la plaque qui tient à l'indice : tous deux y vont, à chaque manche.
+    // On lit la plaque qui tient dans une partie d'essai : tous deux y vont, à chaque manche.
     let state = FALLING_PLATES.create(['a', 'b'], { practice: false, seed: 5 });
     for (let round = 1; round <= PLATES_ROUNDS; round++) {
-      const probe = runTo(state, steps(platesTimeline(round).hint));
+      const probe = runTo(state, steps(platesTimeline(round).reveal));
       const center = plateCenters(state.count)[probe.safe ?? 0] ?? 0;
       state = endOfRound(state, walkTo({ a: center - 0.8, b: center + 0.8 }));
       expect(state.fighters.every((one) => one.fellAt === null)).toBe(true);
@@ -152,7 +156,7 @@ describe('Pile ou chute', () => {
   test('in the sandbox, you come back on the plate that held', () => {
     const [left, right] = plateCenters(2);
     let state = FALLING_PLATES.create(['a'], { practice: true, seed: 1 });
-    const probe = runTo(state, steps(platesTimeline(1).hint));
+    const probe = runTo(state, steps(platesTimeline(1).reveal));
     const doomed = probe.safe === 0 ? right : left;
     state = endOfRound(state, walkTo({ a: doomed ?? 0 }));
     expect(state.fighters[0]?.fellAt).not.toBeNull();

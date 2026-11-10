@@ -25,18 +25,18 @@ const THREE_PLATES_FROM = 6;
 export const PLATE_WIDTH = 4.4;
 export const PLATE_DEPTH = 3.6;
 export const PLATE_GAP = 1;
-/**
- * Le temps de choix : plus long à la première manche (on découvre), et avec trois plaques (plus
- * de chemin). Les plaques qui vont tomber craquent discrètement pendant la dernière seconde
- * (PLATE_HINT_TIME) : un indice pour les attentifs.
- */
+/** Le temps de choix : plus long à la première manche (on découvre), et avec trois plaques (plus de chemin). */
 const FIRST_CHOOSE_TIME = 6;
 const CHOOSE_TIME = 4.5;
 const THREE_CHOOSE_TIME = 5;
-export const PLATE_HINT_TIME = 1;
-/** Après le choix : le recentrage, le suspense, la chute, puis l'arrivée des nouvelles plaques. */
+/**
+ * Après le choix : le recentrage, puis la révélation (les plaques condamnées craquent : le
+ * suspense), la chute et l'arrivée des nouvelles plaques. La révélation attend que chacun soit
+ * replacé : pendant le choix, des fissures se voyaient et on avait le temps de changer de plaque
+ * (retour de test).
+ */
 export const PLATE_LOCK_TIME = 0.6;
-const PLATE_SUSPENSE_TIME = 1;
+export const PLATE_REVEAL_TIME = 1;
 const PLATE_FALL_TIME = 1.8;
 export const PLATE_REFILL_TIME = 1.2;
 /** Recentré, il glisse vers sa place à ce rythme (par seconde) : arrivé en PLATE_LOCK_TIME. */
@@ -74,15 +74,15 @@ export type PlatesState = {
   roundAt: number;
   /** Le nombre de plaques de la manche. */
   count: number;
-  /** La plaque qui tient : tirée au début de l'indice, inconnue (null) avant. */
+  /** La plaque qui tient : tirée à la révélation, une fois chacun replacé ; inconnue (null) avant. */
   safe: number | null;
   fighters: PlatesFighter[];
 };
 
 /** Les moments d'une manche, en secondes depuis son début. */
 export type PlatesTimeline = {
-  hint: number;
   lock: number;
+  reveal: number;
   drop: number;
   refill: number;
   end: number;
@@ -101,10 +101,11 @@ function chooseTime(round: number): number {
 
 export function platesTimeline(round: number): PlatesTimeline {
   const lock = chooseTime(round);
-  const drop = lock + PLATE_LOCK_TIME + PLATE_SUSPENSE_TIME;
+  const reveal = lock + PLATE_LOCK_TIME;
+  const drop = reveal + PLATE_REVEAL_TIME;
   return {
-    hint: lock - PLATE_HINT_TIME,
     lock,
+    reveal,
     drop,
     refill: drop + PLATE_FALL_TIME,
     end: drop + PLATE_FALL_TIME + PLATE_REFILL_TIME,
@@ -178,7 +179,7 @@ function step(state: PlatesState, inputs: Partial<Record<PlayerId, ArenaInput>>)
   const standing = fighters.filter((fighter) => fighter.fellAt === null);
   const safe =
     state.safe ??
-    (since >= steps(times.hint)
+    (since >= steps(times.reveal)
       ? pick(hashUnit(`${state.seed}:safe:${state.round}`), state.count)
       : null);
   if (since < steps(times.lock)) {
@@ -327,8 +328,7 @@ function viewFor(state: PlatesState, _viewer: Viewer): PlatesState {
  * Le bot part après un temps de réaction vers une plaque au hasard, à une place au hasard sur
  * elle. Le Facile et le Normal changent parfois d'avis en route (du bluff, ou de l'hésitation).
  * L'Expert, lui, évite de suivre la foule : peu avant la fin, il va sur la plaque la moins
- * peuplée. Quand les plaques craquent, il le remarque parfois (NOTICE) et file sur celle qui
- * tient, s'il a le temps.
+ * peuplée.
  */
 const REACTION: Record<BotLevel, [number, number]> = {
   easy: [0.5, 1.2],
@@ -336,7 +336,6 @@ const REACTION: Record<BotLevel, [number, number]> = {
   expert: [0.2, 0.6],
 };
 const CHANGE_MIND: Record<BotLevel, number> = { easy: 0.25, normal: 0.35, expert: 0 };
-const NOTICE: Record<BotLevel, number> = { easy: 0, normal: 0.2, expert: 0.4 };
 /** L'Expert regarde la foule à ce temps de la fin du choix. */
 const CROWD_LOOK = 1.6;
 /** Arrivé à tant de sa place, il s'arrête ; il ralentit en approchant. */
@@ -378,7 +377,6 @@ function botPlate(
   seconds: number,
 ): number {
   const times = platesTimeline(state.round);
-  if (state.safe !== null && hashUnit(`${key}:notice`) < NOTICE[level]) return state.safe;
   const first = pick(hashUnit(`${key}:first`), state.count);
   if (level === 'expert') {
     if (seconds < times.lock - CROWD_LOOK) return first;
