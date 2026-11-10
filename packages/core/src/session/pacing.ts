@@ -15,7 +15,9 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
   minigameRanked: 2500,
   // Le bandeau "Au tour de" et la caméra qui rejoint le joueur.
   turnStarted: 1800,
-  diceRolled: 1800,
+  // Les dés roulent 1,3 s, puis on a le temps de lire le total avant la suite (retour du test :
+  // à la porte finale, la porte s'ouvrait avant qu'on ait vu le score).
+  diceRolled: 2300,
   // Par case parcourue : voir `MOVE_STEP_TIME`.
   moved: 0,
   branchReached: 300,
@@ -54,7 +56,9 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
   doorOpened: 1800,
   tollPaid: 1200,
   skillGateResult: 1500,
-  boulderRolled: 3000,
+  // Le rocher quitte son perchoir, dévale, rattrape les joueurs qui s'enfuient, puis éclate.
+  boulderRolled: 5500,
+  iceAxeBroke: 1200,
   teleported: 1800,
   seesawLaunched: 1500,
   giantDieRolled: 2500,
@@ -81,6 +85,7 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
   troubleGauge: 600,
   troubleAwakened: 3500,
   troubleApplied: 2500,
+  gustBlew: 1800,
   overlayEnded: 1000,
   roundEvent: 2000,
   bonusMinigameStarted: 2000,
@@ -89,6 +94,8 @@ const EVENT_TIME: Record<GameEvent['type'], number> = {
   finaleStarted: 3000,
   gameWon: 5000,
 };
+
+const SOLO_DRAW_TIME = 2200;
 
 /** Le personnage marche d'une case à l'autre (environ 6 m) : il prend son temps. */
 export const MOVE_STEP_TIME = 800;
@@ -114,6 +121,8 @@ export function animationTime(events: GameEvent[]): number {
 
 function eventTime(event: GameEvent): number {
   if (event.type === 'moved') return event.path.length * MOVE_STEP_TIME;
+  // Le défi d'une porte d'adresse ne tourne pas de ruban : sa carte s'affiche, et on y va.
+  if (event.type === 'minigameDrawn' && event.occasion === 'solo') return SOLO_DRAW_TIME * PACE;
   const base = EVENT_TIME[event.type] * (UNPACED.has(event.type) ? 1 : PACE);
   // Les relances du départage se montrent au rythme du client, sans le PACE.
   return event.type === 'orderDrawn' ? base + event.tieBreaks.length * TIE_ROLL_TIME : base;
