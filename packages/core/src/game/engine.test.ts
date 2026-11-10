@@ -332,14 +332,28 @@ describe('victory', () => {
     const { board, state: initial } = setup(linearBoard(emptySpaces(20), 1));
     let state = { ...initial, rngState: rngStateRolling(1, 1, 1, 1) };
     for (const id of openers) state = patchPlayer(state, id, { position: 's20' });
-    for (let turn = 0; turn < 4; turn++) {
-      state = act(board, state, player(currentPlayer(state)), { type: 'roll' }).state;
+    const events: GameEvent[] = [];
+    while (state.phase.type === 'turn') {
+      const result = act(board, state, player(currentPlayer(state)), { type: 'roll' });
+      state = result.state;
+      events.push(...result.events);
     }
-    return { board, state };
+    return { board, state, events };
   }
 
   test('a single player who opened the final gate wins at the end of the round', () => {
     const { state } = nearGoal(['bob']);
+    expect(state.phase).toEqual({ type: 'finished', winner: 'bob' });
+  });
+
+  test('after the final gate opens, only the players who can still reach it play', () => {
+    // Bob ouvre ; Cam et Dan sont au départ, à 20 cases : ils ne peuvent plus l'atteindre.
+    const { state, events } = nearGoal(['bob']);
+    expect(events).toContainEqual({ type: 'finalGateOpened', playerId: 'bob', contenders: [] });
+    const turns = events.flatMap((event) => (event.type === 'turnStarted' ? [event.playerId] : []));
+    // Personne ne joue après Bob : la manche s'arrête sur sa victoire.
+    expect(turns.at(-1)).toBe('bob');
+    expect(turns.length).toBeLessThan(4);
     expect(state.phase).toEqual({ type: 'finished', winner: 'bob' });
   });
 

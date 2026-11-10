@@ -11,10 +11,14 @@ import type { PlayerId, PlayerState } from './types';
 /** Une porte ne descend pas sous ce seuil, quel que soit le nombre d'échecs. */
 const MIN_GATE_THRESHOLD = 2;
 const TRAPPED_DOOR_RECOIL = 5;
-const TRAPPED_DOOR_CHANCE = 0.5;
+/** Chance d'ouvrir la porte aux deux boutons, selon le nombre d'échecs du joueur devant elle. */
+const DOOR_SUCCESS = [0.5, 0.52, 0.62, 0.75, 1];
 /** Cases gagnées en réussissant la porte d'adresse (le client les ajoute au décompte affiché). */
 export const SKILL_GATE_BONUS = 3;
 const BOULDER_COURSE = 15;
+const DIE_MAX = 6;
+/** Le dé Tout ou rien va jusqu'à 8. */
+const ALL_OR_NOTHING_MAX = 8;
 
 export type GateOutcome = 'passed' | 'failed' | 'opened' | 'paused';
 
@@ -104,8 +108,41 @@ function thresholdTest(
   player.atGate = false;
   if (kind.type !== 'finalGate') return 'passed';
   ctx.state.finalGateOpenedBy.push(player.id);
-  ctx.events.push({ type: 'finalGateOpened', playerId: player.id });
+  ctx.events.push({
+    type: 'finalGateOpened',
+    playerId: player.id,
+    contenders: finalContenders(ctx),
+  });
   return 'opened';
+}
+
+/** Ce qu'un joueur peut parcourir au plus pendant un tour : ses dés et ses objets d'avancée. */
+function maxReach(ctx: Context, player: PlayerState): number {
+  const normal = player.specialDice.includes('allOrNothing') ? ALL_OR_NOTHING_MAX : DIE_MAX;
+  const bonus = ctx.state.bonusDice[player.id]?.faces ?? 0;
+  const items = player.inventory.filter((item) => item === 'turboDie' || item === 'rocket');
+  return normal + bonus + items.length * DIE_MAX;
+}
+
+/**
+ * La porte finale est ouverte : les joueurs qui jouent encore cette manche et peuvent l'atteindre
+ * pendant leur tour (ses dés et ses objets le permettent) ont droit à leur chance ; les autres ne
+ * jouent pas, rien ne pourrait plus changer (retour du test du 2026-11-10 : la manche se
+ * finissait pour rien).
+ */
+export function finalContenders(ctx: Context): PlayerId[] {
+  const { state, board } = ctx;
+  return state.turnOrder
+    .slice(state.turnIndex + 1)
+    .map((id) => state.players.find((player) => player.id === id))
+    .filter((player): player is PlayerState => player !== undefined)
+    .filter(
+      (player) =>
+        player.jail === null &&
+        !state.finalGateOpenedBy.includes(player.id) &&
+        distanceToGoal(board, player.position) <= maxReach(ctx, player),
+    )
+    .map((player) => player.id);
 }
 
 /** Le bas de la course du rocher lâché par cette porte : 15 cases plus bas, hors glace. */
@@ -180,15 +217,23 @@ function passGate(ctx: Context, player: PlayerState, remaining: number): Flow {
   return moveWithDice(ctx, player, remaining);
 }
 
-/** Deux portes : le passage piégé n'est tiré qu'après le choix. */
+/**
+ * La porte aux deux boutons : le bon bouton n'est tiré qu'après le choix. La chance sourit à
+ * qui insiste (retour du test du 2026-11-10 : on pouvait y passer la partie) : une chance sur
+ * deux la première fois, un peu plus à chaque échec, et la cinquième tentative passe toujours.
+ */
 export function chooseDoor(
   ctx: Context,
   player: PlayerState,
   door: 0 | 1,
   remaining: number,
 ): Flow {
-  const trapped = ctx.rng.chance(TRAPPED_DOOR_CHANCE);
+  const space = player.position;
+  const failures = player.gateFailures[space] ?? 0;
+  const chance = DOOR_SUCCESS[Math.min(failures, DOOR_SUCCESS.length - 1)] ?? 1;
+  const trapped = !ctx.rng.chance(chance);
   ctx.events.push({ type: 'doorOpened', playerId: player.id, door, trapped });
+  if (trapped) player.gateFailures[space] = failures + 1;
   if (!trapped) return passGate(ctx, player, remaining);
   applyHostile(ctx, player, null, (victim) => recoil(ctx, victim, TRAPPED_DOOR_RECOIL));
   return 'continue';
