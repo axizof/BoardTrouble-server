@@ -36,6 +36,8 @@ export type PlayerState = {
   jail: { turns: number; progress: number } | null;
   /** Bourse à dés : 3 dés spéciaux au plus, séparés des objets. */
   specialDice: SpecialDieKind[];
+  /** Piolet planté : le rocher l'épargne jusqu'à la fin de cette manche (comprise). null : aucun. */
+  iceAxeUntil: number | null;
 };
 
 /** Interactions qui demandent de choisir un adversaire. */
@@ -342,7 +344,21 @@ export type GameEvent =
   | { type: 'doorOpened'; playerId: PlayerId; door: 0 | 1; trapped: boolean }
   | { type: 'tollPaid'; playerId: PlayerId; item: ItemId }
   | { type: 'skillGateResult'; playerId: PlayerId; success: boolean }
-  | { type: 'boulderRolled'; playerId: PlayerId; spaceId: SpaceId; pushed: PlayerId[]; to: SpaceId }
+  /**
+   * Le rocher dévale de la porte `spaceId` jusqu'à `to`. `pushed` : les joueurs qu'il emporte
+   * jusqu'en bas, du plus proche de la porte au plus loin ; `dodged` : ceux que leur Piolet
+   * retient.
+   */
+  | {
+      type: 'boulderRolled';
+      playerId: PlayerId;
+      spaceId: SpaceId;
+      pushed: PlayerId[];
+      dodged: PlayerId[];
+      to: SpaceId;
+    }
+  /** Le Piolet du joueur est arrivé au bout : il se brise. */
+  | { type: 'iceAxeBroke'; playerId: PlayerId }
   | {
       type: 'teleported';
       playerId: PlayerId;
@@ -374,6 +390,8 @@ export type GameEvent =
   | { type: 'troubleGauge'; value: number; added: number; reason: 'round' | 'double' | 'gap' }
   | { type: 'troubleAwakened'; chooser: PlayerId; options: TroubleEventId[] }
   | { type: 'troubleApplied'; event: TroubleEventId; chooser: PlayerId | null }
+  /** TROUBLE Coup de vent autour du joueur : `pushed`, ceux qu'il fait reculer (peut-être personne). */
+  | { type: 'gustBlew'; playerId: PlayerId; pushed: PlayerId[] }
   | { type: 'overlayEnded'; overlay: 'inversion' | 'eruption' | 'fog' }
   | { type: 'roundEvent'; event: RoundEventId; playerId: PlayerId }
   | { type: 'bonusMinigameStarted' }

@@ -1,4 +1,4 @@
-import { distanceToGoal, getSpace, type Space, type SpaceId } from '../board/board';
+import { type Board, distanceToGoal, getSpace, type Space, type SpaceId } from '../board/board';
 import { rollDice } from '../dice/dice';
 import type { ItemId } from '../items/catalog';
 import { drawMinigame } from '../minigames/selection';
@@ -6,13 +6,14 @@ import { type Context, type Flow, removeItem } from './context';
 import { applyHostile, isGate, recoil } from './effects';
 import { fallFromEdge, isIce } from './floors';
 import { moveWithDice } from './movement';
-import type { PlayerState } from './types';
+import type { PlayerId, PlayerState } from './types';
 
 /** Une porte ne descend pas sous ce seuil, quel que soit le nombre d'échecs. */
 const MIN_GATE_THRESHOLD = 2;
 const TRAPPED_DOOR_RECOIL = 5;
 const TRAPPED_DOOR_CHANCE = 0.5;
-const SKILL_GATE_BONUS = 3;
+/** Cases gagnées en réussissant la porte d'adresse (le client les ajoute au décompte affiché). */
+export const SKILL_GATE_BONUS = 3;
 const BOULDER_COURSE = 15;
 
 export type GateOutcome = 'passed' | 'failed' | 'opened' | 'paused';
@@ -107,26 +108,53 @@ function thresholdTest(
   return 'opened';
 }
 
-/**
- * Le rocher dévale 15 cases depuis la porte : tous les joueurs sur sa trajectoire, celui qui
- * l'a lâché compris, sont poussés jusqu'au bas de sa course (pas au-delà, ni sur une case
- * gelée). C'est une poussée : un joueur sur une case de bord tombe. Le Bouclier protège ;
- * les joueurs intouchables (Cachot, porte finale ouverte) sont épargnés.
- */
-function rollBoulder(ctx: Context, trigger: PlayerState, gateId: SpaceId): void {
+/** Le bas de la course du rocher lâché par cette porte : 15 cases plus bas, hors glace. */
+export function boulderBottom(board: Board, gateId: SpaceId): SpaceId {
   let bottom = gateId;
-  for (let i = 0; i < BOULDER_COURSE || isIce(ctx.board, bottom); i++) {
-    const previous = ctx.board.predecessors.get(bottom)?.[0];
+  for (let i = 0; i < BOULDER_COURSE || isIce(board, bottom); i++) {
+    const previous = board.predecessors.get(bottom)?.[0];
     if (previous === undefined) break;
     bottom = previous;
   }
+  return bottom;
+}
+
+/** Le joueur est sur la course d'un rocher : entre la porte au rocher (comprise) et le bas. */
+export function isOnBoulderCourse(board: Board, position: SpaceId): boolean {
+  const distance = distanceToGoal(board, position);
+  return Object.values(board.definition.spaces).some(
+    (space) =>
+      space.kind.type === 'boulderGate' &&
+      distance >= distanceToGoal(board, space.id) &&
+      distance < distanceToGoal(board, boulderBottom(board, space.id)),
+  );
+}
+
+/**
+ * Le rocher dévale 15 cases depuis la porte : tous les joueurs sur sa trajectoire, celui qui
+ * l'a lâché compris, sont poussés jusqu'au bas de sa course (pas au-delà, ni sur une case
+ * gelée). C'est une poussée : un joueur sur une case de bord tombe. Le Bouclier et le Piolet
+ * protègent ; les joueurs intouchables (Cachot, porte finale ouverte) sont épargnés.
+ */
+function rollBoulder(ctx: Context, trigger: PlayerState, gateId: SpaceId): void {
+  const bottom = boulderBottom(ctx.board, gateId);
   const top = distanceToGoal(ctx.board, gateId);
   const floor = distanceToGoal(ctx.board, bottom);
-  const pushed: string[] = [];
-  for (const player of ctx.state.players) {
-    if (player.jail || ctx.state.finalGateOpenedBy.includes(player.id)) continue;
-    const distance = distanceToGoal(ctx.board, player.position);
-    if (distance < top || distance >= floor) continue;
+  const distanceOf = (player: PlayerState) => distanceToGoal(ctx.board, player.position);
+  // Du plus proche de la porte au plus loin : l'ordre où le rocher les rattrape.
+  const inPath = ctx.state.players
+    .filter((player) => !player.jail && !ctx.state.finalGateOpenedBy.includes(player.id))
+    .filter((player) => distanceOf(player) >= top && distanceOf(player) < floor)
+    .sort((a, b) => distanceOf(a) - distanceOf(b));
+  // Le rocher dévale d'abord, puis ce qu'il cause (Bouclier, chute) : l'événement passe devant.
+  const at = ctx.events.length;
+  const pushed: PlayerId[] = [];
+  const dodged: PlayerId[] = [];
+  for (const player of inPath) {
+    if (player.iceAxeUntil !== null && player.iceAxeUntil >= ctx.state.round) {
+      dodged.push(player.id);
+      continue;
+    }
     applyHostile(ctx, player, null, (victim) => {
       if (fallFromEdge(ctx, victim)) return 'continue';
       victim.position = bottom;
@@ -136,11 +164,12 @@ function rollBoulder(ctx: Context, trigger: PlayerState, gateId: SpaceId): void 
       return 'continue';
     });
   }
-  ctx.events.push({
+  ctx.events.splice(at, 0, {
     type: 'boulderRolled',
     playerId: trigger.id,
     spaceId: gateId,
     pushed,
+    dodged,
     to: bottom,
   });
 }

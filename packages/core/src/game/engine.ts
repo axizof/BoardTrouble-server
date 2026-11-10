@@ -97,6 +97,7 @@ export function openGame(board: Board, config: GameConfig): GameState {
       lastAttack: null,
       jail: null,
       specialDice: [],
+      iceAxeUntil: null,
     })),
     round: 1,
     // Provisoire : le tirage de l'ordre la remplace.
@@ -900,6 +901,11 @@ function proceedToNextRound(ctx: Context): void {
   if (overlays.fog !== null && overlays.fog.until < state.round) {
     overlays.fog = null;
     ctx.events.push({ type: 'overlayEnded', overlay: 'fog' });
+  }
+  for (const player of state.players) {
+    if (player.iceAxeUntil === null || player.iceAxeUntil >= state.round) continue;
+    player.iceAxeUntil = null;
+    ctx.events.push({ type: 'iceAxeBroke', playerId: player.id });
   }
   startRoundMinigame(ctx);
 }

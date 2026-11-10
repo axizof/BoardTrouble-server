@@ -144,6 +144,8 @@ export class GameSession {
       throw new Error(`Sauvegarde d'un autre plateau (${save.boardId})`);
     }
     const { state, seats, options, chronicle } = structuredClone(save);
+    // Les sauvegardes d'avant le Piolet n'ont pas ce champ.
+    for (const player of state.players) player.iceAxeUntil ??= null;
     // Le hasard des bots repart de celui de la partie : il ne change pas les tirages.
     return new GameSession(board, state, seats, options, state.rngState, now, chronicle);
   }

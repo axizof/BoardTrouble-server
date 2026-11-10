@@ -327,6 +327,25 @@ describe('TROUBLE space and round events', () => {
     );
   });
 
+  test('a gust names who it pushes: near players, never those on the start', () => {
+    const { board, state: initial } = setup(
+      linearBoard([...emptySpaces(2), { type: 'trouble' }, ...emptySpaces(30)]),
+    );
+    let state = patch(initial, 'bob', at(5));
+    state = patch(state, 'cam', at(20));
+    let gusts = 0;
+    for (let seed = 0; seed < 3000 && gusts < 3; seed++) {
+      // Un dé à 3 (la case TROUBLE) ; la suite du hasard tire l'événement de la case.
+      if (new Rng(seed).int(1, 6) !== 3) continue;
+      const { events } = act(board, { ...state, rngState: seed }, player('ana'), { type: 'roll' });
+      const gust = events.find((event) => event.type === 'gustBlew');
+      if (!gust) continue;
+      gusts++;
+      expect(gust).toEqual({ type: 'gustBlew', playerId: 'ana', pushed: ['bob'] });
+    }
+    expect(gusts).toBeGreaterThan(0);
+  });
+
   test('a small event lands on a random player at the end of about one round in seven', () => {
     let rounds = 0;
     let withEvent = 0;

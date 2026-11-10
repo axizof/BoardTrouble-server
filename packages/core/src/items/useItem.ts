@@ -20,6 +20,8 @@ const BLOWER_RANGE = 6;
 const BLOWER_PUSH = 4;
 /** Boîte mystère : un objet le plus souvent, sinon un petit TROUBLE sur soi. */
 const MYSTERY_ITEM_CHANCE = 0.6;
+/** Le Piolet tient la manche où on le plante, et toute la suivante. */
+const ICE_AXE_ROUNDS = 1;
 
 /** Cibles valides d'un objet ciblé. Sert au moteur (validation), aux bots et à l'interface. */
 export function validTargets(
@@ -80,6 +82,7 @@ export function itemUseError(
   const { use } = ITEMS[item];
   if (use === 'passive') return 'itemNotUsable';
   if (item === 'mirror' && user.mirrorArmed) return 'itemNotUsable';
+  if (item === 'iceAxe' && user.iceAxeUntil !== null) return 'itemNotUsable';
   // Un seul joueur à la fois a le droit de choisir le prochain mini-jeu.
   if (item === 'joker' && state.minigames.nextChooser !== null) return 'itemNotUsable';
   if (item === 'glue' || item === 'firecracker') {
@@ -128,6 +131,9 @@ export function useItem(ctx: Context, user: PlayerState, item: ItemId, targetId?
       return advanceByEffect(ctx, user, ROCKET_STEPS);
     case 'joker':
       grantMinigameChoice(ctx, user);
+      return 'continue';
+    case 'iceAxe':
+      user.iceAxeUntil = state.round + ICE_AXE_ROUNDS;
       return 'continue';
     case 'mysteryBox':
       return openMysteryBox(ctx, user);
