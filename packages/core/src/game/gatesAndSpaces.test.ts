@@ -88,6 +88,38 @@ describe('twin gate', () => {
     expect(trapped).toBeGreaterThan(8);
   });
 
+  test('luck smiles on whoever insists: the fifth try always opens', () => {
+    const { board, state } = gateBoard({ type: 'twinGate' });
+    const waiting = patch(state, 'ana', { ...at(5), atGate: true, gateFailures: { s5: 4 } });
+    for (let seed = 0; seed < 20; seed++) {
+      const paused = roll(board, { ...waiting }, 4).state;
+      const { events } = act(board, { ...paused, rngState: new Rng(seed).state }, player('ana'), {
+        type: 'chooseDoor',
+        door: 1,
+      });
+      expect(events).toContainEqual(
+        expect.objectContaining({ type: 'doorOpened', trapped: false }),
+      );
+    }
+  });
+
+  test('a wrong button counts as a failure in front of that door', () => {
+    for (let seed = 0; seed < 40; seed++) {
+      const { board, state } = gateBoard({ type: 'twinGate' });
+      const paused = roll(board, state, 6).state;
+      const { state: after, events } = act(
+        board,
+        { ...paused, rngState: new Rng(seed).state },
+        player('ana'),
+        { type: 'chooseDoor', door: 0 },
+      );
+      if (!events.some((event) => event.type === 'doorOpened' && event.trapped)) continue;
+      expect(get(after, 'ana').gateFailures).toEqual({ s5: 1 });
+      return;
+    }
+    throw new Error('Aucun mauvais bouton sur 40 graines');
+  });
+
   test('a player stopped in front chooses a door with the whole roll still to move', () => {
     const { board, state } = gateBoard({ type: 'twinGate' });
     const waiting = patch(state, 'ana', { ...at(5), atGate: true });
