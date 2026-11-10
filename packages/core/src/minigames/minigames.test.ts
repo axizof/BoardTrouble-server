@@ -61,7 +61,7 @@ function contextFor(state: GameState, seed: number): Context {
 
 describe('the minigame catalog', () => {
   test('offers each occasion its own minigames, and finales by number of finalists', () => {
-    expect(minigameCandidates('round', 4)).toHaveLength(10);
+    expect(minigameCandidates('round', 4)).toHaveLength(11);
     expect(minigameCandidates('duel', 2)).toEqual(['highNoon', 'clayShoot']);
     expect(minigameCandidates('oneVsAll', 4)).toEqual(['bigDie', 'rampart']);
     expect(minigameCandidates('solo', 1)).toEqual(['perfectGauge', 'combination']);
@@ -94,9 +94,25 @@ describe('the minigame wheel', () => {
       counted.minigames.played = { ...played, cardMemory: 0 };
       if (drawMinigame(contextFor(counted, seed), 'round', 4) === 'cardMemory') fresh++;
     }
-    // Poids 1 contre 0,25 pour chacun des 8 autres : environ une fois sur trois.
+    // Poids 1 contre 0,25 pour chacun des 9 autres (0,125 pour Pile ou chute) : environ une fois
+    // sur trois.
     expect(fresh / 600).toBeGreaterThan(0.25);
     expect(fresh / 600).toBeLessThan(0.42);
+  });
+
+  test('draws a pure-luck minigame about half as often as the others', () => {
+    const { state } = setup();
+    const counts = new Map<MinigameId, number>();
+    const draws = 4000;
+    for (let seed = 0; seed < draws; seed++) {
+      const drawn = drawMinigame(contextFor(structuredClone(state), seed), 'round', 4);
+      counts.set(drawn, (counts.get(drawn) ?? 0) + 1);
+    }
+    const others = minigameCandidates('round', 4).filter((id) => id !== 'fallingPlates');
+    const average = others.reduce((sum, id) => sum + (counts.get(id) ?? 0), 0) / others.length;
+    const share = (counts.get('fallingPlates') ?? 0) / average;
+    expect(share).toBeGreaterThan(0.35);
+    expect(share).toBeLessThan(0.7);
   });
 
   test('offers three different minigames to choose from', () => {

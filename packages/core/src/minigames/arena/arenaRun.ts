@@ -10,6 +10,7 @@ import type { MinigameId } from '../catalog';
 import { CLAY_SHOOT } from '../clayShoot/clayShoot';
 import { COMBINATION } from '../combination/combination';
 import { CONVEYOR_SORT } from '../conveyorSort/conveyorSort';
+import { FALLING_PLATES } from '../fallingPlates/fallingPlates';
 import { HIGH_NOON } from '../highNoon/highNoon';
 import { LAST_ROLL } from '../lastRoll/lastRoll';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
@@ -53,6 +54,7 @@ export const ARENAS = {
   perfectGauge: PERFECT_GAUGE,
   combination: COMBINATION,
   conveyorSort: CONVEYOR_SORT,
+  fallingPlates: FALLING_PLATES,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
