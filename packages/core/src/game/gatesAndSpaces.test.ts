@@ -176,9 +176,75 @@ describe('boulder gate', () => {
     let state = patch(initial, 'ana', at(18));
     state = patch(state, 'bob', { ...at(10), inventory: ['shield'] });
     state = patch(state, 'cam', { ...at(12), jail: { turns: 1, progress: 0 } });
-    const { state: after } = roll(board, state, 3);
+    const { state: after, events } = roll(board, state, 3);
     expect(get(after, 'bob')).toMatchObject({ position: 's10', inventory: [] });
     expect(get(after, 'cam').position).toBe('s12');
+    // Le rocher dévale d'abord ; le Bouclier l'arrête ensuite.
+    const order = types(events);
+    expect(order.indexOf('boulderRolled')).toBeLessThan(order.indexOf('shieldBlocked'));
+  });
+
+  test('lists the pushed players nearest to the gate first, and spares a planted ice axe', () => {
+    const { board, state: initial } = setup([
+      ...emptySpaces(20),
+      { type: 'boulderGate', threshold: 13 },
+      ...emptySpaces(10),
+    ]);
+    let state = patch(initial, 'ana', at(18));
+    state = patch(state, 'bob', at(8));
+    state = patch(state, 'cam', at(15));
+    state = patch(state, 'dan', { ...at(12), iceAxeUntil: state.round });
+    const { state: after, events } = roll(board, state, 3);
+    expect(events.find((event) => event.type === 'boulderRolled')).toMatchObject({
+      pushed: ['ana', 'cam', 'bob'],
+      dodged: ['dan'],
+    });
+    expect(get(after, 'dan').position).toBe('s12');
+  });
+});
+
+describe('the ice axe', () => {
+  test('is planted until the end of the next round, then breaks', () => {
+    const { board, state } = gateBoard({ type: 'boulderGate', threshold: 13 });
+    const armed = patch(state, 'ana', { inventory: ['iceAxe'] });
+    const { state: planted } = act(board, armed, player('ana'), {
+      type: 'useItem',
+      item: 'iceAxe',
+    });
+    expect(get(planted, 'ana')).toMatchObject({ inventory: [], iceAxeUntil: state.round + 1 });
+    // Un seul Piolet planté à la fois.
+    const nextTurn = { ...planted, turn: { ...planted.turn, itemUsed: false } };
+    expect(
+      applyIntent(board, patch(nextTurn, 'ana', { inventory: ['iceAxe'] }), player('ana'), {
+        type: 'useItem',
+        item: 'iceAxe',
+      }),
+    ).toEqual({ ok: false, error: 'itemNotUsable' });
+  });
+
+  test('breaks when the round after the one where it was planted is over', () => {
+    const { board, state: initial } = setup(emptySpaces(80));
+    /** Les quatre tours de la manche, puis le passage à la suivante. */
+    const endRound = (state: GameState) => {
+      let current = state;
+      const events: GameEvent[] = [];
+      while (current.phase.type === 'turn') {
+        const result = act(board, current, player(current.phase.playerId), { type: 'roll' });
+        current = result.state;
+        events.push(...result.events);
+      }
+      return { state: current, events };
+    };
+    const planted = patch(initial, 'ana', { iceAxeUntil: initial.round + 1 });
+    const first = endRound(planted);
+    expect(types(first.events)).not.toContain('iceAxeBroke');
+    const replayed = act(board, first.state, SYSTEM, {
+      type: 'submitMinigameResult',
+      ranking: [['ana'], ['bob'], ['cam'], ['dan']],
+    }).state;
+    const second = endRound(replayed);
+    expect(second.events).toContainEqual({ type: 'iceAxeBroke', playerId: 'ana' });
+    expect(get(second.state, 'ana').iceAxeUntil).toBeNull();
   });
 });
 

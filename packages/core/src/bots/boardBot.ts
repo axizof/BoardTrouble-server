@@ -1,6 +1,7 @@
 import { type Board, distanceToGoal, getSpace } from '../board/board';
 import type { SpecialDieKind } from '../dice/dice';
 import { getPlayer, pendingPlayers } from '../game/context';
+import { isOnBoulderCourse } from '../game/gates';
 import { progressRanking } from '../game/progress';
 import type { GameState, Intent, PlayerId, PlayerState, TargetedInteraction } from '../game/types';
 import { ITEM_VALUE, type ItemId } from '../items/catalog';
@@ -20,6 +21,7 @@ const TRAP_REACH = 8;
 
 /** Ordre dans lequel le bot envisage ses objets : les plus décisifs d'abord. */
 const ITEM_PRIORITY: ItemId[] = [
+  'iceAxe',
   'boardSeal',
   'grapple',
   'hourglass',
@@ -283,6 +285,9 @@ function chooseItem(
         return validTargets(board, state, me.id, item).some((id) => distanceOf(id) < myDistance);
       case 'mirror':
         return ranking.indexOf(me.id) < ranking.length / 2;
+      // Planté seulement là où le rocher peut passer : ailleurs, il ne sert à rien.
+      case 'iceAxe':
+        return isOnBoulderCourse(board, me.position);
       case 'boardSeal':
         return ranking.indexOf(me.id) >= ranking.length / 2;
       case 'rocket': {

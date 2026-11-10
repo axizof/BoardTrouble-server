@@ -22,7 +22,8 @@ export type ItemId =
   | 'key'
   | 'mysteryBox'
   | 'joker'
-  | 'boardSeal';
+  | 'boardSeal'
+  | 'iceAxe';
 
 export type ItemDefinition = {
   rarity: Rarity;
@@ -53,6 +54,8 @@ export const ITEMS: Record<ItemId, ItemDefinition> = {
   joker: { rarity: 'rare', use: 'self' },
   /** Déclencher tout de suite un événement TROUBLE choisi parmi 3. */
   boardSeal: { rarity: 'legendary', use: 'self' },
+  /** Planté dans la glace : le rocher l'épargne jusqu'à la fin de la manche suivante. */
+  iceAxe: { rarity: 'rare', use: 'self' },
 };
 
 export const ITEM_IDS = Object.keys(ITEMS) as ItemId[];
@@ -76,6 +79,7 @@ export const ITEM_VALUE: Record<ItemId, number> = {
   mysteryBox: 2,
   joker: 3,
   boardSeal: 6,
+  iceAxe: 4,
 };
 export const INVENTORY_SIZE = 3;
 
