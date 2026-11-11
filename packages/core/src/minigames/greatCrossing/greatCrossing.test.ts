@@ -81,6 +81,34 @@ describe('the lanes of La grande traversée', () => {
     }
   });
 
+  test('a run of the same danger stays short at the start and grows with the floors', () => {
+    const longest = { prairie: 3, marsh: 4, workshops: 4, glacier: 5 };
+    for (let seed = 1; seed <= 30; seed++) {
+      let run = 0;
+      for (let row = 1; row < 300; row++) {
+        const lane = laneAt(seed, row);
+        run = lane.type !== 'grass' && lane.type === laneAt(seed, row - 1).type ? run + 1 : 1;
+        if (lane.type === 'grass') continue;
+        expect(run).toBeLessThanOrEqual(lane.type === 'rail' ? 2 : longest[lane.zone]);
+      }
+    }
+  });
+
+  test('two neighbouring river arms never drift almost together', () => {
+    for (let seed = 1; seed <= 30; seed++) {
+      for (let row = 4; row < 300; row++) {
+        const lane = laneAt(seed, row);
+        const before = laneAt(seed, row - 1);
+        if (lane.type !== 'river' || before.type !== 'river') continue;
+        // Le décalage entre leurs radeaux change d'au moins tant de cases par seconde.
+        const drift = Math.abs(
+          lane.traffic.dir * lane.traffic.speed - before.traffic.dir * before.traffic.speed,
+        );
+        expect(drift).toBeGreaterThanOrEqual(0.7);
+      }
+    }
+  });
+
   test('a vehicle hits exactly where it is: a near miss is a miss', () => {
     // Un véhicule de 2 cases de 0 à 2, le suivant à 10.
     const traffic = { dir: 1 as const, speed: 2, length: 2, spacing: 10, offset: 0, kind: 0 };

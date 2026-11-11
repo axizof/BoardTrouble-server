@@ -47,6 +47,12 @@ const RAIL_LENGTH = 9;
 const RAIL_SPEED = 24;
 /** Le convoi repasse tous les tant de secondes. */
 const RAIL_PERIOD: [number, number] = [5, 9];
+/**
+ * Deux bras de rivière voisins qui coulent dans le même sens ont au moins tant d'écart de vitesse
+ * (cases par seconde) : sinon leurs radeaux se décalent si lentement qu'on attend longtemps
+ * qu'ils s'alignent. Trop proches, le second coule dans l'autre sens.
+ */
+const RIVER_SPEED_GAP = 0.7;
 
 /** L'étage de cette rangée. */
 export function zoneOf(row: number): Zone {
@@ -78,10 +84,16 @@ export function laneAt(seed: number, row: number): Lane {
 
 /**
  * Les rangées vont par blocs de BLOCK : une bande d'herbe pour souffler, puis six voies de
- * danger, faites d'un ou deux groupes (une route de quatre voies puis une rivière de deux bras,
- * par exemple). Tout au début, la dernière voie est parfois de l'herbe en plus.
+ * danger, faites de groupes de sortes différentes (une route de trois voies puis une rivière de
+ * deux bras, par exemple). Tout au début, la dernière voie est parfois de l'herbe en plus.
  */
 const BLOCK = 7;
+/**
+ * Le plus long groupe d'une même sorte, par étage : trois voies d'affilée à la Prairie, puis de
+ * plus en plus. Un convoi n'a jamais plus de deux voies d'affilée.
+ */
+const LONGEST_RUN: Record<Zone, number> = { prairie: 3, marsh: 4, workshops: 4, glacier: 5 };
+const LONGEST_RAIL = 2;
 
 type Kind = Lane['type'];
 
@@ -103,19 +115,22 @@ const ODDS: Record<Zone, [Kind, number][]> = {
     ['river', 0.2],
   ],
   glacier: [
-    ['road', 0.4],
-    ['river', 0.4],
-    ['rail', 0.2],
+    ['road', 0.35],
+    ['river', 0.35],
+    ['rail', 0.3],
   ],
 };
 
-function pickKind(zone: Zone, pick: number): Kind {
+/** Une sorte de danger de cet étage, autre que `previous` (deux groupes voisins diffèrent). */
+function pickKind(zone: Zone, pick: number, previous: Kind | null): Kind {
+  const odds = ODDS[zone].filter(([candidate]) => candidate !== previous);
+  const total = odds.reduce((sum, [, chance]) => sum + chance, 0);
   let sum = 0;
-  for (const [candidate, chance] of ODDS[zone]) {
-    sum += chance;
+  for (const [candidate, chance] of odds) {
+    sum += chance / total;
     if (pick < sum) return candidate;
   }
-  return 'road';
+  return odds[odds.length - 1]?.[0] ?? 'road';
 }
 
 /** Le type de chaque rangée d'un bloc : de l'herbe, puis un ou deux groupes de dangers. */
@@ -123,15 +138,16 @@ function blockKinds(seed: number, block: number): Kind[] {
   const first = block * BLOCK;
   if (first < START_ROWS) return ['grass', 'grass', 'grass', 'road', 'road', 'grass', 'river'];
   const zone = zoneOf(first);
-  const one = pickKind(zone, forestUnit(seed, block, 11));
-  const other = pickKind(zone, forestUnit(seed, block, 13));
-  // Le premier groupe : de deux à six voies (un convoi n'a jamais plus de deux voies d'affilée).
-  const split = 2 + Math.floor(forestUnit(seed, block, 12) * 5);
   const kinds: Kind[] = ['grass'];
-  for (let index = 1; index < BLOCK; index++) {
-    const kind = index <= split ? one : other;
-    const run = index <= split ? index : index - split;
-    kinds.push(kind === 'rail' && run > 2 ? 'road' : kind);
+  let previous: Kind | null = null;
+  // Des groupes de deux voies au plus long de l'étage ; le dernier, coupé par la fin du bloc,
+  // peut n'en avoir qu'une.
+  for (let group = 0; kinds.length < BLOCK; group++) {
+    const kind = pickKind(zone, forestUnit(seed, block, 40 + group * 2), previous);
+    const longest = kind === 'rail' ? LONGEST_RAIL : LONGEST_RUN[zone];
+    const size = 2 + Math.floor(forestUnit(seed, block, 41 + group * 2) * (longest - 1));
+    for (let k = 0; k < size && kinds.length < BLOCK; k++) kinds.push(kind);
+    previous = kind;
   }
   // Au début, une bande d'herbe de plus de temps en temps, de moins en moins souvent.
   if (forestUnit(seed, block, 14) < 0.5 * (1 - hardness(first))) kinds[BLOCK - 1] = 'grass';
@@ -169,10 +185,22 @@ function buildLane(seed: number, row: number): Lane {
     const length = [1, 2, 3][kindIndex] ?? 2;
     const speed = between(seed, row, 24, [1.2 + hard * 1.1, 2 + hard * 1.8]);
     const spacing = length + between(seed, row, 25, [1.4 + hard * 0.9, 2.8 + hard * 1.5]);
+    const before = laneAt(seed, row - 1);
+    const isTooClose =
+      before.type === 'river' &&
+      before.traffic.dir === dir &&
+      Math.abs(before.traffic.speed - speed) < RIVER_SPEED_GAP;
     return {
       type: 'river',
       zone,
-      traffic: { dir, speed, length, spacing, offset, kind: kindIndex },
+      traffic: {
+        dir: isTooClose ? (dir > 0 ? -1 : 1) : dir,
+        speed,
+        length,
+        spacing,
+        offset,
+        kind: kindIndex,
+      },
     };
   }
   if (kind === 'rail') {
