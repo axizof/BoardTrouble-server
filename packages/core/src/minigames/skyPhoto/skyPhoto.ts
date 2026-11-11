@@ -39,17 +39,17 @@ const SUBJECTS: Record<
   SubjectKind,
   { flight: Flight; speed: [number, number]; twin: SubjectKind | null }
 > = {
-  redBird: { flight: 'flap', speed: [9, 10], twin: 'blueBird' },
-  blueBird: { flight: 'flap', speed: [9, 10], twin: 'redBird' },
-  jet: { flight: 'glide', speed: [15, 17], twin: 'propeller' },
-  propeller: { flight: 'cruise', speed: [11, 12], twin: 'jet' },
-  yellowCopter: { flight: 'hover', speed: [8, 9], twin: 'greenCopter' },
-  greenCopter: { flight: 'hover', speed: [8, 9], twin: 'yellowCopter' },
+  redBird: { flight: 'flap', speed: [11, 12], twin: 'blueBird' },
+  blueBird: { flight: 'flap', speed: [11, 12], twin: 'redBird' },
+  jet: { flight: 'glide', speed: [18, 20], twin: 'propeller' },
+  propeller: { flight: 'cruise', speed: [13, 14], twin: 'jet' },
+  yellowCopter: { flight: 'hover', speed: [9.5, 10.5], twin: 'greenCopter' },
+  greenCopter: { flight: 'hover', speed: [9.5, 10.5], twin: 'yellowCopter' },
   // La fusée traverse le viseur de bas en haut.
-  rocket: { flight: 'climb', speed: [7, 8], twin: null },
+  rocket: { flight: 'climb', speed: [8.5, 9.5], twin: null },
   // La soucoupe file par bonds : sa vitesse est sa moyenne, pauses comprises ; elle passe le
   // centre au milieu d'un bond, à pleine vitesse.
-  ufo: { flight: 'hop', speed: [4.5, 5], twin: null },
+  ufo: { flight: 'hop', speed: [5.5, 6], twin: null },
 };
 export const SUBJECT_KINDS = Object.keys(SUBJECTS) as SubjectKind[];
 
