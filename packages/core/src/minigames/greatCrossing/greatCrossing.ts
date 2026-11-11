@@ -241,11 +241,11 @@ function ranking(state: CrossingState): PlayerId[][] {
  * joueur, il se trompe parfois (`RASH` : il saute sans bien regarder) et hésite (`HESITATE` : il
  * laisse passer une occasion), chacun à son rythme (`REFLEX`).
  */
-const STAY: Record<BotLevel, number> = { easy: 0.55, normal: 0.42, expert: 0.32 };
+const STAY: Record<BotLevel, number> = { easy: 0.5, normal: 0.4, expert: 0.34 };
 const RASH: Record<BotLevel, number> = { easy: 0.006, normal: 0.003, expert: 0.001 };
 const HESITATE: Record<BotLevel, number> = { easy: 0.12, normal: 0.06, expert: 0.02 };
 /** Il se décide tous les tant de pas. */
-const REFLEX: Record<BotLevel, number> = { easy: 5, normal: 4, expert: 3 };
+const REFLEX: Record<BotLevel, number> = { easy: 4, normal: 3, expert: 3 };
 /** Sur un radeau, il regarde où il sera dans tant de secondes ; sur l'herbe, plus loin que tant du milieu, il y revient. */
 const EDGE_LOOK = 1.5;
 const CENTER_PULL = 2;
