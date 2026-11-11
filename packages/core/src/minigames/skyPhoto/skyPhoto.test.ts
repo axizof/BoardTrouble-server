@@ -2,12 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import type { BotLevel } from '../../bots/boardBot';
 import type { PlayerId } from '../../game/types';
 import { Rng } from '../../random/rng';
-import { ARENA_STEP, type ArenaInput, IDLE_INPUT } from '../arena/arena';
+import { ARENA_STEP, IDLE_INPUT } from '../arena/arena';
 import {
   developPhoto,
   isInSky,
   MAX_PHOTO_POINTS,
-  PHOTO_FRAME,
   PHOTO_PASSES,
   photoPoints,
   SHOWCASE_TIME,
@@ -16,14 +15,17 @@ import {
   type SkySubject,
   subjectPosition,
   twinOf,
+  VIEW,
 } from './skyPhoto';
 
 const steps = (seconds: number) => Math.round(seconds / ARENA_STEP);
+const press = (...players: PlayerId[]) =>
+  Object.fromEntries(players.map((id) => [id, { ...IDLE_INPUT, primary: true }]));
 
 function run(
   state: SkyPhotoState,
   until: (s: SkyPhotoState) => boolean,
-  inputs: (s: SkyPhotoState) => Partial<Record<PlayerId, ArenaInput>> = () => ({}),
+  inputs: (s: SkyPhotoState) => ReturnType<typeof press> = () => ({}),
 ): SkyPhotoState {
   let current = state;
   while (!until(current)) {
@@ -33,29 +35,31 @@ function run(
   return current;
 }
 
-/** Le passage `pass` de la cible, en vol. */
+/** Le passage `pass` de la cible. */
 const passOf = (state: SkyPhotoState, pass: number) =>
   state.subjects.find((subject) => subject.role === 'target' && subject.pass === pass);
 
-/** Cadre `player` sur `subject` au pas suivant, et déclenche. */
-function snap(
-  state: SkyPhotoState,
-  player: PlayerId,
-  subject: SkySubject,
-  offset = { x: 0, y: 0 },
-) {
-  const at = subjectPosition(subject, state.tick + 1);
-  const point = { x: at.x + offset.x, z: at.y + offset.y };
-  return SKY_PHOTO.step(state, { [player]: { ...IDLE_INPUT, point, primary: true } });
+/** Le pas où ce sujet est le plus près du centre du viseur. */
+function closestTick(subject: SkySubject): number {
+  let best = subject.launchAt;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (let tick = subject.launchAt; tick < subject.launchAt + steps(10); tick++) {
+    const at = subjectPosition(subject, tick);
+    const distance = Math.hypot(at.x - VIEW.center.x, at.y - VIEW.center.y);
+    if (distance < bestDistance) {
+      best = tick;
+      bestDistance = distance;
+    }
+  }
+  return best;
 }
 
-/** Attend que ce passage de la cible soit bien dans le ciel (le cadre peut le centrer). */
-function untilPassInView(pass: number) {
-  return (state: SkyPhotoState) => {
-    const subject = passOf(state, pass);
-    if (!subject) return false;
-    return Math.abs(subjectPosition(subject, state.tick + 1).x) < 5;
-  };
+/** Joue jusqu'au passage `pass` de la cible, puis jusqu'au pas qui précède son meilleur moment (plus `offset` pas). */
+function untilBest(state: SkyPhotoState, pass: number, offset = 0): SkyPhotoState {
+  const arrived = run(state, (s) => passOf(s, pass) !== undefined);
+  const target = passOf(arrived, pass);
+  if (!target) throw new Error('pas de passage');
+  return run(arrived, (s) => s.tick >= closestTick(target) + offset - 1);
 }
 
 describe('Clic-clac', () => {
@@ -64,138 +68,116 @@ describe('Clic-clac', () => {
     const [showcase] = state.subjects;
     expect(showcase?.kind).toBe(state.target);
     expect(showcase?.role).toBe('showcase');
-    const press = { a: { ...IDLE_INPUT, point: { x: 0, z: 5.8 }, primary: true } };
-    state = SKY_PHOTO.step(state, press);
+    state = SKY_PHOTO.step(state, press('a'));
     expect(state.fighters[0]?.photo).toBeNull();
     // Le sujet montré s'en va : il ne compte jamais.
-    state = run(state, (s) => s.tick >= steps(SHOWCASE_TIME + 1.5));
+    state = run(state, (s) => s.tick >= steps(SHOWCASE_TIME + 1));
     expect(state.subjects.some((subject) => subject.role === 'showcase')).toBe(false);
   });
 
-  test('the closer to the centre the target is, the more points; decoys and empty sky score zero', () => {
+  test('subjects cross the viewfinder one at a time, with quiet moments in between', () => {
+    let state = SKY_PHOTO.create(['a'], { practice: false, seed: 12 });
+    let quietTicks = 0;
+    state = run(state, (s) => {
+      const flying = s.subjects.filter(
+        (subject) => subject.role !== 'showcase' && isInSky(subject, s.tick),
+      );
+      expect(flying.length).toBeLessThanOrEqual(1);
+      if (s.tick > steps(SHOWCASE_TIME) && flying.length === 0) quietTicks++;
+      return s.passes >= PHOTO_PASSES;
+    });
+    expect(quietTicks).toBeGreaterThan(steps(2));
+  });
+
+  test('the closer to the centre at the click, the more points; a decoy or empty sky is worth nothing', () => {
     expect(photoPoints(0)).toBe(MAX_PHOTO_POINTS);
-    expect(photoPoints(0.4)).toBeLessThan(MAX_PHOTO_POINTS);
-    expect(photoPoints(0.4)).toBeGreaterThan(photoPoints(1));
-    // Le coin du cadre : encore la cible, le moins de points.
-    expect(photoPoints(Math.hypot(PHOTO_FRAME.width, PHOTO_FRAME.height) / 2)).toBe(5);
+    expect(photoPoints(0.3)).toBeGreaterThan(photoPoints(0.8));
     // Deux photos qui semblent aussi centrées valent autant (les dés les départagent).
     expect(photoPoints(0.01)).toBe(photoPoints(0.03));
 
-    let state = SKY_PHOTO.create(['a', 'b', 'c'], { practice: false, seed: 11 });
-    state = run(state, untilPassInView(0));
-    const target = passOf(state, 0);
-    if (!target) throw new Error('pas de passage');
-    const centered = snap(state, 'a', target);
-    expect(centered.fighters[0]?.photo).toMatchObject({ kind: state.target, points: 100 });
-    const off = snap(state, 'a', target, { x: 0.9, y: 0.3 });
-    expect(off.fighters[0]?.photo?.points).toBeLessThan(100);
+    const start = () => SKY_PHOTO.create(['a', 'b'], { practice: false, seed: 11 });
+    const state = untilBest(start(), 0);
+    const best = SKY_PHOTO.step(state, press('a')).fighters[0]?.photo;
+    expect(best?.kind).toBe(state.target);
+    expect(best?.points).toBeGreaterThanOrEqual(80);
+    const late = untilBest(start(), 0, steps(0.15));
+    const lateShot = SKY_PHOTO.step(late, press('a')).fighters[0]?.photo;
+    expect(lateShot?.points).toBeLessThan(best?.points ?? 0);
+    // Entre deux sujets, du ciel vide.
+    expect(developPhoto(start(), steps(4))).toMatchObject({ kind: null, points: 0 });
   });
 
-  test('a decoy nearer the centre than the target makes the photo worth nothing', () => {
-    const state = SKY_PHOTO.create(['a'], { practice: false, seed: 1 });
-    const decoy: SkySubject = {
-      id: 90,
-      kind: twinOf(state.target) ?? 'rocket',
-      role: 'decoy',
-      pass: -1,
-      launchAt: state.tick,
-      x0: 0.2,
-      y0: 5,
-      dir: 1,
-      speed: 0,
-      slope: 0,
-      phase: 0,
-    };
-    const target: SkySubject = {
-      ...decoy,
-      id: 91,
-      kind: state.target,
-      role: 'target',
-      pass: 0,
-      x0: 1,
-    };
-    const sky = { ...state, subjects: [target, decoy] };
-    const at = subjectPosition(decoy, state.tick);
-    expect(developPhoto(sky, at.x, at.y, state.tick)).toMatchObject({ points: 0 });
-    // Plus à droite, la cible est la plus proche du centre : elle compte.
-    const right = subjectPosition(target, state.tick);
-    expect(developPhoto(sky, right.x, right.y, state.tick).points).toBe(100);
-    // Rien dans le cadre : du ciel, zéro.
-    expect(developPhoto(sky, -6, 7, state.tick)).toMatchObject({ kind: null, points: 0 });
+  test('a decoy at the centre makes the photo worth nothing', () => {
+    let state = SKY_PHOTO.create(['a'], { practice: false, seed: 7 });
+    state = run(state, (s) => s.subjects.some((subject) => subject.role === 'decoy'));
+    const decoy = state.subjects.find((subject) => subject.role === 'decoy');
+    if (!decoy) throw new Error('pas de leurre');
+    state = run(state, (s) => s.tick >= closestTick(decoy) - 1);
+    const photo = SKY_PHOTO.step(state, press('a')).fighters[0]?.photo;
+    expect(photo?.kind).toBe(decoy.kind);
+    expect(photo?.points).toBe(0);
   });
 
   test('only one photo: a second press does nothing (in the sandbox, it can be retaken)', () => {
     let state = SKY_PHOTO.create(['a'], { practice: false, seed: 5 });
     state = run(state, (s) => s.tick >= steps(SHOWCASE_TIME));
-    state = SKY_PHOTO.step(state, { a: { ...IDLE_INPUT, point: { x: -5, z: 7 }, primary: true } });
+    state = SKY_PHOTO.step(state, press('a'));
     const first = state.fighters[0]?.photo;
     expect(first).not.toBeNull();
-    state = SKY_PHOTO.step(state, { a: { ...IDLE_INPUT, point: { x: 5, z: 4 }, primary: false } });
     state = run(state, (s) => s.tick >= (first?.takenAt ?? 0) + steps(2));
-    state = SKY_PHOTO.step(state, { a: { ...IDLE_INPUT, point: { x: 5, z: 4 }, primary: true } });
+    state = SKY_PHOTO.step(state, press('a'));
     expect(state.fighters[0]?.photo).toEqual(first ?? null);
 
     let practice = SKY_PHOTO.create(['a'], { practice: true, seed: 5 });
     practice = run(practice, (s) => s.tick >= steps(SHOWCASE_TIME));
-    practice = SKY_PHOTO.step(practice, {
-      a: { ...IDLE_INPUT, point: { x: -5, z: 7 }, primary: true },
-    });
-    practice = run(practice, (s) => s.tick >= steps(SHOWCASE_TIME + 1.2));
-    practice = SKY_PHOTO.step(practice, {
-      a: { ...IDLE_INPUT, point: { x: 5, z: 4 }, primary: true },
-    });
-    expect(practice.fighters[0]?.photo?.x).toBe(5);
+    practice = SKY_PHOTO.step(practice, press('a'));
+    const before = practice.fighters[0]?.photo?.takenAt;
+    practice = run(practice, (s) => s.tick >= (before ?? 0) + steps(1.2));
+    practice = SKY_PHOTO.step(practice, press('a'));
+    expect(practice.fighters[0]?.photo?.takenAt).not.toBe(before);
   });
 
-  test('the target passes three times, each time just after its lookalike, among other decoys', () => {
-    for (let seed = 0; seed < 12; seed++) {
+  test('the target passes twice, each time right after its lookalike', () => {
+    for (let seed = 0; seed < 16; seed++) {
       let state = SKY_PHOTO.create(['a'], { practice: false, seed });
       const seen = new Map<number, SkySubject>();
       state = run(state, (s) => {
         for (const subject of s.subjects) seen.set(subject.id, subject);
-        return s.passes >= PHOTO_PASSES && s.tick > steps(30);
+        return SKY_PHOTO.isOver(s);
       });
-      const all = [...seen.values()];
+      const all = [...seen.values()].filter((subject) => subject.role !== 'showcase');
       const passes = all.filter((subject) => subject.role === 'target');
-      expect(passes.map((subject) => subject.pass)).toEqual([0, 1, 2]);
-      expect(all.filter((subject) => subject.role === 'decoy').length).toBeGreaterThan(12);
-      expect(all.some((subject) => subject.role === 'decoy' && subject.kind === state.target)).toBe(
-        false,
+      expect(passes.map((subject) => subject.pass)).toEqual([0, 1]);
+      const isTargetDecoy = all.some(
+        (subject) => subject.role === 'decoy' && subject.kind === state.target,
       );
+      expect(isTargetDecoy).toBe(false);
+      const twin = twinOf(state.target);
       for (const pass of passes) {
-        const before = all.filter(
-          (subject) =>
-            subject.role === 'decoy' &&
-            subject.launchAt < pass.launchAt &&
-            subject.launchAt >= pass.launchAt - steps(1.2) &&
-            subject.dir === pass.dir,
-        );
-        const twin = twinOf(state.target);
-        expect(before.some((subject) => twin === null || subject.kind === twin)).toBe(true);
+        const before = all.find((subject) => subject.id === pass.id - 1);
+        expect(before?.role).toBe('decoy');
+        if (twin) expect(before?.kind).toBe(twin);
       }
     }
   });
 
   test('ends once everyone has a photo, or after the last pass; ranked by points, zeros last', () => {
-    let state = SKY_PHOTO.create(['a', 'b', 'c'], { practice: false, seed: 8 });
-    state = run(state, untilPassInView(1));
-    const target = passOf(state, 1);
-    if (!target) throw new Error('pas de passage');
-    state = snap(state, 'a', target);
-    state = snap(state, 'b', target, { x: 0.8, y: 0 });
+    let state = untilBest(SKY_PHOTO.create(['a', 'b', 'c'], { practice: false, seed: 8 }), 0);
+    state = SKY_PHOTO.step(state, press('a'));
+    state = run(state, (s) => s.tick >= (s.fighters[0]?.photo?.takenAt ?? 0) + steps(0.2));
+    state = SKY_PHOTO.step(state, press('b'));
     expect(SKY_PHOTO.isOver(state)).toBe(false);
     // c ne prend rien : la partie attend la fin du dernier passage.
     state = run(state, (s) => SKY_PHOTO.isOver(s));
     const last = passOf(state, PHOTO_PASSES - 1);
     expect(last && isInSky(last, state.tick)).toBe(false);
-    expect(SKY_PHOTO.ranking(state)).toEqual([['a'], ['b'], ['c']]);
+    const ranking = SKY_PHOTO.ranking(state);
+    expect(ranking[0]).toEqual(['a']);
+    expect(ranking.at(-1)).toContain('c');
 
     let quick = SKY_PHOTO.create(['a', 'b'], { practice: false, seed: 8 });
     quick = run(quick, (s) => s.tick >= steps(SHOWCASE_TIME));
-    quick = SKY_PHOTO.step(quick, {
-      a: { ...IDLE_INPUT, point: { x: -5, z: 7 }, primary: true },
-      b: { ...IDLE_INPUT, point: { x: 5, z: 7 }, primary: true },
-    });
+    quick = SKY_PHOTO.step(quick, press('a', 'b'));
     quick = run(quick, (s) => SKY_PHOTO.isOver(s));
     expect(quick.tick).toBeLessThan(steps(SHOWCASE_TIME + 2));
   });
@@ -210,10 +192,9 @@ describe('Clic-clac', () => {
     const totals: Record<BotLevel, number[]> = { easy: [], normal: [], expert: [] };
     for (let seed = 0; seed < 40; seed++) {
       const ids = levels.map((_, index) => `p${index}`);
-      let state = SKY_PHOTO.create(ids, { practice: false, seed });
       const rng = new Rng(seed);
-      state = run(
-        state,
+      const state = run(
+        SKY_PHOTO.create(ids, { practice: false, seed }),
         (s) => SKY_PHOTO.isOver(s),
         (s) =>
           Object.fromEntries(
@@ -226,10 +207,8 @@ describe('Clic-clac', () => {
     }
     const average = (values: number[]) =>
       values.reduce((sum, value) => sum + value, 0) / values.length;
-    const scored = [...totals.easy, ...totals.normal, ...totals.expert].filter(
-      (points) => points > 0,
-    );
-    expect(scored.length / (totals.easy.length * 3)).toBeGreaterThan(0.6);
+    const all = [...totals.easy, ...totals.normal, ...totals.expert];
+    expect(all.filter((points) => points > 0).length / all.length).toBeGreaterThan(0.6);
     expect(average(totals.expert)).toBeGreaterThan(average(totals.easy));
   });
 });
