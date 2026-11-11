@@ -11,6 +11,7 @@ import { CLAY_SHOOT } from '../clayShoot/clayShoot';
 import { COMBINATION } from '../combination/combination';
 import { CONVEYOR_SORT } from '../conveyorSort/conveyorSort';
 import { FALLING_PLATES } from '../fallingPlates/fallingPlates';
+import { GREAT_CROSSING } from '../greatCrossing/greatCrossing';
 import { HIGH_NOON } from '../highNoon/highNoon';
 import { LAST_ROLL } from '../lastRoll/lastRoll';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
@@ -61,6 +62,7 @@ export const ARENAS = {
   skyPhoto: SKY_PHOTO,
   ridgeRide: RIDGE_RIDE,
   offPiste: OFF_PISTE,
+  greatCrossing: GREAT_CROSSING,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
