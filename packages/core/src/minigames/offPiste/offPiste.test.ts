@@ -3,20 +3,12 @@ import type { BotLevel } from '../../bots/boardBot';
 import type { PlayerId } from '../../game/types';
 import { Rng } from '../../random/rng';
 import { ARENA_STEP, type ArenaInput, IDLE_INPUT } from '../arena/arena';
-import {
-  corridorX,
-  GATE_HALF,
-  gateAt,
-  PISTE_HALF,
-  TREE_REACH,
-  treesBetween,
-  treesInRow,
-} from './forest';
+import { corridorX, FOREST_HALF, TREE_REACH, treesBetween, treesInRow } from './forest';
 import {
   bestRun,
   CRASH_TIME,
-  GATE_BOOST,
   OFF_PISTE,
+  SKI_SPEED_MAX,
   SKI_START,
   SKI_TIME_LIMIT,
   type SkiState,
@@ -34,7 +26,7 @@ function run(
   let current = state;
   while (!until(current)) {
     current = OFF_PISTE.step(current, inputs(current));
-    if (current.tick > steps(200)) throw new Error('descente sans fin');
+    if (current.tick > steps(SKI_TIME_LIMIT + 20)) throw new Error('descente sans fin');
   }
   return current;
 }
@@ -43,21 +35,25 @@ function run(
 function followCorridor(state: SkiState, id: PlayerId): ArenaInput {
   const me = state.fighters.find((skier) => skier.id === id);
   if (!me) return IDLE_INPUT;
-  const ahead = me.d + 3;
-  return steer(Math.max(-1, Math.min(1, Math.atan2(corridorX(state.seed, ahead) - me.x, 3))));
+  // Il prend la direction du couloir un peu devant (les skis mettent un moment à tourner), et
+  // corrige son écart au couloir là où il est.
+  const lead = me.d + me.speed * 0.1;
+  const slope = corridorX(state.seed, lead + 0.5) - corridorX(state.seed, lead - 0.5);
+  const aim = Math.atan(slope) + 0.5 * (corridorX(state.seed, me.d) - me.x);
+  return steer(Math.max(-1, Math.min(1, aim / 0.8)));
 }
 
 describe('the forest of Hors-piste', () => {
-  test('the same for a seed, denser further down, and never past the nets', () => {
+  test('the same for a seed, denser further down, and never past the rocks', () => {
     expect(treesInRow(5, 40)).toEqual(treesInRow(5, 40));
     expect(treesInRow(5, 40)).not.toEqual(treesInRow(6, 40));
     for (let seed = 1; seed <= 20; seed++) {
       const top = treesBetween(seed, 30, 130).length;
-      const bottom = treesBetween(seed, 600, 700).length;
-      expect(bottom).toBeGreaterThan(top * 2.5);
-      expect(treesBetween(seed, 0, 20)).toHaveLength(0);
+      const bottom = treesBetween(seed, 900, 1000).length;
+      expect(bottom).toBeGreaterThan(top * 1.6);
+      expect(treesBetween(seed, 0, 14)).toHaveLength(0);
       for (const tree of treesBetween(seed, 0, 1000)) {
-        expect(Math.abs(tree.x)).toBeLessThan(PISTE_HALF);
+        expect(Math.abs(tree.x)).toBeLessThan(FOREST_HALF);
       }
     }
   });
@@ -65,15 +61,17 @@ describe('the forest of Hors-piste', () => {
   test('a way through always stays open, gentle enough to follow at full speed', () => {
     for (let seed = 1; seed <= 20; seed++) {
       for (const tree of treesBetween(seed, 0, 1500)) {
-        expect(Math.abs(tree.x - corridorX(seed, tree.d))).toBeGreaterThan(TREE_REACH + 0.6);
+        expect(Math.abs(tree.x - corridorX(seed, tree.d))).toBeGreaterThan(TREE_REACH + 0.45);
       }
     }
-    // Sa pente et sa courbure restent sous ce que permettent les skis, partout.
+    // Sa pente reste sous l'angle des skis, sa courbure sous ce qu'ils suivent à pleine vitesse,
+    // et il reste entre les rochers.
     for (let d = 0; d < 1500; d += 0.5) {
       const slope = (corridorX(3, d + 0.5) - corridorX(3, d)) / 0.5;
       const bend = (corridorX(3, d + 1) - 2 * corridorX(3, d + 0.5) + corridorX(3, d)) / 0.25;
-      expect(Math.abs(slope)).toBeLessThan(0.45);
-      expect(Math.abs(bend)).toBeLessThan(0.04);
+      expect(Math.abs(slope)).toBeLessThan(Math.tan(0.8));
+      expect(Math.abs(bend) * SKI_SPEED_MAX).toBeLessThan(3.2 * 0.6);
+      expect(Math.abs(corridorX(3, d))).toBeLessThan(FOREST_HALF - 2);
     }
   });
 
@@ -85,30 +83,29 @@ describe('the forest of Hors-piste', () => {
         (s) => ({ a: followCorridor(s, 'a') }),
       );
       expect(state.fighters[0]?.runs).toBe(0);
-      expect(state.fighters[0]?.gates).toBeGreaterThan(10);
       const skier = state.fighters[0];
-      if (skier) expect(bestRun(skier)).toBeGreaterThan(900);
+      if (skier) expect(bestRun(skier)).toBeGreaterThan(3000);
     }
   });
 });
 
 describe('Hors-piste !', () => {
-  test('the slope pulls the skis; turning skids and costs speed', () => {
-    // Le haut de la piste n'a pas de sapin : on y règle les skis sans en toucher.
+  test('the skis glide on their own; turning does not slow them down', () => {
+    // Le haut n'a pas de sapin : on y règle les skis sans en toucher.
     const start = OFF_PISTE.create(['a', 'b'], { practice: true, seed: 4 });
     const after = run(
       start,
-      (s) => s.tick >= steps(3.5),
+      (s) => s.tick >= steps(2.5),
       (s) => ({ b: steer(Math.floor(s.tick / 15) % 2 === 0 ? 1 : -1) }),
     );
     const [straight, wavy] = after.fighters;
-    expect(straight?.speed).toBeGreaterThan(5);
+    expect(straight?.speed).toBeGreaterThan(7);
     expect(straight?.crashedAt).toBeNull();
-    expect(wavy?.d ?? 0).toBeLessThan((straight?.d ?? 0) * 0.85);
-    expect(wavy?.speed ?? 0).toBeLessThan(straight?.speed ?? 0);
+    expect(wavy?.crashedAt).toBeNull();
+    expect(wavy?.speed ?? 0).toBeCloseTo(straight?.speed ?? 0, 1);
   });
 
-  test('right goes right, and the nets keep you on the piste', () => {
+  test('right goes right, and the rocks keep you in the forest', () => {
     const start = OFF_PISTE.create(['a'], { practice: true, seed: 4 });
     const right = run(
       start,
@@ -116,18 +113,21 @@ describe('Hors-piste !', () => {
       () => ({ a: steer(1) }),
     );
     expect(right.fighters[0]?.x).toBeGreaterThan(1);
+    // Tout droit contre le bord, au-dessus des premiers sapins.
     const pressed = run(
-      start,
-      (s) => s.tick >= steps(5),
+      { ...start, fighters: start.fighters.map((skier) => ({ ...skier, x: FOREST_HALF - 2 })) },
+      (s) => s.tick >= steps(1.2),
       () => ({ a: steer(1) }),
     );
     expect(pressed.fighters[0]?.crashedAt).toBeNull();
-    expect(pressed.fighters[0]?.x).toBeLessThan(PISTE_HALF);
-    expect(pressed.fighters[0]?.x).toBeGreaterThan(PISTE_HALF - 1);
+    expect(pressed.fighters[0]?.x).toBeLessThan(FOREST_HALF);
+    expect(pressed.fighters[0]?.x).toBeGreaterThan(FOREST_HALF - 1);
   });
 
-  test('the further down, the faster the slope pulls', () => {
-    expect(slopeSpeed(400)).toBeGreaterThan(slopeSpeed(0) + 3);
+  test('the further down, the faster: almost inhuman, but with a ceiling', () => {
+    expect(slopeSpeed(500)).toBeGreaterThan(slopeSpeed(0) * 2);
+    expect(slopeSpeed(1500)).toBe(SKI_SPEED_MAX);
+    expect(slopeSpeed(5000)).toBe(SKI_SPEED_MAX);
   });
 
   test('a tree stops you; you lie there a moment, then start again from the top', () => {
@@ -135,30 +135,13 @@ describe('Hors-piste !', () => {
     state = run(state, (s) => s.fighters[0]?.crashedAt !== null);
     const crashed = state.fighters[0];
     expect(crashed?.speed).toBe(0);
-    expect(crashed?.d).toBeGreaterThan(20);
+    expect(crashed?.d).toBeGreaterThan(14);
     state = run(state, (s) => s.tick >= (crashed?.crashedAt ?? 0) + steps(CRASH_TIME));
     const back = state.fighters[0];
     expect(back?.crashedAt).toBeNull();
     expect(back?.d).toBe(SKI_START);
     expect(back?.runs).toBe(1);
     expect(back?.best).toBe(crashed?.d ?? 0);
-  });
-
-  test('passing a slalom gate gives a burst of speed; going around it does not', () => {
-    const gate = gateAt(11, 0);
-    const state = OFF_PISTE.create(['a'], { practice: true, seed: 11 });
-    // Juste avant la porte, lancé tout droit, entre les fanions ou à côté.
-    const before = (x: number): SkiState => ({
-      ...state,
-      fighters: state.fighters.map((skier) => ({ ...skier, x, d: gate.d - 1, speed: 10 })),
-    });
-    const through = run(before(gate.x), (s) => s.tick >= 6);
-    expect(through.fighters[0]?.gates).toBe(1);
-    expect(through.fighters[0]?.speed ?? 0).toBeGreaterThan(10 + GATE_BOOST * 0.8);
-    const around = run(before(gate.x + GATE_HALF + 0.4), (s) => s.tick >= 6);
-    expect(around.fighters[0]?.crashedAt).toBeNull();
-    expect(around.fighters[0]?.gates).toBe(0);
-    expect(around.fighters[0]?.speed ?? 0).toBeLessThan(11);
   });
 
   test('your best run counts, the one in progress too; the clock ends the game', () => {
