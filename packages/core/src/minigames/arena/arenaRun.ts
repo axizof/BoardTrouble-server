@@ -14,6 +14,7 @@ import { FALLING_PLATES } from '../fallingPlates/fallingPlates';
 import { HIGH_NOON } from '../highNoon/highNoon';
 import { LAST_ROLL } from '../lastRoll/lastRoll';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
+import { OFF_PISTE } from '../offPiste/offPiste';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
 import { PERFECT_GAUGE } from '../perfectGauge/perfectGauge';
 import { RAMPART } from '../rampart/rampart';
@@ -59,6 +60,7 @@ export const ARENAS = {
   fallingPlates: FALLING_PLATES,
   skyPhoto: SKY_PHOTO,
   ridgeRide: RIDGE_RIDE,
+  offPiste: OFF_PISTE,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */

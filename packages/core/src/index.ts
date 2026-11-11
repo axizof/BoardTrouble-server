@@ -30,6 +30,8 @@ export * from './minigames/fallingPlates/fallingPlates';
 export * from './minigames/highNoon/highNoon';
 export * from './minigames/lastRoll/lastRoll';
 export * from './minigames/meltingPlatform/meltingPlatform';
+export * from './minigames/offPiste/forest';
+export * from './minigames/offPiste/offPiste';
 export * from './minigames/pawnSumo/pawnSumo';
 export * from './minigames/perfectGauge/perfectGauge';
 export * from './minigames/rampart/rampart';
