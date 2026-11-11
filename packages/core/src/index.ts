@@ -34,6 +34,8 @@ export * from './minigames/pawnSumo/pawnSumo';
 export * from './minigames/perfectGauge/perfectGauge';
 export * from './minigames/rampart/rampart';
 export * from './minigames/rhythmTugOfWar/rhythmTugOfWar';
+export * from './minigames/ridgeRide/course';
+export * from './minigames/ridgeRide/ridgeRide';
 export * from './minigames/secretAuction/secretAuction';
 export * from './minigames/skyPhoto/skyPhoto';
 export * from './minigames/spinningBar/spinningBar';

@@ -18,6 +18,7 @@ import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
 import { PERFECT_GAUGE } from '../perfectGauge/perfectGauge';
 import { RAMPART } from '../rampart/rampart';
 import { RHYTHM_TUG } from '../rhythmTugOfWar/rhythmTugOfWar';
+import { RIDGE_RIDE } from '../ridgeRide/ridgeRide';
 import { SECRET_AUCTION } from '../secretAuction/secretAuction';
 import { SKY_PHOTO } from '../skyPhoto/skyPhoto';
 import { SPINNING_BAR } from '../spinningBar/spinningBar';
@@ -57,6 +58,7 @@ export const ARENAS = {
   conveyorSort: CONVEYOR_SORT,
   fallingPlates: FALLING_PLATES,
   skyPhoto: SKY_PHOTO,
+  ridgeRide: RIDGE_RIDE,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
