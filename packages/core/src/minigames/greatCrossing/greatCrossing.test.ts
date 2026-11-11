@@ -7,7 +7,7 @@ import {
   CROSSING_TIME_LIMIT,
   type Crosser,
   type CrossingState,
-  fogRow,
+  DOWN_TIME,
   GREAT_CROSSING,
   HOP_TICKS,
 } from './greatCrossing';
@@ -165,42 +165,79 @@ describe('La grande traversée', () => {
 
   test('a vehicle runs you over; the water drowns you unless you land on a raft, which carries you', () => {
     const road = firstLane(5, 'road');
-    const roadLane = laneAt(5, road);
-    if (roadLane.type !== 'road') throw new Error('pas de route');
-    // Sur la route, il attend : le prochain véhicule l'écrase.
-    const hit = run(standing(5, road, 0), (s) => s.fighters[0]?.fellAt !== null);
+    // Sur la route, il attend : le prochain véhicule le renverse.
+    const hit = run(standing(5, road, 0), (s) => s.fighters[0]?.downAt !== null);
     expect(hit.fighters[0]?.cause).toBe('road');
     const river = firstLane(5, 'river');
     const riverLane = laneAt(5, river);
     if (riverLane.type !== 'river') throw new Error('pas de rivière');
-    // Le premier moment où un radeau est sous la case du milieu, puis un moment où il n'y en a pas.
+    // Un moment où un radeau est sous la case du milieu, et un où l'eau est loin de tout radeau.
     let afloat = 0;
     while (!isOn(riverLane.traffic, 0, 0.3, afloat * ARENA_STEP)) afloat++;
     let dry = 0;
-    while (isOn(riverLane.traffic, 0, 0, dry * ARENA_STEP)) dry++;
+    while (isOn(riverLane.traffic, 0, -0.35, dry * ARENA_STEP)) dry++;
     // Le radeau et le sauteur dérivent ensemble : ce qui compte est la place au pas de départ.
     const sunk = GREAT_CROSSING.step(standing(5, river, 0, dry), {});
     expect(sunk.fighters[0]?.cause).toBe('river');
     const carried = GREAT_CROSSING.step(GREAT_CROSSING.step(standing(5, river, 0, afloat), {}), {});
-    expect(carried.fighters[0]?.fellAt).toBeNull();
+    expect(carried.fighters[0]?.downAt).toBeNull();
     expect(carried.fighters[0]?.x).not.toBe(0);
     expect(Math.sign(carried.fighters[0]?.x ?? 0)).toBe(riverLane.traffic.dir);
   });
 
-  test('the fog swallows whoever waits; the sandbox has none and puts you back', () => {
+  test('landing at the very edge of a raft still holds you; a side step on a raft drifts with it', () => {
+    const river = firstLane(5, 'river');
+    const lane = laneAt(5, river);
+    if (lane.type !== 'river') throw new Error('pas de rivière');
+    // Le premier moment où le bord arrière d'un radeau arrive juste après la case du milieu.
+    let tick = 0;
+    while (
+      !isOn(lane.traffic, 0.15, 0, tick * ARENA_STEP) ||
+      isOn(lane.traffic, 0, 0, tick * ARENA_STEP)
+    ) {
+      tick++;
+      if (tick > 10_000) throw new Error('pas de bord de radeau');
+    }
+    const edge = GREAT_CROSSING.step(standing(5, river, 0, tick), {});
+    expect(edge.fighters[0]?.downAt).toBeNull();
+    // Un pas de côté sur un long radeau : il arrive sur le radeau, qui a dérivé pendant le bond.
+    let long = firstLane(5, 'river');
+    while (true) {
+      const candidate = laneAt(5, long);
+      if (candidate.type === 'river' && candidate.traffic.length >= 3) break;
+      long = firstLane(5, 'river', long + 1);
+    }
+    const longLane = laneAt(5, long);
+    if (longLane.type !== 'river') throw new Error('pas de radeau long');
+    let start = 0;
+    while (!isOn(longLane.traffic, 0, 1.2, start * ARENA_STEP)) start++;
+    const side = longLane.traffic.dir > 0 ? LEFT : { ...IDLE_INPUT, move: { x: 1, z: 0 } };
+    const stepped = run(
+      standing(5, long, 0, start),
+      (s) => s.tick >= start + HOP_TICKS + 2,
+      (s) => ({ a: s.tick === start ? side : IDLE_INPUT }),
+    );
+    expect(stepped.fighters[0]?.downAt).toBeNull();
+    expect(stepped.fighters[0]?.facing).toBe(longLane.traffic.dir > 0 ? 'left' : 'right');
+  });
+
+  test('an accident puts you back at the start; your furthest row stays, and the clock alone ends the game', () => {
+    const road = firstLane(5, 'road');
+    let state: CrossingState = { ...standing(5, road, 0), practice: false };
+    state = run(state, (s) => s.fighters[0]?.downAt !== null);
+    const down = state.fighters[0];
+    state = run(state, (s) => s.tick >= (down?.downAt ?? 0) + steps(DOWN_TIME));
+    const back = state.fighters[0];
+    expect(back?.downAt).toBeNull();
+    expect(back?.row).toBe(0);
+    expect(back?.runs).toBe(1);
+    expect(back?.best).toBe(road);
+    expect(GREAT_CROSSING.isOver(state)).toBe(false);
     const waiting = run(GREAT_CROSSING.create(['a'], { practice: false, seed: 3 }), (s) =>
       GREAT_CROSSING.isOver(s),
     );
-    expect(waiting.fighters[0]?.cause).toBe('fog');
-    expect((waiting.fighters[0]?.fellAt ?? 0) * ARENA_STEP).toBeLessThan(15);
-    expect(fogRow({ tick: steps(90), practice: false })).toBeGreaterThan(80);
-    const sandbox = GREAT_CROSSING.create(['a'], { practice: true, seed: 5 });
-    expect(fogRow(sandbox)).toBeNull();
-    const road = firstLane(5, 'road');
-    let state = run(standing(5, road, 0), (s) => s.fighters[0]?.fellAt !== null);
-    state = run(state, (s) => s.fighters[0]?.fellAt === null);
-    expect(state.fighters[0]?.row).toBeLessThan(road);
-    expect(laneAt(5, state.fighters[0]?.row ?? 0).type).toBe('grass');
+    expect(waiting.tick * ARENA_STEP).toBeGreaterThanOrEqual(CROSSING_TIME_LIMIT);
+    expect(waiting.fighters[0]?.downAt).toBeNull();
   });
 
   test('the furthest row wins; reached first breaks the tie', () => {
