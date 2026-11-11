@@ -17,17 +17,23 @@ const END_PAUSE = 1.5;
 /** On part de là (mètres sous le haut de la piste). */
 export const SKI_START = 2;
 /**
- * La vitesse des skis (m/s) : SPEED_TOP en haut, plus SPEED_RAMP par mètre descendu, jusqu'à
- * SKI_SPEED_MAX (environ 120 km/h, vers 1 200 m). Tourner ne freine pas.
+ * La vitesse des skis (m/s) : SPEED_TOP en haut (50 km/h : ça part tout de suite), plus
+ * SPEED_RAMP par mètre descendu, jusqu'à SKI_SPEED_MAX (environ 120 km/h, vers 950 m). Tourner
+ * ne freine pas.
  */
-const SPEED_TOP = 9;
+const SPEED_TOP = 14;
 const SPEED_RAMP = 0.02;
 export const SKI_SPEED_MAX = 33;
-/** La vitesse rejoint celle de la pente à ce rythme (par seconde) : l'élan du départ. */
-const GLIDE = 0.9;
-/** Les skis : leur angle le plus en travers (radians), la vitesse où ils tournent (par seconde). */
-const MAX_ANGLE = 0.8;
-const TURN_RATE = 3.2;
+/** La vitesse rejoint celle de la pente à ce rythme (par seconde) : l'élan du départ, vif. */
+const GLIDE = 1.8;
+/**
+ * Les skis : gauche/droite les font tourner à TURN_RATE (radians par seconde) tant qu'on appuie,
+ * et ils gardent leur angle quand on lâche (pas de retour tout seul dans la pente : on revient
+ * en tournant de l'autre côté). Ils ne passent jamais plus en travers que MAX_ANGLE (radians) :
+ * on descend toujours.
+ */
+const MAX_ANGLE = 1;
+const TURN_RATE = 2.4;
 /** Contre les rochers du bord : on frotte, on perd tant de vitesse par seconde (part). */
 const EDGE_RUB = 0.8;
 const EDGE_MARGIN = 0.4;
@@ -161,8 +167,8 @@ function contactShare(
 /** Un pas de ski : l'angle des skis, la vitesse de la pente, les rochers du bord, les sapins. */
 function ski(seed: number, skier: Skier, input: ArenaInput, tick: number): void {
   const dt = ARENA_STEP;
-  const wanted = Math.max(-1, Math.min(1, input.move.x)) * MAX_ANGLE;
-  skier.heading += Math.max(-TURN_RATE * dt, Math.min(TURN_RATE * dt, wanted - skier.heading));
+  const turn = Math.max(-1, Math.min(1, input.move.x)) * TURN_RATE * dt;
+  skier.heading = Math.max(-MAX_ANGLE, Math.min(MAX_ANGLE, skier.heading + turn));
   skier.speed += (slopeSpeed(skier.d) - skier.speed) * Math.min(1, GLIDE * dt);
   const from = { x: skier.x, d: skier.d };
   let x = skier.x + Math.sin(skier.heading) * skier.speed * dt;
@@ -234,7 +240,7 @@ function ranking(state: SkiState): PlayerId[][] {
  * descente, il préfère un côté de la forêt : les bots ne suivent pas tous le même chemin.
  */
 const LOOK: Record<BotLevel, number> = { easy: 0.85, normal: 1, expert: 1.15 };
-const MISSED: Record<BotLevel, number> = { easy: 0.035, normal: 0.025, expert: 0.017 };
+const MISSED: Record<BotLevel, number> = { easy: 0.025, normal: 0.018, expert: 0.012 };
 const MISS_SPEED = 12;
 /** La marge qu'il veut entre son chemin et un tronc (mètres, au-delà de la portée du sapin). */
 const MARGIN: Record<BotLevel, number> = { easy: 0.15, normal: 0.25, expert: 0.35 };
@@ -253,6 +259,8 @@ const PLAN_ANGLE = 0.65;
 /** Ce que vaut une rangée de plus, un mètre de décalage (points de sa lecture). */
 const ROW_VALUE = 10;
 const SHIFT_COST = 0.4;
+/** Il tourne d'autant plus fort que ses skis sont loin du bon angle (par radian d'écart). */
+const STEER_GAIN = 5;
 /** Il vise ce nombre de rangées devant lui sur son chemin. */
 const AIM_ROWS = 3;
 /** Le côté qu'il préfère : jusqu'à tant du milieu de la forêt (mètres), et son poids. */
@@ -340,7 +348,9 @@ function botInput(state: SkiState, player: PlayerId, level: BotLevel, _rng: Rng)
   for (let row = 0; row < AIM_ROWS - 1; row++) lane = next[row * lanes + lane] ?? lane;
   const aim = LANES[lane] ?? me.x;
   const heading = Math.atan2(aim - me.x, Math.max(3, AIM_ROWS * planStep));
-  return { ...IDLE_INPUT, move: { x: Math.max(-1, Math.min(1, heading / MAX_ANGLE)), z: 0 } };
+  // Comme un joueur au clavier ou au stick : il tourne d'un côté jusqu'au bon angle.
+  const steer = (heading - me.heading) * STEER_GAIN;
+  return { ...IDLE_INPUT, move: { x: Math.max(-1, Math.min(1, steer)), z: 0 } };
 }
 
 /** Un nombre propre à chaque joueur, pour ses tirages. */

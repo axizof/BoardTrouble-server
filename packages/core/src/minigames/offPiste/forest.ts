@@ -2,10 +2,11 @@
 // descend tout droit (vers -z), entre deux barres de rochers, semée de sapins fins, de plus en
 // plus serrés en descendant. Pas de piste ni de chemin tracé : on se faufile entre les troncs.
 // Elle est tirée de la graine de la partie (la même pour tous, chez l'hôte comme chez les
-// joueurs, qui la dessinent) et se calcule par rangées à la demande : elle n'a pas de fin. Un
-// passage reste toujours possible : un couloir invisible, sans tronc, ondule d'un bord à l'autre,
-// assez doucement pour qu'on puisse le suivre à la plus grande vitesse (sa pente et sa courbure
-// sont bornées, voir le test) ; jamais de mur de sapins. Distance `d` le long de la descente
+// joueurs, qui la dessinent) et se calcule par rangées à la demande : elle n'a pas de fin. On
+// n'est jamais bloqué : CORRIDORS couloirs invisibles, sans tronc, partent du milieu et ondulent
+// chacun à sa façon d'un bord à l'autre, assez doucement pour qu'on puisse les suivre à la plus
+// grande vitesse (leur pente et leur courbure sont bornées, voir le test). Il y a donc toujours
+// plusieurs passages, et l'un d'eux n'est jamais loin. Distance `d` le long de la descente
 // (mètres), écart `x` au milieu.
 
 /** La forêt : de -FOREST_HALF à FOREST_HALF, entre les rochers (mètres). */
@@ -16,15 +17,16 @@ export const TREE_ROW = 2.5;
 const START_CLEAR = 15;
 /** Un sapin arrête le skieur à cette distance de son tronc (mètres, le skieur compris). */
 export const TREE_REACH = 0.6;
-/** Le couloir : aucun tronc à moins de tant de son milieu (plus étroit en bas, mètres). */
+/** Les couloirs garantis, et leur largeur : aucun tronc à moins de tant de leur milieu (plus étroits en bas, mètres). */
+export const CORRIDORS = 3;
 const CORRIDOR_CLEAR: [number, number] = [1.5, 1.25];
-/** Ses ondulations : des sinus (amplitude, longueur d'onde en mètres), d'un bord à l'autre. */
+/** Leurs ondulations : des sinus (amplitude, longueur d'onde en mètres), d'un bord à l'autre. */
 const CORRIDOR_WAVES = [
   { amplitude: 9, length: 40 },
   { amplitude: 4, length: 17 },
   { amplitude: 1, length: 11 },
 ] as const;
-/** Il part du milieu et rejoint ses ondulations sur tant de mètres. */
+/** Ils partent du milieu et rejoignent leurs ondulations sur tant de mètres. */
 const CORRIDOR_OPENING = 90;
 /** Les sapins par mètre carré, en haut puis à partir de DENSE_AT (mètres). */
 const DENSITY: [number, number] = [0.035, 0.07];
@@ -55,13 +57,13 @@ function depth(d: number): number {
 }
 
 /**
- * Le milieu du couloir sans tronc, à cette distance. Il part du milieu (là où l'on part) et
- * s'en écarte peu à peu sur CORRIDOR_OPENING mètres.
+ * Le milieu du couloir sans tronc numéro `corridor` (0 à CORRIDORS - 1), à cette distance. Il
+ * part du milieu (là où l'on part) et s'en écarte peu à peu sur CORRIDOR_OPENING mètres.
  */
-export function corridorX(seed: number, d: number): number {
+export function corridorX(seed: number, d: number, corridor = 0): number {
   const waves = CORRIDOR_WAVES.reduce(
     (x, { amplitude, length }, wave) =>
-      x + amplitude * Math.sin(d / length + forestUnit(seed, -1, wave) * Math.PI * 2),
+      x + amplitude * Math.sin(d / length + forestUnit(seed, -1 - corridor, wave) * Math.PI * 2),
     0,
   );
   const opening = Math.max(0, Math.min(1, d / CORRIDOR_OPENING));
@@ -100,11 +102,18 @@ function plantRow(seed: number, row: number): Tree[] {
   for (let k = 0; k < count * 2 + 2 && trees.length < count; k++) {
     const x = (forestUnit(seed, row, 1 + k * 3) * 2 - 1) * (FOREST_HALF - 0.4);
     const d = top + forestUnit(seed, row, 2 + k * 3) * TREE_ROW;
-    if (Math.abs(x - corridorX(seed, d)) < clear) continue;
+    if (isInCorridor(seed, x, d, clear)) continue;
     if (trees.some((other) => Math.hypot(other.x - x, other.d - d) < TREE_GAP)) continue;
     trees.push({ key: row * 64 + k, x, d, size: 0.8 + forestUnit(seed, row, 3 + k * 3) * 0.5 });
   }
   return trees;
+}
+
+function isInCorridor(seed: number, x: number, d: number, clear: number): boolean {
+  for (let corridor = 0; corridor < CORRIDORS; corridor++) {
+    if (Math.abs(x - corridorX(seed, d, corridor)) < clear) return true;
+  }
+  return false;
 }
 
 /** Tous les sapins entre `from` et `to` (mètres le long de la descente). */
