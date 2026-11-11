@@ -7,11 +7,16 @@ import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT } from '../aren
 // Clic-clac ! (02-mini-jeux.md, fiche 53) : l'œil collé au viseur de son appareil, en haut du
 // phare. Le viseur ne bouge pas : tout se joue au moment du déclic. On montre d'abord le sujet à
 // photographier ; puis il ne se passe rien (le vent), et hop, quelque chose traverse le viseur,
-// vite : un leurre, son sosie (l'oiseau bleu quand il faut le rouge, l'avion à hélice quand il
-// faut le jet), ou la cible, qui passe deux fois. UNE seule photo : le sujet le plus proche du
+// très vite : un leurre, son sosie (l'oiseau bleu quand il faut le rouge, l'avion à hélice quand
+// il faut le jet), ou la cible, qui passe deux fois. UNE seule photo : le sujet le plus proche du
 // centre est celui qu'elle montre ; la cible vaut ses points (plus elle est au centre, plus la
 // photo est nette et en vaut), un leurre ou du ciel vide, zéro. Tout se joue dans le plan du
 // ciel face à l'appareil : x à droite, y en haut, en mètres ; le centre du viseur est VIEW.center.
+//
+// Chaque trajectoire est décrite autour du moment où le sujet passe par son point de passage
+// (`through`, à `crossAt` secondes de son départ). Pour la cible, ce point est le centre exact,
+// à la même vitesse aux deux passages : chacun a la même photo parfaite à saisir (retour de test :
+// un passage plus centré que l'autre avantageait celui qui avait attendu).
 
 export type SubjectKind =
   | 'redBird'
@@ -26,21 +31,25 @@ export type SubjectKind =
 /** Comment vole un sujet : en battant des ailes, en ligne droite, par bonds, en montant... */
 type Flight = 'flap' | 'glide' | 'cruise' | 'hover' | 'climb' | 'hop';
 
-/** Chaque sujet : son vol, sa vitesse (m/s, au hasard entre les deux), et son sosie. */
+/**
+ * Chaque sujet : son vol, sa vitesse au passage (m/s, au hasard entre les deux ; la cible garde
+ * la même aux deux passages), et son sosie. Vite : le viseur fait 8 m de large.
+ */
 const SUBJECTS: Record<
   SubjectKind,
   { flight: Flight; speed: [number, number]; twin: SubjectKind | null }
 > = {
-  redBird: { flight: 'flap', speed: [4.5, 5.5], twin: 'blueBird' },
-  blueBird: { flight: 'flap', speed: [4.5, 5.5], twin: 'redBird' },
-  jet: { flight: 'glide', speed: [10, 12], twin: 'propeller' },
-  propeller: { flight: 'cruise', speed: [6.5, 7.5], twin: 'jet' },
-  yellowCopter: { flight: 'hover', speed: [4, 5], twin: 'greenCopter' },
-  greenCopter: { flight: 'hover', speed: [4, 5], twin: 'yellowCopter' },
-  // La fusée traverse le viseur de bas en haut : sa vitesse est celle de sa montée au départ.
-  rocket: { flight: 'climb', speed: [2.5, 3.5], twin: null },
-  // La soucoupe file par bonds : sa vitesse est sa moyenne, pauses comprises.
-  ufo: { flight: 'hop', speed: [2.6, 3.2], twin: null },
+  redBird: { flight: 'flap', speed: [9, 10], twin: 'blueBird' },
+  blueBird: { flight: 'flap', speed: [9, 10], twin: 'redBird' },
+  jet: { flight: 'glide', speed: [15, 17], twin: 'propeller' },
+  propeller: { flight: 'cruise', speed: [11, 12], twin: 'jet' },
+  yellowCopter: { flight: 'hover', speed: [8, 9], twin: 'greenCopter' },
+  greenCopter: { flight: 'hover', speed: [8, 9], twin: 'yellowCopter' },
+  // La fusée traverse le viseur de bas en haut.
+  rocket: { flight: 'climb', speed: [7, 8], twin: null },
+  // La soucoupe file par bonds : sa vitesse est sa moyenne, pauses comprises ; elle passe le
+  // centre au milieu d'un bond, à pleine vitesse.
+  ufo: { flight: 'hop', speed: [4.5, 5], twin: null },
 };
 export const SUBJECT_KINDS = Object.keys(SUBJECTS) as SubjectKind[];
 
@@ -50,36 +59,43 @@ export const VIEW = { center: { x: 0, y: 5.5 }, halfWidth: 4, halfHeight: 2.25 }
 const POINTS_GRAIN = 5;
 export const MAX_PHOTO_POINTS = 100;
 /** Les points baissent avec la distance au centre ; au-delà de celle-ci (mètres), le minimum. */
-const SHARP_RANGE = 2;
+const SHARP_RANGE = 2.5;
 /** On montre la cible pendant ce temps (secondes) ; on ne peut pas déclencher avant. */
 export const SHOWCASE_TIME = 3;
 /** Les passages de la cible. */
 export const PHOTO_PASSES = 2;
 /** Le silence entre deux sujets (secondes, au hasard entre les deux) ; plus court après un sosie. */
-const QUIET: [number, number] = [0.6, 1.8];
+const QUIET: [number, number] = [0.8, 2.2];
 const TRAP_QUIET: [number, number] = [0.2, 0.6];
 /** Le premier sujet part ce temps après la présentation (secondes). */
 const FIRST_QUIET = 1;
-/** Le premier passage de la cible est le 2e ou le 3e sujet ; le second, 3 ou 4 sujets plus loin. */
-const FIRST_PASS: [number, number] = [1, 2];
-const PASS_SPACING: [number, number] = [3, 4];
+/** Le premier passage de la cible est le 3e ou le 4e sujet ; le second, 3 à 5 sujets plus loin. */
+const FIRST_PASS: [number, number] = [2, 3];
+const PASS_SPACING: [number, number] = [3, 5];
 /** Au bac à sable, la cible repasse tous les tant de sujets. */
 const PRACTICE_PASS_EVERY = 3;
-/** La hauteur où passe un sujet, autour du centre du viseur (mètres, au plus). */
-const HEIGHT_SPREAD = 0.6;
+/** Les leurres vont parfois moins vite (part de leur vitesse, au hasard entre les deux). */
+const DECOY_PACE: [number, number] = [0.55, 1.05];
+/** Où passent les leurres, autour du centre (mètres, au plus, de chaque côté de leur route). */
+const DECOY_SPREAD = 1.6;
+/** La pente d'une route en travers du viseur (radians, au plus) : à plat ou en diagonale. */
+const SLANT = 0.5;
+/** La fusée monte presque droit (radians d'écart à la verticale, au plus). */
+const CLIMB_SLANT = 0.25;
 /** La partie finit ce temps après la dernière photo, ou après le dernier passage (secondes). */
 const END_PAUSE = 1.2;
 /** Au bac à sable, on peut reprendre une photo au bout de ce temps (secondes). */
 const PRACTICE_RETAKE = 1;
 /** Un sujet qui vole depuis plus longtemps est parti (secondes). */
 const LONGEST_FLIGHT = 10;
-/** Les sujets entrent et sortent à cette distance du bord du viseur (mètres). */
+/** Les sujets partent et finissent à cette distance du bord du viseur (mètres). */
 const EDGE_MARGIN = 1.5;
 
 /**
  * Un sujet : quoi, son rôle (la cible, un leurre, ou la cible montrée au début, qui ne compte
- * pas), le passage de la cible qu'il est (0, 1 ; -1 sinon), et comment il vole : d'où, dans quel
- * sens, à quelle vitesse ; `phase` varie sa trajectoire.
+ * pas), le passage de la cible qu'il est (0, 1 ; -1 sinon), et sa route : il passe par
+ * `throughX, throughY` `crossAt` secondes après son départ, dans la direction `angle` (radians,
+ * 0 : vers la droite), à `speed`.
  */
 export type SkySubject = {
   id: number;
@@ -87,11 +103,11 @@ export type SkySubject = {
   role: 'target' | 'decoy' | 'showcase';
   pass: number;
   launchAt: number;
-  x0: number;
-  y0: number;
-  dir: -1 | 1;
+  crossAt: number;
+  throughX: number;
+  throughY: number;
+  angle: number;
   speed: number;
-  phase: number;
 };
 
 /** Une photo : quand, le sujet qu'elle montre (ou null : du ciel), et sa distance au centre. */
@@ -138,56 +154,77 @@ const between = (key: string, [min, max]: readonly [number, number]) =>
   min + hashUnit(key) * (max - min);
 const pick = <T>(key: string, items: readonly T[]): T =>
   items[Math.min(items.length - 1, Math.floor(hashUnit(key) * items.length))] as T;
-const side = (key: string): -1 | 1 => (hashUnit(key) < 0.5 ? -1 : 1);
 
 export function twinOf(kind: SubjectKind): SubjectKind | null {
   return SUBJECTS[kind].twin;
 }
 
 /** La soucoupe : un bond toutes les HOP_TIME secondes (en HOP_DASH de ce temps), puis du surplace. */
-const HOP_TIME = 0.8;
-const HOP_DASH = 0.35;
+const HOP_TIME = 0.5;
+const HOP_DASH = 0.5;
+/** Entre deux bonds, elle s'arrête d'un côté puis de l'autre de sa route (mètres). */
+const HOP_ZIGZAG = 0.45;
 const smooth = (u: number) => u * u * (3 - 2 * u);
 
-/** Où est le sujet à ce pas (fraction comprise), dans le plan du ciel. */
-export function subjectPosition(subject: SkySubject, tick: number): { x: number; y: number } {
-  const t = Math.max(0, tick - subject.launchAt) * ARENA_STEP;
-  const { x0, y0, dir, speed, phase } = subject;
-  if (subject.role === 'showcase') {
-    // Il flotte au centre, puis file vers le haut à la fin de la présentation.
-    const leaving = Math.max(0, t - SHOWCASE_TIME);
-    return {
-      x: x0 + dir * 2 * leaving * leaving,
-      y: y0 + 0.15 * Math.sin(t * 2.4) + 9 * leaving * leaving,
-    };
-  }
+/**
+ * Le chemin parcouru le long de la route (mètres) et l'écart de côté, `time` secondes après le
+ * point de passage (négatif : avant). Tous deux valent 0 au point de passage.
+ */
+function travel(subject: SkySubject, time: number): { along: number; aside: number } {
+  const { speed } = subject;
   switch (SUBJECTS[subject.kind].flight) {
     case 'flap':
-      return { x: x0 + dir * speed * t, y: y0 + 0.3 * Math.sin(Math.PI * 2.2 * t + phase) };
+      return { along: speed * time, aside: 0.22 * Math.sin(Math.PI * 3.2 * time) };
     case 'glide':
-      return { x: x0 + dir * speed * t, y: y0 + 0.4 * Math.sin(phase) * t };
+      return { along: speed * time, aside: 0 };
     case 'cruise':
-      return { x: x0 + dir * speed * t, y: y0 + 0.12 * Math.sin(Math.PI * 1.4 * t + phase) };
+      return { along: speed * time, aside: 0.08 * Math.sin(Math.PI * 1.4 * time) };
     case 'hover':
-      return { x: x0 + dir * speed * t, y: y0 + 0.25 * Math.sin(Math.PI * 1.2 * t + phase) };
+      return { along: speed * time, aside: 0.15 * Math.sin(Math.PI * 1.2 * time) };
     case 'climb':
-      return { x: x0 + dir * 0.6 * t, y: y0 + speed * t + 1.2 * t * t };
+      return { along: speed * time, aside: 0 };
     case 'hop': {
-      const hop = Math.floor(t / HOP_TIME);
-      const u = (t - hop * HOP_TIME) / HOP_TIME;
+      // Le point de passage est au milieu d'un bond : on compte les bonds depuis le début de celui-là.
+      const hopLength = speed * HOP_TIME;
+      const since = time + (HOP_DASH * HOP_TIME) / 2;
+      const hop = Math.floor(since / HOP_TIME);
+      const u = (since - hop * HOP_TIME) / HOP_TIME;
       const ease = u < HOP_DASH ? smooth(u / HOP_DASH) : 1;
-      const lift = (k: number) => Math.sin(phase * 7.13 + k * 2.71) * 0.5;
+      // Il s'arrête d'un côté puis de l'autre : au milieu de chaque bond, il recroise sa route.
+      const stop = (k: number) => (k % 2 === 0 ? -1 : 1) * HOP_ZIGZAG;
       return {
-        x: x0 + dir * (hop + ease) * speed * HOP_TIME,
-        y: y0 + lift(hop) + (lift(hop + 1) - lift(hop)) * ease,
+        along: hopLength * (hop + ease - 0.5),
+        aside: stop(hop - 1) + (stop(hop) - stop(hop - 1)) * ease,
       };
     }
   }
 }
 
-/** Le sujet est dans le ciel autour du viseur (parti, pas encore sorti). */
+/** Où est le sujet à ce pas (fraction comprise), dans le plan du ciel. */
+export function subjectPosition(subject: SkySubject, tick: number): { x: number; y: number } {
+  const t = Math.max(0, tick - subject.launchAt) * ARENA_STEP;
+  if (subject.role === 'showcase') {
+    // Il flotte au centre, puis file vers le haut à la fin de la présentation.
+    const leaving = Math.max(0, t - SHOWCASE_TIME);
+    return {
+      x: subject.throughX + Math.cos(subject.angle) * 2 * leaving * leaving,
+      y: subject.throughY + 0.15 * Math.sin(t * 2.4) + 9 * leaving * leaving,
+    };
+  }
+  const { along, aside } = travel(subject, t - subject.crossAt);
+  const cos = Math.cos(subject.angle);
+  const sin = Math.sin(subject.angle);
+  return {
+    x: subject.throughX + cos * along - sin * aside,
+    y: subject.throughY + sin * along + cos * aside,
+  };
+}
+
+/** Le sujet vole : parti, et pas encore sorti du ciel autour du viseur après son passage. */
 export function isInSky(subject: SkySubject, tick: number): boolean {
   if (tick < subject.launchAt || tick - subject.launchAt > steps(LONGEST_FLIGHT)) return false;
+  const time = (tick - subject.launchAt) * ARENA_STEP;
+  if (subject.role !== 'showcase' && time <= subject.crossAt) return true;
   const { x, y } = subjectPosition(subject, tick);
   const margin = EDGE_MARGIN + 0.5;
   return (
@@ -203,25 +240,39 @@ function flightEnd(subject: SkySubject): number {
   return tick;
 }
 
-/** Un sujet qui part : d'un bord du viseur (ou d'en dessous pour la fusée), dans le sens `dir`. */
+/**
+ * Un sujet qui part, hors du viseur : la cible droit sur le centre, à la vitesse de la partie ;
+ * un leurre n'importe où autour, parfois moins vite. À plat ou en diagonale (la fusée de bas en
+ * haut).
+ */
 function launch(
+  state: Pick<SkyPhotoState, 'seed'>,
   base: Pick<SkySubject, 'id' | 'kind' | 'role' | 'pass' | 'launchAt'>,
   key: string,
-  dir: -1 | 1,
 ): SkySubject {
   const { flight, speed } = SUBJECTS[base.kind];
-  const flying = {
+  const isTarget = base.role === 'target';
+  const pace = isTarget ? 1 : between(`${key}:pace`, DECOY_PACE);
+  const passSpeed = between(isTarget ? `${state.seed}:target-speed` : `${key}:speed`, speed) * pace;
+  const slant = between(
+    `${key}:slant`,
+    flight === 'climb' ? [-CLIMB_SLANT, CLIMB_SLANT] : [-SLANT, SLANT],
+  );
+  const isLeftward = hashUnit(`${key}:dir`) < 0.5;
+  const angle = flight === 'climb' ? Math.PI / 2 + slant : (isLeftward ? Math.PI : 0) + slant;
+  const offset = isTarget ? 0 : between(`${key}:offset`, [-DECOY_SPREAD, DECOY_SPREAD]);
+  // De côté par rapport à la route : un leurre passe au-dessus, en dessous, ou pile au centre.
+  const throughX = VIEW.center.x - Math.sin(angle) * offset;
+  const throughY = VIEW.center.y + Math.cos(angle) * offset;
+  const distance = Math.hypot(VIEW.halfWidth, VIEW.halfHeight) + EDGE_MARGIN;
+  return {
     ...base,
-    dir,
-    speed: between(`${key}:speed`, speed),
-    phase: hashUnit(`${key}:phase`) * Math.PI * 2,
+    crossAt: distance / passSpeed,
+    throughX,
+    throughY,
+    angle,
+    speed: passSpeed,
   };
-  const height = VIEW.center.y + between(`${key}:y`, [-HEIGHT_SPREAD, HEIGHT_SPREAD]);
-  if (flight === 'climb') {
-    const x0 = VIEW.center.x + between(`${key}:x`, [-0.8, 0.8]);
-    return { ...flying, x0, y0: VIEW.center.y - VIEW.halfHeight - EDGE_MARGIN };
-  }
-  return { ...flying, x0: VIEW.center.x - dir * (VIEW.halfWidth + EDGE_MARGIN), y0: height };
 }
 
 /** Le rang (parmi les sujets lancés) du passage `pass` de la cible. */
@@ -244,11 +295,12 @@ function create(
     role: 'showcase',
     pass: -1,
     launchAt: 0,
-    x0: VIEW.center.x,
-    y0: VIEW.center.y + 0.3,
-    dir: side(`${seed}:showcase`),
+    crossAt: 0,
+    throughX: VIEW.center.x,
+    throughY: VIEW.center.y + 0.3,
+    // Elle s'en va d'un côté ou de l'autre (le cosinus de l'angle).
+    angle: hashUnit(`${seed}:showcase`) < 0.5 ? Math.PI : 0,
     speed: 0,
-    phase: 0,
   };
   return {
     tick: 0,
@@ -282,6 +334,7 @@ function launchNext(state: SkyPhotoState): void {
   );
   const kind = isPass ? target : isTrap ? (twinOf(target) ?? decoy) : decoy;
   const subject = launch(
+    state,
     {
       id: slot + 1,
       kind,
@@ -290,7 +343,6 @@ function launchNext(state: SkyPhotoState): void {
       launchAt: tick,
     },
     key,
-    side(`${key}:dir`),
   );
   state.subjects.push(subject);
   state.launched += 1;
@@ -394,13 +446,13 @@ function viewFor(state: SkyPhotoState, _viewer: Viewer): SkyPhotoState {
 }
 
 /**
- * Le bot guette : il reconnaît la cible un temps après son entrée dans le ciel, puis déclenche
- * quand elle passe au point qu'il vise, le centre à son erreur près (tirée une fois par sujet,
- * en mètres le long du vol). Il laisse parfois passer le premier passage pour attendre mieux, et
- * se fait parfois avoir par le sosie qui précède la cible.
+ * Le bot guette : il reconnaît la cible un temps après son départ, puis déclenche quand elle
+ * passe au point qu'il vise, le centre à son erreur de timing près (tirée une fois par sujet, en
+ * secondes : en mètres, d'autant plus que le sujet va vite). Il laisse parfois passer le premier
+ * passage, et se fait parfois avoir par le sosie qui précède la cible.
  */
-const REACTION: Record<BotLevel, number> = { easy: 0.35, normal: 0.25, expert: 0.15 };
-const TIMING_ERROR: Record<BotLevel, number> = { easy: 1, normal: 0.6, expert: 0.35 };
+const REACTION: Record<BotLevel, number> = { easy: 0.3, normal: 0.2, expert: 0.12 };
+const TIMING_ERROR: Record<BotLevel, number> = { easy: 0.09, normal: 0.055, expert: 0.03 };
 const FOOLED: Record<BotLevel, number> = { easy: 0.3, normal: 0.15, expert: 0.05 };
 const PATIENCE: Record<BotLevel, number> = { easy: 0.1, normal: 0.25, expert: 0.4 };
 
@@ -410,12 +462,14 @@ function botInput(state: SkyPhotoState, player: PlayerId, level: BotLevel, _rng:
   const subject = botSubject(state, player, level);
   if (!subject) return IDLE_INPUT;
   const key = `${state.seed}:${player}:${subject.id}`;
-  const error = (hashUnit(`${key}:error`) * 2 - 1) * TIMING_ERROR[level];
+  const error = (hashUnit(`${key}:error`) * 2 - 1) * TIMING_ERROR[level] * subject.speed;
   // La photo part au pas suivant : il déclenche quand le sujet y passera son point.
-  const isClimb = SUBJECTS[subject.kind].flight === 'climb';
   const along = (tick: number) => {
     const at = subjectPosition(subject, tick);
-    return isClimb ? at.y - VIEW.center.y : (at.x - VIEW.center.x) * subject.dir;
+    return (
+      (at.x - VIEW.center.x) * Math.cos(subject.angle) +
+      (at.y - VIEW.center.y) * Math.sin(subject.angle)
+    );
   };
   const isCrossing = along(state.tick) < error && along(state.tick + 1) >= error;
   return { ...IDLE_INPUT, primary: !me.held && isCrossing };

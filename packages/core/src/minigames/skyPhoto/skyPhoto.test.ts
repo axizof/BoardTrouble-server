@@ -161,6 +161,49 @@ describe('Clic-clac', () => {
     }
   });
 
+  test('every pass of the target goes right through the centre, at the same speed: each pass is as fair', () => {
+    for (let seed = 0; seed < 30; seed++) {
+      let state = SKY_PHOTO.create(['a'], { practice: false, seed });
+      const passes = new Map<number, SkySubject>();
+      state = run(state, (s) => {
+        for (const subject of s.subjects)
+          if (subject.role === 'target') passes.set(subject.pass, subject);
+        return SKY_PHOTO.isOver(s);
+      });
+      const [first, second] = [passes.get(0), passes.get(1)];
+      if (!first || !second) throw new Error('deux passages attendus');
+      for (const pass of [first, second]) {
+        const at = subjectPosition(pass, pass.launchAt + pass.crossAt / ARENA_STEP);
+        expect(Math.hypot(at.x - VIEW.center.x, at.y - VIEW.center.y)).toBeLessThan(1e-9);
+        // Et il entre bien de l'extérieur du viseur.
+        const start = subjectPosition(pass, pass.launchAt);
+        const isOutside =
+          Math.abs(start.x - VIEW.center.x) > VIEW.halfWidth ||
+          Math.abs(start.y - VIEW.center.y) > VIEW.halfHeight;
+        expect(isOutside).toBe(true);
+      }
+      expect(second.speed).toBe(first.speed);
+    }
+  });
+
+  test('subjects are fast: the target crosses the viewfinder in about a second at most', () => {
+    for (let seed = 0; seed < 30; seed++) {
+      let state = SKY_PHOTO.create(['a'], { practice: false, seed });
+      state = run(state, (s) => passOf(s, 0) !== undefined);
+      const target = passOf(state, 0);
+      if (!target) throw new Error('pas de passage');
+      let inView = 0;
+      for (let tick = target.launchAt; tick < target.launchAt + steps(10); tick++) {
+        const at = subjectPosition(target, tick);
+        const isIn =
+          Math.abs(at.x - VIEW.center.x) <= VIEW.halfWidth &&
+          Math.abs(at.y - VIEW.center.y) <= VIEW.halfHeight;
+        if (isIn) inView++;
+      }
+      expect(inView).toBeLessThanOrEqual(steps(state.target === 'ufo' ? 2 : 1.1));
+    }
+  });
+
   test('ends once everyone has a photo, or after the last pass; ranked by points, zeros last', () => {
     let state = untilBest(SKY_PHOTO.create(['a', 'b', 'c'], { practice: false, seed: 8 }), 0);
     state = SKY_PHOTO.step(state, press('a'));
