@@ -81,6 +81,20 @@ describe('the lanes of La grande traversée', () => {
     }
   });
 
+  test('a vehicle hits exactly where it is: a near miss is a miss', () => {
+    // Un véhicule de 2 cases de 0 à 2, le suivant à 10.
+    const traffic = { dir: 1 as const, speed: 2, length: 2, spacing: 10, offset: 0, kind: 0 };
+    // Juste devant lui, sans le toucher : rien (il arrivera bientôt).
+    expect(isCovered(traffic, 2.4, 0.3, 0)).toBe(false);
+    expect(isCovered(traffic, 2.25, 0.3, 0)).toBe(true);
+    // Juste derrière lui, il est passé : rien.
+    expect(isCovered(traffic, -0.4, 0.3, 0)).toBe(false);
+    // Le suivant arrive sur nous : touché.
+    expect(isCovered(traffic, 9.8, 0.3, 0)).toBe(true);
+    // En plein dessus : touché.
+    expect(isCovered(traffic, 1, 0.3, 0)).toBe(true);
+  });
+
   test('rafts come back often, and the train is announced before it passes', () => {
     for (let seed = 1; seed <= 10; seed++) {
       for (let row = 3; row < 300; row++) {

@@ -20,8 +20,8 @@ export const FINISH_ROW = 300;
 /** Un bond dure tant de pas ; tenir la direction en relance un tous les tant de pas. */
 export const HOP_TICKS = 4;
 const REPEAT_TICKS = 7;
-/** Un sauteur fait tant de large (moitié, en cases) face aux véhicules. */
-const BODY_HALF = 0.3;
+/** Un sauteur fait tant de large (moitié, en cases) face aux véhicules : à peu près son corps dessiné. */
+const BODY_HALF = 0.22;
 /** On se noie si la rivière nous emporte au-delà du bord de tant (cases). */
 const DRIFT_LIMIT = COLUMNS_HALF + 0.5;
 /**
@@ -270,10 +270,13 @@ function ranking(state: CrossingState): PlayerId[][] {
  * bien regarder) et hésite (`HESITATE` : il laisse passer une occasion).
  */
 const STAY: Record<BotLevel, number> = { easy: 0.55, normal: 0.42, expert: 0.32 };
-const RASH: Record<BotLevel, number> = { easy: 0.012, normal: 0.006, expert: 0.002 };
+const RASH: Record<BotLevel, number> = { easy: 0.006, normal: 0.003, expert: 0.001 };
 const HESITATE: Record<BotLevel, number> = { easy: 0.12, normal: 0.06, expert: 0.02 };
 /** Il se décide tous les tant de pas. */
 const REFLEX: Record<BotLevel, number> = { easy: 5, normal: 4, expert: 3 };
+/** Sur un radeau, il regarde où il sera dans tant de secondes ; sur l'herbe, plus loin que tant du milieu, il y revient. */
+const EDGE_LOOK = 1.5;
+const CENTER_PULL = 2;
 /** Talonné par le brouillard, il ne regarde que l'arrivée du bond (secondes). */
 const CHASED_STAY = 0.12;
 /** Il vérifie sa sécurité tous les tant de secondes, sur la durée qui compte. */
@@ -324,16 +327,24 @@ function botInput(state: CrossingState, player: PlayerId, level: BotLevel, _rng:
     { direction: 'right', ...hopTarget(me, 'right') },
     { direction: 'down', ...hopTarget(me, 'down') },
   ];
-  const passage = passageColumn(state.seed, me.row + 1);
-  // Les pas de côté : d'abord vers la colonne de passage de la rangée suivante.
-  const sides = options
-    .slice(2, 4)
-    .sort((a, b) => Math.abs(a.x - passage) - Math.abs(b.x - passage));
+  const here = laneAt(state.seed, me.row);
+  const isGrass = here.type === 'grass';
+  // Les pas de côté : sur l'herbe, vers le milieu (au bord, l'eau emporte vite hors de la
+  // traversée) ; ailleurs, vers la colonne de passage de la rangée suivante.
+  const goal = isGrass ? 0 : passageColumn(state.seed, me.row + 1);
+  const sides = options.slice(2, 4).sort((a, b) => Math.abs(a.x - goal) - Math.abs(b.x - goal));
+  // Sur un radeau qui file vers le bord, il n'attend pas d'y être : rester n'est plus sûr.
+  const isDrifting =
+    here.type === 'river' &&
+    Math.abs(me.x + here.traffic.dir * here.traffic.speed * EDGE_LOOK) > COLUMNS_HALF - 0.5;
+  // Coincé au bord de l'herbe, il revient vers le milieu plutôt que d'attendre.
+  const isOffCenter = isGrass && Math.abs(me.x) > CENTER_PULL;
+  const inward = isOffCenter ? sides.slice(0, 1) : [];
   const ordered = [
     options[0],
-    ...(isChased ? sides : []),
-    options[1],
-    ...(isChased ? [] : sides),
+    ...(isChased || isDrifting ? sides : inward),
+    ...(isDrifting ? [] : [options[1]]),
+    ...(isChased || isDrifting ? [] : sides),
     options[4],
   ];
   for (const option of ordered) {
@@ -351,8 +362,10 @@ function botInput(state: CrossingState, player: PlayerId, level: BotLevel, _rng:
     if (!safe) continue;
     return option.direction ? press(option.direction) : IDLE_INPUT;
   }
-  // Nulle part de sûr : il tente sa chance devant.
-  return press('up');
+  // Nulle part de sûr : il reste tant que sa place tient encore un instant, sinon il tente sa
+  // chance devant.
+  const isHoldingOn = isSafe(state.seed, me.row, me.x, now, now + 0.1);
+  return isHoldingOn ? IDLE_INPUT : press('up');
 }
 
 function press(direction: HopDirection): ArenaInput {

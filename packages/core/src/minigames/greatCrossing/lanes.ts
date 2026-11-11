@@ -123,8 +123,12 @@ function blockKinds(seed: number, block: number): Kind[] {
       break;
     }
   }
-  // Plus loin, des groupes plus larges : jusqu'à quatre voies d'affilée.
-  const width = 1 + Math.floor(forestUnit(seed, block, 12) * (2 + hardness(first) * 1.99));
+  // Deux à quatre voies d'affilée (plus souvent quatre en avançant) : une à trois bandes d'herbe
+  // seulement entre deux groupes, pas de longue promenade sans danger.
+  const width = Math.min(
+    4,
+    2 + Math.floor(forestUnit(seed, block, 12) * (2 + hardness(first) * 1.5)),
+  );
   const size = kind === 'rail' ? Math.min(2, width) : width;
   return Array.from({ length: BLOCK }, (_, index) =>
     index >= 1 && index <= size ? kind : 'grass',
@@ -222,9 +226,13 @@ export function patternAt(traffic: Traffic, x: number, time: number): number {
   return u < 0 ? u + traffic.spacing : u;
 }
 
-/** Un objet de la file couvre-t-il un segment de `x - half` à `x + half` à ce moment ? */
+/**
+ * Un objet de la file touche-t-il le segment de `x - half` à `x + half` à ce moment ? Oui si
+ * le début du segment est sur un objet, ou si le début de l'objet suivant entre dans le segment.
+ */
 export function isCovered(traffic: Traffic, x: number, half: number, time: number): boolean {
-  return patternAt(traffic, x - half, time) < traffic.length + half * 2;
+  const u = patternAt(traffic, x - half, time);
+  return u < traffic.length || u + half * 2 >= traffic.spacing;
 }
 
 /** Le segment de `x - margin` à `x + margin` est-il tout entier sur un objet (un radeau) ? */
