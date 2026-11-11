@@ -19,7 +19,8 @@ export type MinigameId =
   | 'combination'
   | 'conveyorSort'
   | 'fallingPlates'
-  | 'skyPhoto';
+  | 'skyPhoto'
+  | 'ridgeRide';
 
 /** Moment où l'on joue un mini-jeu. Une manche peut tirer un chacun pour soi ou un jeu d'équipes. */
 export type MinigameOccasion = 'round' | 'oneVsAll' | 'duel' | 'finale' | 'solo';
@@ -53,6 +54,7 @@ export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
   // De la chance pure : il ne doit pas sortir trop souvent.
   fallingPlates: { occasions: ['round'], weight: 0.5 },
   skyPhoto: { occasions: ['round'] },
+  ridgeRide: { occasions: ['round'] },
 };
 
 export const MINIGAME_IDS = Object.keys(MINIGAMES) as MinigameId[];
