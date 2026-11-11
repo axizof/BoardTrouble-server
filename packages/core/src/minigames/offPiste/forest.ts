@@ -1,37 +1,36 @@
-// La forêt de Hors-piste ! (02-mini-jeux.md, fiche 50) : une large piste qui descend tout droit
-// (vers -z), bordée de filets, semée de sapins de plus en plus serrés en descendant. Elle est
-// tirée de la graine de la partie (la même pour tous, chez l'hôte comme chez les joueurs, qui la
-// dessinent) et se calcule par rangées à la demande : elle n'a pas de fin. Un couloir sans sapin
-// la traverse toujours ; il ondule doucement, assez pour qu'on puisse le suivre à toute vitesse
-// (sa pente et sa courbure sont bornées, voir le test) : jamais de mur de sapins. Les portes de
-// slalom sont posées sur ce couloir. Distance `d` le long de la descente (mètres), écart `x`.
+// La forêt de Hors-piste ! (02-mini-jeux.md, fiche 50) : une large pente de neige vierge qui
+// descend tout droit (vers -z), entre deux barres de rochers, semée de sapins fins, de plus en
+// plus serrés en descendant. Pas de piste ni de chemin tracé : on se faufile entre les troncs.
+// Elle est tirée de la graine de la partie (la même pour tous, chez l'hôte comme chez les
+// joueurs, qui la dessinent) et se calcule par rangées à la demande : elle n'a pas de fin. Un
+// passage reste toujours possible : un couloir invisible, sans tronc, ondule d'un bord à l'autre,
+// assez doucement pour qu'on puisse le suivre à la plus grande vitesse (sa pente et sa courbure
+// sont bornées, voir le test) ; jamais de mur de sapins. Distance `d` le long de la descente
+// (mètres), écart `x` au milieu.
 
-/** La piste : de -PISTE_HALF à PISTE_HALF, filets compris (mètres). */
-export const PISTE_HALF = 9;
+/** La forêt : de -FOREST_HALF à FOREST_HALF, entre les rochers (mètres). */
+export const FOREST_HALF = 20;
 /** Les sapins sont tirés par rangées de cette profondeur (mètres). */
 export const TREE_ROW = 2.5;
-/** Le haut de la piste, sans sapin : le départ et l'élan (mètres). */
-const START_CLEAR = 22;
+/** Le haut de la pente, sans sapin : le départ et l'élan (mètres). */
+const START_CLEAR = 15;
 /** Un sapin arrête le skieur à cette distance de son tronc (mètres, le skieur compris). */
-export const TREE_REACH = 0.85;
+export const TREE_REACH = 0.6;
 /** Le couloir : aucun tronc à moins de tant de son milieu (plus étroit en bas, mètres). */
-const CORRIDOR_CLEAR: [number, number] = [2, 1.55];
-/** Ses ondulations : deux sinus (amplitude, longueur d'onde en mètres). */
+const CORRIDOR_CLEAR: [number, number] = [1.5, 1.25];
+/** Ses ondulations : des sinus (amplitude, longueur d'onde en mètres), d'un bord à l'autre. */
 const CORRIDOR_WAVES = [
-  { amplitude: 5, length: 24 },
-  { amplitude: 1.8, length: 10 },
+  { amplitude: 9, length: 40 },
+  { amplitude: 4, length: 17 },
+  { amplitude: 1, length: 11 },
 ] as const;
+/** Il part du milieu et rejoint ses ondulations sur tant de mètres. */
+const CORRIDOR_OPENING = 90;
 /** Les sapins par mètre carré, en haut puis à partir de DENSE_AT (mètres). */
-const DENSITY: [number, number] = [0.025, 0.13];
-const DENSE_AT = 600;
+const DENSITY: [number, number] = [0.035, 0.07];
+const DENSE_AT = 900;
 /** Deux sapins d'une même rangée ne se touchent pas (mètres entre les troncs). */
-const TREE_GAP = 1.3;
-/** Une porte de slalom tous les tant de mètres, à partir de FIRST_GATE ; sa demi-largeur. */
-export const GATE_SPACING = 50;
-const FIRST_GATE = 45;
-export const GATE_HALF = 1.6;
-/** Pas de sapin si près d'une porte (mètres le long de la piste) : on la voit venir. */
-const GATE_CLEAR = 4;
+const TREE_GAP = 1;
 
 export type Tree = {
   /** Unique dans la forêt (rangée et rang). */
@@ -55,24 +54,18 @@ function depth(d: number): number {
   return Math.max(0, Math.min(1, (d - START_CLEAR) / (DENSE_AT - START_CLEAR)));
 }
 
-/** Le milieu du couloir sans sapin, à cette distance. */
+/**
+ * Le milieu du couloir sans tronc, à cette distance. Il part du milieu (là où l'on part) et
+ * s'en écarte peu à peu sur CORRIDOR_OPENING mètres.
+ */
 export function corridorX(seed: number, d: number): number {
-  return CORRIDOR_WAVES.reduce(
+  const waves = CORRIDOR_WAVES.reduce(
     (x, { amplitude, length }, wave) =>
       x + amplitude * Math.sin(d / length + forestUnit(seed, -1, wave) * Math.PI * 2),
     0,
   );
-}
-
-/** La porte de slalom numéro `index` : sa distance et son milieu. */
-export function gateAt(seed: number, index: number): { d: number; x: number } {
-  const d = FIRST_GATE + index * GATE_SPACING;
-  return { d, x: corridorX(seed, d) };
-}
-
-/** Le numéro de la dernière porte avant `d` (-1 : aucune). */
-export function gateBefore(d: number): number {
-  return Math.floor((d - FIRST_GATE) / GATE_SPACING);
+  const opening = Math.max(0, Math.min(1, d / CORRIDOR_OPENING));
+  return waves * opening * opening * (3 - 2 * opening);
 }
 
 const cache = new Map<number, Map<number, Tree[]>>();
@@ -98,24 +91,18 @@ function plantRow(seed: number, row: number): Tree[] {
   const top = row * TREE_ROW;
   if (row < 0 || top < START_CLEAR) return [];
   const share = depth(top);
-  const expected = (DENSITY[0] + (DENSITY[1] - DENSITY[0]) * share) * PISTE_HALF * 2 * TREE_ROW;
+  const expected = (DENSITY[0] + (DENSITY[1] - DENSITY[0]) * share) * FOREST_HALF * 2 * TREE_ROW;
   // Arrondi au hasard : 1,4 sapin attendu fait une ou deux rangées sur trois à 2.
   const count = Math.floor(expected + forestUnit(seed, row, 0));
   const clear = CORRIDOR_CLEAR[0] + (CORRIDOR_CLEAR[1] - CORRIDOR_CLEAR[0]) * share;
   const trees: Tree[] = [];
   // Quelques essais de plus que de sapins : ceux qui tombent dans le couloir sont refusés.
   for (let k = 0; k < count * 2 + 2 && trees.length < count; k++) {
-    const x = (forestUnit(seed, row, 1 + k * 3) * 2 - 1) * (PISTE_HALF - 0.6);
+    const x = (forestUnit(seed, row, 1 + k * 3) * 2 - 1) * (FOREST_HALF - 0.4);
     const d = top + forestUnit(seed, row, 2 + k * 3) * TREE_ROW;
     if (Math.abs(x - corridorX(seed, d)) < clear) continue;
-    const gates = [gateBefore(d), gateBefore(d) + 1].filter((index) => index >= 0);
-    const isByGate = gates.some((index) => {
-      const gate = gateAt(seed, index);
-      return Math.abs(d - gate.d) < GATE_CLEAR && Math.abs(x - gate.x) < GATE_HALF + TREE_GAP;
-    });
-    if (isByGate) continue;
     if (trees.some((other) => Math.hypot(other.x - x, other.d - d) < TREE_GAP)) continue;
-    trees.push({ key: row * 64 + k, x, d, size: 0.8 + forestUnit(seed, row, 3 + k * 3) * 0.6 });
+    trees.push({ key: row * 64 + k, x, d, size: 0.8 + forestUnit(seed, row, 3 + k * 3) * 0.5 });
   }
   return trees;
 }

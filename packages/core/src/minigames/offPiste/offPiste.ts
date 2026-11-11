@@ -2,51 +2,35 @@ import type { BotLevel } from '../../bots/boardBot';
 import type { PlayerId } from '../../game/types';
 import type { Rng } from '../../random/rng';
 import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT } from '../arena/arena';
-import {
-  forestUnit,
-  GATE_HALF,
-  gateAt,
-  gateBefore,
-  PISTE_HALF,
-  TREE_REACH,
-  type Tree,
-  treesBetween,
-} from './forest';
+import { FOREST_HALF, forestUnit, TREE_REACH, type Tree, treesBetween } from './forest';
 
-// Hors-piste ! (02-mini-jeux.md, fiche 50) : chacun descend à ski la même forêt de sapins. On
-// glisse tout seul, de plus en plus vite en descendant ; gauche et droite orientent les skis, et
-// chaque virage fait déraper et coûte un peu de vitesse : couper droit va vite, zigzaguer est
-// plus sûr. Un sapin touché : chute, puis retour tout en haut. Seule compte ta meilleure
-// descente (la plus longue) au bout du chrono. Passer entre les fanions d'une porte de slalom
-// donne un coup de vitesse. Chacun ses skis, sans collision (les autres sont des fantômes).
+// Hors-piste ! (02-mini-jeux.md, fiche 50) : chacun descend à ski la même forêt de sapins, hors
+// piste, en se faufilant entre les troncs. On glisse tout seul, et la vitesse monte sans cesse
+// avec la distance descendue, jusqu'à un plafond presque inhumain : on survit un moment, puis
+// tout arrive trop vite. Gauche et droite orientent les skis, sans freiner. Un sapin touché :
+// chute, puis retour tout en haut (et lentement). Seule compte ta plus longue descente au bout
+// du chrono. Chacun ses skis, sans collision (les autres sont des fantômes).
 
 /** La partie dure tant (secondes), puis s'arrête après une courte pause. */
-export const SKI_TIME_LIMIT = 90;
+export const SKI_TIME_LIMIT = 180;
 const END_PAUSE = 1.5;
 /** On part de là (mètres sous le haut de la piste). */
 export const SKI_START = 2;
 /**
- * La vitesse vers laquelle la pente entraîne les skis tout droit (m/s) : de SPEED_TOP en haut,
- * plus SPEED_RAMP par mètre descendu, jusqu'à SPEED_MAX. Skis en travers, elle baisse (cosinus).
+ * La vitesse des skis (m/s) : SPEED_TOP en haut, plus SPEED_RAMP par mètre descendu, jusqu'à
+ * SKI_SPEED_MAX (environ 120 km/h, vers 1 200 m). Tourner ne freine pas.
  */
-const SPEED_TOP = 8;
-const SPEED_RAMP = 0.012;
-const SPEED_MAX = 17;
-/** La vitesse rejoint la pente à ce rythme (par seconde), et retombe moins vite après un élan. */
-const GLIDE = 0.6;
-const COAST = 0.35;
-/**
- * Les skis : leur angle le plus en travers (radians), la vitesse à laquelle ils tournent
- * (radians par seconde), et le dérapage (la part de vitesse perdue par radian tourné).
- */
-const MAX_ANGLE = 1.05;
-const TURN_RATE = 2.6;
-const SKID = 0.18;
-/** Contre le filet : on frotte, on perd tant de vitesse par seconde (part). */
-const NET_RUB = 1.2;
-const NET_MARGIN = 0.35;
-/** Une porte passée : tant de vitesse en plus (m/s). */
-export const GATE_BOOST = 3;
+const SPEED_TOP = 9;
+const SPEED_RAMP = 0.02;
+export const SKI_SPEED_MAX = 33;
+/** La vitesse rejoint celle de la pente à ce rythme (par seconde) : l'élan du départ. */
+const GLIDE = 0.9;
+/** Les skis : leur angle le plus en travers (radians), la vitesse où ils tournent (par seconde). */
+const MAX_ANGLE = 0.8;
+const TURN_RATE = 3.2;
+/** Contre les rochers du bord : on frotte, on perd tant de vitesse par seconde (part). */
+const EDGE_RUB = 0.8;
+const EDGE_MARGIN = 0.4;
 /** Tombé : on reste au pied du sapin tant de secondes, puis on repart d'en haut. */
 export const CRASH_TIME = 1.4;
 /** La distance comptée, au décimètre (mètres) : en dessous, ex aequo, départagés aux dés. */
@@ -71,9 +55,6 @@ export type Skier = {
   /** Sa meilleure descente finie (mètres), et combien il en a faites. */
   best: number;
   runs: number;
-  /** Les portes passées dans la descente en cours, et le pas de la dernière. */
-  gates: number;
-  gateAt: number | null;
 };
 
 export type SkiState = {
@@ -110,8 +91,6 @@ function atTop(skier: Pick<Skier, 'id' | 'best' | 'runs' | 'lane'>): Skier {
     speed: 0,
     crashedAt: null,
     crashTree: null,
-    gates: 0,
-    gateAt: null,
   };
 }
 
@@ -125,9 +104,9 @@ function create(
   return { tick: 0, practice, seed, fighters };
 }
 
-/** La vitesse où la pente entraîne les skis tout droit, à cette distance (m/s). */
+/** La vitesse des skis à cette distance (m/s). */
 export function slopeSpeed(d: number): number {
-  return Math.min(SPEED_MAX, SPEED_TOP + SPEED_RAMP * d);
+  return Math.min(SKI_SPEED_MAX, SPEED_TOP + SPEED_RAMP * d);
 }
 
 /** Le premier sapin touché sur ce trajet (d'un point à l'autre), ou null. */
@@ -179,24 +158,19 @@ function contactShare(
   return low;
 }
 
-/** Un pas de ski : l'angle des skis, le dérapage, la pente, le filet, les portes, les sapins. */
+/** Un pas de ski : l'angle des skis, la vitesse de la pente, les rochers du bord, les sapins. */
 function ski(seed: number, skier: Skier, input: ArenaInput, tick: number): void {
   const dt = ARENA_STEP;
   const wanted = Math.max(-1, Math.min(1, input.move.x)) * MAX_ANGLE;
-  const turn = Math.max(-TURN_RATE * dt, Math.min(TURN_RATE * dt, wanted - skier.heading));
-  skier.heading += turn;
-  // Chaque virage fait déraper : la vitesse baisse selon l'angle tourné.
-  skier.speed *= 1 - SKID * Math.abs(turn);
-  const pull = slopeSpeed(skier.d) * Math.cos(skier.heading);
-  const rate = skier.speed < pull ? GLIDE : COAST;
-  skier.speed += (pull - skier.speed) * Math.min(1, rate * dt);
+  skier.heading += Math.max(-TURN_RATE * dt, Math.min(TURN_RATE * dt, wanted - skier.heading));
+  skier.speed += (slopeSpeed(skier.d) - skier.speed) * Math.min(1, GLIDE * dt);
   const from = { x: skier.x, d: skier.d };
   let x = skier.x + Math.sin(skier.heading) * skier.speed * dt;
   const d = skier.d + Math.cos(skier.heading) * skier.speed * dt;
-  const edge = PISTE_HALF - NET_MARGIN;
+  const edge = FOREST_HALF - EDGE_MARGIN;
   if (Math.abs(x) > edge) {
     x = Math.sign(x) * edge;
-    skier.speed *= 1 - NET_RUB * dt;
+    skier.speed *= 1 - EDGE_RUB * dt;
   }
   const tree = hitTree(seed, from, { x, d });
   if (tree) {
@@ -209,16 +183,6 @@ function ski(seed: number, skier: Skier, input: ArenaInput, tick: number): void 
     skier.x = from.x + (x - from.x) * share;
     skier.d = from.d + (d - from.d) * share;
     return;
-  }
-  const gate = gateBefore(d);
-  if (gate >= 0 && gate > gateBefore(from.d)) {
-    const { d: gateD, x: gateX } = gateAt(seed, gate);
-    const share = (gateD - from.d) / Math.max(1e-6, d - from.d);
-    if (Math.abs(from.x + (x - from.x) * share - gateX) <= GATE_HALF) {
-      skier.speed += GATE_BOOST;
-      skier.gates++;
-      skier.gateAt = tick;
-    }
   }
   skier.x = x;
   skier.d = d;
@@ -262,84 +226,91 @@ function ranking(state: SkiState): PlayerId[][] {
 
 /**
  * Le bot lit la forêt devant lui (plus loin s'il est fort), rangée par rangée : pour chaque point
- * de la piste, jusqu'où peut-on descendre sans toucher de tronc en partant de là, sachant qu'on ne
- * se décale que d'autant à chaque mètre (l'angle des skis) ? Il prend le chemin qui va le plus
- * loin, en tournant peu (tourner freine) et en passant les portes, et vise quelques mètres devant
- * lui sur ce chemin. Comme un joueur, il ne voit pas tout : certains sapins lui échappent
- * (`MISSED`, au hasard), et il se laisse enfermer s'il lit trop court. Chaque descente, il
- * préfère un côté de la piste : les bots ne suivent pas tous le même chemin.
+ * de la pente, jusqu'où peut-on descendre sans toucher de tronc en partant de là, sachant qu'on
+ * ne se décale que d'autant à chaque mètre (les skis tournent moins vite qu'on n'avance) ? Il
+ * prend le chemin qui va le plus loin, en tournant peu, et vise quelques mètres devant lui sur
+ * ce chemin. Comme un joueur, il ne voit pas tout : certains sapins lui échappent (`MISSED` à
+ * MISS_SPEED, bien plus quand ça va vite), et il se laisse enfermer s'il lit trop court. Chaque
+ * descente, il préfère un côté de la forêt : les bots ne suivent pas tous le même chemin.
  */
-const LOOK: Record<BotLevel, number> = { easy: 0.8, normal: 1, expert: 1.3 };
-const MISSED: Record<BotLevel, number> = { easy: 0.08, normal: 0.045, expert: 0.02 };
+const LOOK: Record<BotLevel, number> = { easy: 0.85, normal: 1, expert: 1.15 };
+const MISSED: Record<BotLevel, number> = { easy: 0.035, normal: 0.025, expert: 0.017 };
+const MISS_SPEED = 12;
 /** La marge qu'il veut entre son chemin et un tronc (mètres, au-delà de la portée du sapin). */
 const MARGIN: Record<BotLevel, number> = { easy: 0.15, normal: 0.25, expert: 0.35 };
-/** Sa lecture : une rangée par mètre, un point tous les LANE_STEP mètres en travers. */
-const PLAN_STEP = 1;
-const LANE_STEP = 0.25;
+/**
+ * Sa lecture : une rangée par mètre, plus longue quand il va vite (il lit aussi loin en temps,
+ * avec autant de rangées : moins de calcul), un point tous les LANE_STEP mètres en travers.
+ */
+const PLAN_SPEED = 12;
+const LANE_STEP = 0.3;
 /**
  * Le décalage qu'il s'autorise par rangée : les skis mettent un moment à tourner, d'autant plus
  * de mètres qu'on va vite (l'angle visé, en radians, vaut au plus PLAN_TURN / vitesse).
  */
 const PLAN_TURN = 4.5;
-const PLAN_ANGLE = 0.8;
-/** Ce que vaut une rangée de plus, un mètre de décalage, une porte (points de sa lecture). */
+const PLAN_ANGLE = 0.65;
+/** Ce que vaut une rangée de plus, un mètre de décalage (points de sa lecture). */
 const ROW_VALUE = 10;
 const SHIFT_COST = 0.4;
-const GATE_VALUE = 4;
 /** Il vise ce nombre de rangées devant lui sur son chemin. */
 const AIM_ROWS = 3;
-/** Le côté qu'il préfère : jusqu'à tant du milieu de la piste (mètres), et son poids. */
-const SIDE_SPREAD = 5;
-const SIDE_PULL = 0.15;
-const LANE_FIRST = -PISTE_HALF + 0.6;
+/** Le côté qu'il préfère : jusqu'à tant du milieu de la forêt (mètres), et son poids. */
+const SIDE_SPREAD = 12;
+const SIDE_PULL = 0.1;
+const LANE_FIRST = -FOREST_HALF + 0.6;
 const LANES = Array.from(
-  { length: Math.floor((2 * (PISTE_HALF - 0.6)) / LANE_STEP) + 1 },
+  { length: Math.floor((2 * (FOREST_HALF - 0.6)) / LANE_STEP) + 1 },
   (_, index) => LANE_FIRST + index * LANE_STEP,
 );
 
 function botInput(state: SkiState, player: PlayerId, level: BotLevel, _rng: Rng): ArenaInput {
   const me = state.fighters.find((skier) => skier.id === player);
   if (!me || me.crashedAt !== null) return IDLE_INPUT;
-  const rows = Math.ceil((Math.max(8, me.speed) * LOOK[level] + 6) / PLAN_STEP);
-  const seen = treesBetween(state.seed, me.d - 1, me.d + rows * PLAN_STEP + 2).filter(
-    (tree) => forestUnit(state.seed, tree.key, hashId(player)) >= MISSED[level],
+  const planStep = Math.max(1, me.speed / PLAN_SPEED);
+  const rows = Math.ceil((Math.max(8, me.speed) * LOOK[level] + 6) / planStep);
+  const missed = Math.min(0.6, MISSED[level] * (me.speed / MISS_SPEED) ** 2);
+  const seen = treesBetween(state.seed, me.d - 1, me.d + rows * planStep + 2).filter(
+    (tree) => forestUnit(state.seed, tree.key, hashId(player)) >= missed,
   );
   const reach = TREE_REACH + MARGIN[level];
-  const shift = PLAN_STEP * Math.tan(Math.min(PLAN_ANGLE, PLAN_TURN / Math.max(4, me.speed)));
+  const shift = planStep * Math.tan(Math.min(PLAN_ANGLE, PLAN_TURN / Math.max(4, me.speed)));
   const shiftLanes = Math.max(1, Math.floor(shift / LANE_STEP));
   const lanes = LANES.length;
+  // Il ne lit que la bande qu'il peut atteindre d'ici la dernière rangée (à pleine vitesse, une
+  // bande étroite) : le reste de la forêt ne change rien à son choix.
+  const start = me.x + Math.tan(me.heading) * planStep;
+  const band = shift * (rows + 1) + LANE_STEP;
+  const low = Math.max(0, Math.floor((start - band - LANE_FIRST) / LANE_STEP));
+  const high = Math.min(lanes - 1, Math.ceil((start + band - LANE_FIRST) / LANE_STEP));
   // Les points pris par un tronc : la rangée r va de me.d + r à me.d + r + 1 (mètres).
   const blocked = new Uint8Array(rows * lanes);
   for (const tree of seen) {
-    const first = Math.max(0, Math.floor((tree.d - me.d - reach) / PLAN_STEP) - 1);
-    const last = Math.min(rows - 1, Math.ceil((tree.d - me.d + reach) / PLAN_STEP));
+    const first = Math.max(0, Math.floor((tree.d - me.d - reach) / planStep) - 1);
+    const last = Math.min(rows - 1, Math.ceil((tree.d - me.d + reach) / planStep));
     for (let row = first; row <= last; row++) {
-      const top = me.d + row * PLAN_STEP;
-      const along = tree.d < top ? top - tree.d : Math.max(0, tree.d - top - PLAN_STEP);
+      const top = me.d + row * planStep;
+      const along = tree.d < top ? top - tree.d : Math.max(0, tree.d - top - planStep);
       if (along >= reach) continue;
       const half = Math.sqrt(reach * reach - along * along);
-      const low = Math.max(0, Math.ceil((tree.x - half - LANE_FIRST) / LANE_STEP));
-      const high = Math.min(lanes - 1, Math.floor((tree.x + half - LANE_FIRST) / LANE_STEP));
-      for (let lane = low; lane <= high; lane++) blocked[row * lanes + lane] = 1;
+      const from = Math.max(low, Math.ceil((tree.x - half - LANE_FIRST) / LANE_STEP));
+      const to = Math.min(high, Math.floor((tree.x + half - LANE_FIRST) / LANE_STEP));
+      for (let lane = from; lane <= to; lane++) blocked[row * lanes + lane] = 1;
     }
   }
   // De la dernière rangée vers la première : ce que vaut chaque point, et le suivant à prendre.
   const value = new Float64Array(rows * lanes);
   const next = new Int16Array(rows * lanes);
   for (let row = rows - 1; row >= 0; row--) {
-    const d = me.d + (row + 1) * PLAN_STEP;
-    const gate = gateBefore(d);
-    const gateHere =
-      gate >= 0 && gate > gateBefore(d - PLAN_STEP) ? gateAt(state.seed, gate) : null;
-    for (let lane = 0; lane < lanes; lane++) {
+    for (let lane = low; lane <= high; lane++) {
       const cell = row * lanes + lane;
       next[cell] = lane;
       if (blocked[cell]) continue;
       let best = 0;
       if (row < rows - 1) {
         best = Number.NEGATIVE_INFINITY;
-        const last = Math.min(lanes - 1, lane + shiftLanes);
-        for (let other = Math.max(0, lane - shiftLanes); other <= last; other++) {
+        const last = Math.min(high, lane + shiftLanes);
+        for (let other = Math.max(low, lane - shiftLanes); other <= last; other++) {
           const score =
             (value[cell + lanes - lane + other] ?? 0) -
             Math.abs(other - lane) * LANE_STEP * SHIFT_COST;
@@ -349,13 +320,10 @@ function botInput(state: SkiState, player: PlayerId, level: BotLevel, _rng: Rng)
           }
         }
       }
-      const x = LANE_FIRST + lane * LANE_STEP;
-      const isGate = gateHere !== null && Math.abs(x - gateHere.x) < GATE_HALF * 0.75;
-      value[cell] = ROW_VALUE + (isGate ? GATE_VALUE : 0) + best;
+      value[cell] = ROW_VALUE + best;
     }
   }
   // Le premier pas : un point de la première rangée qu'il peut atteindre d'où il est, sur son élan.
-  const start = me.x + Math.tan(me.heading) * PLAN_STEP;
   const side = (forestUnit(state.seed, me.runs, hashId(player)) * 2 - 1) * SIDE_SPREAD;
   let lane = -1;
   let best = -Infinity;
@@ -371,7 +339,7 @@ function botInput(state: SkiState, player: PlayerId, level: BotLevel, _rng: Rng)
   if (lane < 0) return IDLE_INPUT;
   for (let row = 0; row < AIM_ROWS - 1; row++) lane = next[row * lanes + lane] ?? lane;
   const aim = LANES[lane] ?? me.x;
-  const heading = Math.atan2(aim - me.x, AIM_ROWS * PLAN_STEP);
+  const heading = Math.atan2(aim - me.x, Math.max(3, AIM_ROWS * planStep));
   return { ...IDLE_INPUT, move: { x: Math.max(-1, Math.min(1, heading / MAX_ANGLE)), z: 0 } };
 }
 

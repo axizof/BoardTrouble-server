@@ -122,6 +122,8 @@ describe('a game session', () => {
     throw new Error('Aucune partie ne joue le Gros Dé en 1 contre tous');
   });
 
+  // Joue des parties entières jusqu'à tomber sur un duel : avec les mini-jeux longs (Hors-piste
+  // dure 3 minutes entre bots), il lui faut plus que les 5 s par défaut.
   test('plays a duel arena between the two duelists only, then settles the duel', () => {
     for (let seed = 1; seed < 400; seed++) {
       const { session } = start(BOTS, seed);
@@ -141,7 +143,7 @@ describe('a game session', () => {
       return;
     }
     throw new Error('Aucune partie ne joue le Ball-trap en duel');
-  });
+  }, 30_000);
 
   test('plays the skill gate challenge with the gate player alone, then opens or keeps the gate', () => {
     const challenges = ['perfectGauge', 'combination'];
