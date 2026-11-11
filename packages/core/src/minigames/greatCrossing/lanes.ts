@@ -19,7 +19,7 @@ export const ZONE_ROWS = 40;
 export type Zone = 'prairie' | 'marsh' | 'workshops' | 'glacier';
 const ZONES: readonly Zone[] = ['prairie', 'marsh', 'workshops', 'glacier'];
 /** Plus loin, plus dur : de 0 au départ à 1 à partir de HARD_AT (rangées). */
-const HARD_AT = 180;
+const HARD_AT = 100;
 
 /** Une file d'objets qui défilent sur une rangée : des véhicules, des radeaux, un convoi. */
 export type Traffic = {
@@ -77,62 +77,66 @@ export function laneAt(seed: number, row: number): Lane {
 }
 
 /**
- * Les rangées vont par groupes d'un même type (une route de trois voies, une rivière de deux
- * bras), séparés par de l'herbe. Le groupe d'une rangée se trouve en remontant au début de son
- * bloc : les blocs font BLOCK rangées, et chacun commence par de l'herbe.
+ * Les rangées vont par blocs de BLOCK : une bande d'herbe pour souffler, puis cinq voies de
+ * danger, faites d'un ou deux groupes (une route de trois voies puis une rivière de deux bras,
+ * par exemple). Au début, la dernière voie est parfois de l'herbe en plus ; jamais plus de deux
+ * bandes d'herbe d'affilée.
  */
-const BLOCK = 5;
+const BLOCK = 6;
 
 type Kind = Lane['type'];
 
-/** Le type de chaque rangée d'un bloc : de l'herbe, puis un groupe, puis de l'herbe. */
+/** Chaque étage a ses dangers favoris. */
+const ODDS: Record<Zone, [Kind, number][]> = {
+  prairie: [
+    ['road', 0.55],
+    ['river', 0.3],
+    ['rail', 0.15],
+  ],
+  marsh: [
+    ['river', 0.6],
+    ['road', 0.3],
+    ['rail', 0.1],
+  ],
+  workshops: [
+    ['rail', 0.3],
+    ['road', 0.5],
+    ['river', 0.2],
+  ],
+  glacier: [
+    ['road', 0.4],
+    ['river', 0.4],
+    ['rail', 0.2],
+  ],
+};
+
+function pickKind(zone: Zone, pick: number): Kind {
+  let sum = 0;
+  for (const [candidate, chance] of ODDS[zone]) {
+    sum += chance;
+    if (pick < sum) return candidate;
+  }
+  return 'road';
+}
+
+/** Le type de chaque rangée d'un bloc : de l'herbe, puis un ou deux groupes de dangers. */
 function blockKinds(seed: number, block: number): Kind[] {
   const first = block * BLOCK;
-  if (first < START_ROWS) return ['grass', 'grass', 'grass', 'road', 'grass'];
+  if (first < START_ROWS) return ['grass', 'grass', 'grass', 'road', 'road', 'grass'];
   const zone = zoneOf(first);
-  const pick = forestUnit(seed, block, 11);
-  // Chaque étage a ses dangers favoris.
-  const odds: Record<Zone, [Kind, number][]> = {
-    prairie: [
-      ['road', 0.55],
-      ['river', 0.3],
-      ['rail', 0.15],
-    ],
-    marsh: [
-      ['river', 0.6],
-      ['road', 0.3],
-      ['rail', 0.1],
-    ],
-    workshops: [
-      ['rail', 0.35],
-      ['road', 0.45],
-      ['river', 0.2],
-    ],
-    glacier: [
-      ['road', 0.4],
-      ['river', 0.4],
-      ['rail', 0.2],
-    ],
-  };
-  let kind: Kind = 'road';
-  let sum = 0;
-  for (const [candidate, chance] of odds[zone]) {
-    sum += chance;
-    if (pick < sum) {
-      kind = candidate;
-      break;
-    }
+  const one = pickKind(zone, forestUnit(seed, block, 11));
+  const other = pickKind(zone, forestUnit(seed, block, 13));
+  // Le premier groupe : de deux à cinq voies (un convoi n'a jamais plus de deux voies d'affilée).
+  const split = 2 + Math.floor(forestUnit(seed, block, 12) * 4);
+  const kinds: Kind[] = ['grass'];
+  for (let index = 1; index < BLOCK; index++) {
+    const kind = index <= split ? one : other;
+    const run = index <= split ? index : index - split;
+    kinds.push(kind === 'rail' && run > 2 ? 'road' : kind);
   }
-  // Deux à quatre voies d'affilée (plus souvent quatre en avançant) : une à trois bandes d'herbe
-  // seulement entre deux groupes, pas de longue promenade sans danger.
-  const width = Math.min(
-    4,
-    2 + Math.floor(forestUnit(seed, block, 12) * (2 + hardness(first) * 1.5)),
-  );
-  const size = kind === 'rail' ? Math.min(2, width) : width;
-  return Array.from({ length: BLOCK }, (_, index) =>
-    index >= 1 && index <= size ? kind : 'grass',
-  );
+  // Au début, une bande d'herbe de plus de temps en temps, de moins en moins souvent.
+  if (forestUnit(seed, block, 14) < 0.5 * (1 - hardness(first))) kinds[BLOCK - 1] = 'grass';
+  return kinds;
 }
 
 function between(seed: number, row: number, key: number, [min, max]: [number, number]): number {
@@ -149,8 +153,9 @@ function buildLane(seed: number, row: number): Lane {
   if (kind === 'road') {
     const kindIndex = Math.floor(forestUnit(seed, row, 23) * 3);
     const length = [1, 1.8, 2.8][kindIndex] ?? 1;
-    const speed = between(seed, row, 24, [1.6 + hard * 1.8, 2.8 + hard * 3.2]);
-    const spacing = length + between(seed, row, 25, [5.5 - hard * 2.2, 9 - hard * 3]);
+    // Vite assez serré : des véhicules à deux ou trois cases d'écart, sur des voies voisines.
+    const speed = between(seed, row, 24, [2 + hard * 1.8, 3.4 + hard * 2.8]);
+    const spacing = length + between(seed, row, 25, [3 - hard * 0.8, 6.5 - hard * 2.5]);
     return {
       type: 'road',
       zone,
@@ -189,11 +194,11 @@ function buildLane(seed: number, row: number): Lane {
 }
 
 /**
- * Les obstacles d'une bande d'herbe (arbres, rochers, selon l'étage), jamais sur la colonne de
- * passage : elle serpente d'une colonne au plus d'une rangée à la suivante, si bien qu'on peut
- * toujours avancer de bande en bande. Au plus MAX_BLOCKED par bande.
+ * Les obstacles d'une bande d'herbe (arbres, rochers, selon l'étage) : un ou deux au plus, pour
+ * le décor plus que pour gêner. Jamais sur la colonne de passage : elle serpente d'une colonne
+ * au plus d'une rangée à la suivante, si bien qu'on peut toujours avancer de bande en bande.
  */
-const MAX_BLOCKED = 4;
+const MAX_BLOCKED = 2;
 
 /** La colonne toujours libre dans l'herbe, à cette rangée. */
 export function passageColumn(seed: number, row: number): number {
