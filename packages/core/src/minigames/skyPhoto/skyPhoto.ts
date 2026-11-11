@@ -452,8 +452,8 @@ function viewFor(state: SkyPhotoState, _viewer: Viewer): SkyPhotoState {
  * passage, et se fait parfois avoir par le sosie qui précède la cible.
  */
 const REACTION: Record<BotLevel, number> = { easy: 0.3, normal: 0.2, expert: 0.12 };
-const TIMING_ERROR: Record<BotLevel, number> = { easy: 0.09, normal: 0.055, expert: 0.03 };
-const FOOLED: Record<BotLevel, number> = { easy: 0.3, normal: 0.15, expert: 0.05 };
+const TIMING_ERROR: Record<BotLevel, number> = { easy: 0.09, normal: 0.07, expert: 0.03 };
+const FOOLED: Record<BotLevel, number> = { easy: 0.3, normal: 0.18, expert: 0.05 };
 const PATIENCE: Record<BotLevel, number> = { easy: 0.1, normal: 0.25, expert: 0.4 };
 
 function botInput(state: SkyPhotoState, player: PlayerId, level: BotLevel, _rng: Rng): ArenaInput {
