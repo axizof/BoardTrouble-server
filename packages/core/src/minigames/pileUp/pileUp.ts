@@ -24,7 +24,7 @@ import { forestUnit } from '../offPiste/forest';
  * (premiers ex aequo dans 8 parties sur 10). À PILE_TIME_LIMIT, ceux encore debout sont ex aequo.
  */
 export const SUDDEN_DEATH = 60;
-const SUDDEN_EVERY = 1.1;
+const SUDDEN_EVERY = 1;
 const SUDDEN_WIND = 1.6;
 export const PILE_TIME_LIMIT = 100;
 const END_PAUSE = 1.5;
@@ -65,9 +65,12 @@ export type PileItem = { kind: PileItemKind; offset: number };
 export type PileDrop = { id: number; kind: PileItemKind; x: number; landAt: number };
 export const DROP_FALL = 1.4;
 const FIRST_DROP = 2.5;
-/** L'écart entre deux objets : de DROP_EVERY au début à DROP_EVERY_LATE à la fin du chrono. */
-const DROP_EVERY = 3.0;
-const DROP_EVERY_LATE = 2.3;
+/**
+ * L'écart entre deux objets : de DROP_EVERY au début à DROP_EVERY_LATE à la fin du chrono (retour
+ * de test : ça doit s'accélérer franchement, sans excès).
+ */
+const DROP_EVERY = 2.4;
+const DROP_EVERY_LATE = 1.4;
 const DROP_JITTER = 0.25;
 /** Les objets tombent à cette distance du milieu du couloir, au plus : un pas de côté suffit. */
 const DROP_SPREAD = 0.75;
