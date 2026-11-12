@@ -70,7 +70,7 @@ const DROP_EVERY = 3.0;
 const DROP_EVERY_LATE = 2.3;
 const DROP_JITTER = 0.25;
 /** Les objets tombent à cette distance du milieu du couloir, au plus : un pas de côté suffit. */
-const DROP_SPREAD = 0.55;
+const DROP_SPREAD = 0.75;
 /** Un objet se pose au plus à cette part du bord du dessus (sur la pile, jamais à côté). */
 const EDGE_SHARE = 0.75;
 
@@ -103,6 +103,13 @@ export const RESCUE_TIME = 1.8;
 const RESCUE_SLOWDOWN = 0.2;
 const RESCUE_PRESSES = { base: 3, perMetre: 0.9 } as const;
 /**
+ * La fatigue : chaque sauvetage (réussi ou non) demande FATIGUE appuis de plus aux suivants, et
+ * elle redescend d'un appui toutes les FATIGUE_REST secondes. Sans elle, marteler sans arrêt
+ * sauvait tout, et rester planté au milieu en martelant gagnait (retour de test).
+ */
+const FATIGUE = 1.5;
+const FATIGUE_REST = 6;
+/**
  * Redressée, elle repart de l'autre côté jusqu'à environ ce penché (rad) : un peu sur une petite
  * pile, presque jusqu'au seuil sur une très haute (et il faudra peut-être la sauver encore).
  */
@@ -133,6 +140,8 @@ export type Stacker = {
   savedAt: number | null;
   /** La touche Action tenue au pas précédent : un appui compte quand on appuie, pas en tenant. */
   held: boolean;
+  /** Les appuis de plus que demandera le prochain sauvetage (la fatigue des précédents). */
+  fatigue: number;
   /** Au bac à sable, combien de fois sa pile est tombée (elle revient). */
   falls: number;
 };
@@ -259,6 +268,7 @@ function create(
       rescue: null,
       savedAt: null,
       held: false,
+      fatigue: 0,
       falls: 0,
     })),
   };
@@ -292,6 +302,7 @@ function step(state: PileState, inputs: Partial<Record<PlayerId, ArenaInput>>): 
 function act(stacker: Stacker, input: ArenaInput, state: PileState, tick: number): void {
   const pressed = input.primary && !stacker.held;
   stacker.held = input.primary;
+  stacker.fatigue = Math.max(0, stacker.fatigue - ARENA_STEP / FATIGUE_REST);
   if (stacker.rescue) {
     rescue(stacker, stacker.rescue, pressed, state, tick);
     return;
@@ -299,7 +310,9 @@ function act(stacker: Stacker, input: ArenaInput, state: PileState, tick: number
   sway(stacker, input, state.seed, tick, 1);
   if (Math.abs(stacker.tilt) < TEETER) return;
   const side = stacker.tilt > 0 ? 1 : -1;
-  stacker.rescue = { since: tick, side, presses: 0, needed: pressesFor(stacker.items, side) };
+  const needed = pressesFor(stacker.items, side) + Math.round(stacker.fatigue);
+  stacker.rescue = { since: tick, side, presses: 0, needed };
+  stacker.fatigue += FATIGUE;
   stacker.vx = 0;
 }
 
@@ -448,12 +461,13 @@ const BOT: Record<
   BotLevel,
   { aim: number; follow: number; mash: number; reaction: number; care: number }
 > = {
-  easy: { aim: 0.18, follow: 0.8, mash: 6.2, reaction: 0.2, care: 0.7 },
-  normal: { aim: 0.12, follow: 1, mash: 6.8, reaction: 0.15, care: 0.8 },
-  expert: { aim: 0.09, follow: 1.15, mash: 7.3, reaction: 0.12, care: 0.9 },
+  easy: { aim: 0.18, follow: 1.28, mash: 6.2, reaction: 0.2, care: 0.7 },
+  normal: { aim: 0.12, follow: 1.6, mash: 6.8, reaction: 0.15, care: 0.8 },
+  expert: { aim: 0.09, follow: 1.84, mash: 7.3, reaction: 0.12, care: 0.9 },
 };
-/** Il commence à se placer tant de secondes avant que l'objet arrive. */
-const PLACE_LEAD = 1.4;
+/** Il commence à se placer tant de secondes avant que l'objet arrive, sans dépasser cette allure (part de la pleine vitesse). */
+const PLACE_LEAD = 1.6;
+const BOT_PACE = 0.45;
 
 function botInput(state: PileState, player: PlayerId, level: BotLevel, rng: Rng): ArenaInput {
   const me = state.fighters.find((stacker) => stacker.id === player);
@@ -476,8 +490,10 @@ function botInput(state: PileState, player: PlayerId, level: BotLevel, rng: Rng)
   const miss = (forestUnit(state.seed, drop.id, 80 + saltOf(player)) * 2 - 1) * bot.aim;
   const goal =
     soon < PLACE_LEAD ? me.x + (drop.x - wished + miss - topCenter({ ...me, tilt: seenTilt })) : 0;
-  // Doucement vers sa place, et un peu du côté où la pile penche (il l'accompagne).
-  const speed = Math.max(-1, Math.min(1, (goal - me.x) * 2.2)) * 0.8 + seenTilt * bot.follow;
+  // Doucement vers sa place (partir trop vite la fait osciller), et un peu du côté où la pile
+  // penche (il l'accompagne).
+  const speed =
+    Math.max(-BOT_PACE, Math.min(BOT_PACE, (goal - me.x) * 1.5)) + seenTilt * bot.follow;
   const wanted = Math.max(-1, Math.min(1, speed + (rng.next() * 2 - 1) * 0.05));
   return { move: { x: wanted, z: 0 }, primary: false, secondary: false };
 }

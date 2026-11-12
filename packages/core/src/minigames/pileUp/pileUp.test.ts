@@ -52,7 +52,7 @@ describe('Gare à la pile !', () => {
     expect(pileDrop(5, 3)).toEqual(pileDrop(5, 3));
     let id = 1;
     for (; pileDrop(5, id).landAt * ARENA_STEP < SUDDEN_DEATH; id++) {
-      expect(Math.abs(pileDrop(5, id).x)).toBeLessThanOrEqual(0.55);
+      expect(Math.abs(pileDrop(5, id).x)).toBeLessThanOrEqual(0.75);
     }
     const early = pileDrop(5, 2).landAt - pileDrop(5, 1).landAt;
     const sudden = pileDrop(5, id + 2).landAt - pileDrop(5, id + 1).landAt;
@@ -92,7 +92,7 @@ describe('Gare à la pile !', () => {
     const a = later.fighters[0];
     expect(a?.fellAt).toBeNull();
     expect(a?.rescue).toBeNull();
-    expect(Math.abs(a?.tilt ?? 1)).toBeLessThan(0.15);
+    expect(Math.abs(a?.tilt ?? 1)).toBeLessThan(TEETER / 2);
   });
 
   test('weight set off to one side leans the pile that way, more when it is high', () => {
@@ -125,6 +125,23 @@ describe('Gare à la pile !', () => {
     expect(saved?.savedAt).not.toBeNull();
     expect(saved?.spin).toBeLessThan(0);
     expect(saved?.fellAt).toBeNull();
+  });
+
+  test('each rescue tires you: the next one asks for more presses', () => {
+    const first = PILE_UP.step(teetering(4, ['a']), { a: still });
+    const needed = first.fighters[0]?.rescue?.needed ?? 0;
+    const tired: PileState = {
+      ...first,
+      fighters: first.fighters.map((stacker) => ({ ...stacker, rescue: null })),
+    };
+    const again = PILE_UP.step(
+      {
+        ...tired,
+        fighters: tired.fighters.map((stacker) => ({ ...stacker, tilt: TEETER + 0.01, spin: 0.5 })),
+      },
+      { a: still },
+    );
+    expect(again.fighters[0]?.rescue?.needed).toBeGreaterThan(needed);
   });
 
   test('without mashing, the rescue runs out and the pile falls: its holder is out', () => {
