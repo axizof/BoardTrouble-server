@@ -13,6 +13,7 @@ import { CONVEYOR_SORT } from '../conveyorSort/conveyorSort';
 import { FALLING_PLATES } from '../fallingPlates/fallingPlates';
 import { GREAT_CROSSING } from '../greatCrossing/greatCrossing';
 import { HIGH_NOON } from '../highNoon/highNoon';
+import { HOT_POTATO } from '../hotPotato/hotPotato';
 import { LAST_ROLL } from '../lastRoll/lastRoll';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { OFF_PISTE } from '../offPiste/offPiste';
@@ -63,6 +64,7 @@ export const ARENAS = {
   ridgeRide: RIDGE_RIDE,
   offPiste: OFF_PISTE,
   greatCrossing: GREAT_CROSSING,
+  hotPotato: HOT_POTATO,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
