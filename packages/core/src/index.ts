@@ -30,6 +30,8 @@ export * from './minigames/fallingPlates/fallingPlates';
 export * from './minigames/greatCrossing/greatCrossing';
 export * from './minigames/greatCrossing/lanes';
 export * from './minigames/highNoon/highNoon';
+export * from './minigames/hotPotato/hotPotato';
+export * from './minigames/hotPotato/office';
 export * from './minigames/lastRoll/lastRoll';
 export * from './minigames/meltingPlatform/meltingPlatform';
 export * from './minigames/offPiste/forest';
