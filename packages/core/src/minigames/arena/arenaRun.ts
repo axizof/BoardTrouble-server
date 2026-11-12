@@ -19,6 +19,7 @@ import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { OFF_PISTE } from '../offPiste/offPiste';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
 import { PERFECT_GAUGE } from '../perfectGauge/perfectGauge';
+import { PILE_UP } from '../pileUp/pileUp';
 import { RAMPART } from '../rampart/rampart';
 import { RHYTHM_TUG } from '../rhythmTugOfWar/rhythmTugOfWar';
 import { RIDGE_RIDE } from '../ridgeRide/ridgeRide';
@@ -65,6 +66,7 @@ export const ARENAS = {
   offPiste: OFF_PISTE,
   greatCrossing: GREAT_CROSSING,
   hotPotato: HOT_POTATO,
+  pileUp: PILE_UP,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */

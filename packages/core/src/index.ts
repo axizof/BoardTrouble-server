@@ -38,6 +38,7 @@ export * from './minigames/offPiste/forest';
 export * from './minigames/offPiste/offPiste';
 export * from './minigames/pawnSumo/pawnSumo';
 export * from './minigames/perfectGauge/perfectGauge';
+export * from './minigames/pileUp/pileUp';
 export * from './minigames/rampart/rampart';
 export * from './minigames/rhythmTugOfWar/rhythmTugOfWar';
 export * from './minigames/ridgeRide/course';
