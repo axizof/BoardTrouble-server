@@ -83,7 +83,7 @@ const EDGE_SHARE = 0.75;
  */
 const STIFFNESS = { base: 16, halfAt: 2.4 } as const;
 const DAMPING = 0.55;
-const IMBALANCE = 1.1;
+const IMBALANCE = 0.6;
 const STEP_SWAY = 0.09;
 const WIND = { strength: 0.035, growth: 1.35, rate: 1.1 } as const;
 /** Un objet qui se pose de travers lance un peu la pile de son côté. */
