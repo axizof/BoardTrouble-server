@@ -78,6 +78,7 @@ describe('the minigame catalog', () => {
       'lastRoll',
       'greatCrossing',
       'hotPotato',
+      'chifoumi',
     ]);
   });
 });
