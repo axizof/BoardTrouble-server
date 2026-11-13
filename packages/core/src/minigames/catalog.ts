@@ -37,6 +37,8 @@ export type MinigameDefinition = {
   finalists?: { min: number; max: number };
   /** Sa chance d'être tiré, face aux autres (1 par défaut). */
   weight?: number;
+  /** Ses mondes (des décors au choix), s'il en a plusieurs : tirés de la graine (minigameWorld). */
+  worlds?: number;
 };
 
 export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
@@ -66,10 +68,18 @@ export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
   hotPotato: { occasions: ['round', 'finale'], finalists: { min: 3, max: 6 } },
   pileUp: { occasions: ['round'] },
   hamsterBall: { occasions: ['round'] },
-  tumbleDown: { occasions: ['round'] },
+  tumbleDown: { occasions: ['round'], worlds: 2 },
 };
 
 export const MINIGAME_IDS = Object.keys(MINIGAMES) as MinigameId[];
+
+/**
+ * Le monde d'un mini-jeu qui en a plusieurs, tiré de la graine de la partie : en partie, il
+ * tombe au hasard ; pour en choisir un (le menu Mini-jeux), on choisit une graine qui y mène.
+ */
+export function minigameWorld(seed: number, worlds: number): number {
+  return ((Math.floor(seed) % worlds) + worlds) % worlds;
+}
 
 /** Mini-jeux jouables à cette occasion, avec `players` joueurs (compte pour une finale). */
 export function minigameCandidates(occasion: MinigameOccasion, players: number): MinigameId[] {

@@ -1,9 +1,9 @@
 import { ARENA_STEP } from '../arena/arena';
 import { forestUnit } from '../offPiste/forest';
 
-// Ce qui dégringole dans La dégringolade (02-mini-jeux.md, fiche 51) : des tonneaux, des bidons,
-// des caisses, des roues de chariot et des wagonnets, lâchés de l'entrée de la mine en haut de la
-// rampe. Pas de vraie physique : chaque objet suit un trajet fixé d'avance par la graine (il
+// Ce qui dégringole dans La dégringolade (02-mini-jeux.md, fiche 51), lâché du haut de la rampe.
+// Les sortes sont des formes (leur taille, leur trajet) ; chaque monde les habille à sa façon
+// (à la mine : tonneau, bidon, caisse, roue, wagonnet, bobine, pile de caisses). Pas de vraie physique : chaque objet suit un trajet fixé d'avance par la graine (il
 // descend à sa vitesse, dérive de côté en rebondissant sur les parois, sautille s'il est léger).
 // Les mêmes chutes pour tous au même moment, et rien à synchroniser. Les objets se traversent
 // entre eux. Plan : `s` le long de la rampe (0 en bas, RAMP_LENGTH en haut), `x` en travers
@@ -18,14 +18,16 @@ export const RAIL_X = 2.2;
 export const RUBBLE_TOP = RAMP_LENGTH + 3;
 const RUBBLE_GONE = -4;
 
-export type RubbleKind = 'barrel' | 'can' | 'crate' | 'wheel' | 'wagon';
+export type RubbleKind = 'barrel' | 'can' | 'crate' | 'wheel' | 'wagon' | 'boulder' | 'stack';
 
 /**
  * Chaque sorte : sa demi-largeur (en travers) et sa demi-longueur (le long de la rampe), sa
  * hauteur, sa vitesse de descente et sa dérive de côté (m/s, tirées entre ces bornes), la hauteur
  * et la période de ses sauts (0 : il roule au sol), et de combien il repousse qui il touche.
- * Plus haut que JUMP_CLEAR (un tonneau, un bidon, une caisse), on peut le sauter ; une roue ou un
- * wagonnet, il faut l'éviter.
+ * Un tonneau, un bidon, une caisse se sautent ; une roue, un wagonnet, une bobine, une pile, il
+ * faut s'en écarter. Retour de test : avec seulement des objets bas, on montait tout droit en
+ * sautant ; les bobines (larges) et les piles (hautes, parfois en barrage) obligent à se décaler.
+ * Touché, on recule de 12 à 15 m (retour de test : 4 à 8 m, c'était trop peu).
  */
 export const RUBBLE: Record<
   RubbleKind,
@@ -48,7 +50,7 @@ export const RUBBLE: Record<
     drift: [0, 0.8],
     hop: 0,
     hopPeriod: 1,
-    push: 5,
+    push: 12,
   },
   can: {
     half: 0.28,
@@ -58,7 +60,7 @@ export const RUBBLE: Record<
     drift: [1.5, 3],
     hop: 0.55,
     hopPeriod: 0.45,
-    push: 4,
+    push: 12,
   },
   crate: {
     half: 0.45,
@@ -68,7 +70,7 @@ export const RUBBLE: Record<
     drift: [0, 1],
     hop: 0.7,
     hopPeriod: 0.7,
-    push: 6,
+    push: 13,
   },
   wheel: {
     half: 0.14,
@@ -78,7 +80,7 @@ export const RUBBLE: Record<
     drift: [2.5, 4],
     hop: 0,
     hopPeriod: 1,
-    push: 6,
+    push: 13,
   },
   wagon: {
     half: 0.95,
@@ -88,41 +90,71 @@ export const RUBBLE: Record<
     drift: [0, 0],
     hop: 0,
     hopPeriod: 1,
-    push: 8,
+    push: 15,
+  },
+  boulder: {
+    half: 0.85,
+    depth: 0.85,
+    height: 1.7,
+    speed: [5.5, 7],
+    drift: [0.4, 1.4],
+    hop: 0,
+    hopPeriod: 1,
+    push: 15,
+  },
+  stack: {
+    half: 0.5,
+    depth: 0.5,
+    height: 1.8,
+    speed: [6, 7],
+    drift: [0, 0.6],
+    hop: 0,
+    hopPeriod: 1,
+    push: 14,
   },
 };
 
 /**
  * Le rythme : le premier objet part à FIRST_RUBBLE, puis un toutes les RUBBLE_GAP secondes au
  * début, de plus en plus serrés (jusqu'à RUBBLE_GAP_MIN), à 30 % près. De temps en temps, une
- * rangée de tonneaux côte à côte, avec un trou pour passer (ou à sauter).
+ * rangée de tonneaux côte à côte, avec un trou pour passer (ou à sauter), ou un barrage de piles
+ * avec un seul passage (trop haut : il faut aller au trou).
  */
 const FIRST_RUBBLE = 1.5;
-const RUBBLE_GAP = 0.65;
-const RUBBLE_GAP_MIN = 0.35;
+const RUBBLE_GAP = 1;
+const RUBBLE_GAP_MIN = 0.55;
 const RUBBLE_GAP_SHRINK = 0.006;
 const RUBBLE_JITTER = 0.3;
 /** Au bac à sable : un objet toutes les 1,6 s, toujours. */
 const PRACTICE_GAP = 1.6;
-/** La rangée : des tonneaux tous les ROW_STEP mètres en travers, sauf au trou. */
-const ROW_STEP = 1.3;
-const ROW_SPEED = 7;
+/** Une rangée : des tonneaux (ou des piles) en travers, régulièrement, sauf au trou. */
+type Line = 'row' | 'wall';
+const LINE: Record<Line, { kind: RubbleKind; count: number; speed: number }> = {
+  row: { kind: 'barrel', count: 7, speed: 7 },
+  wall: { kind: 'stack', count: 7, speed: 6 },
+};
 /** Le mélange des sortes au début et à partir de MIX_LATE secondes (entre les deux, en fondu). */
-const MIX_EARLY: Record<RubbleKind | 'row', number> = {
-  barrel: 4,
+const MIX_EARLY: Record<RubbleKind | Line, number> = {
+  barrel: 3,
   can: 2,
   crate: 2,
   wheel: 1,
   wagon: 0.5,
+  boulder: 1,
+  stack: 0.6,
   row: 0.3,
+  wall: 0.3,
 };
-const MIX_LATE: Record<RubbleKind | 'row', number> = {
-  barrel: 3,
+const MIX_LATE: Record<RubbleKind | Line, number> = {
+  barrel: 2,
   can: 2,
   crate: 2,
-  wheel: 2,
+  wheel: 1.5,
   wagon: 1,
-  row: 1,
+  boulder: 1.5,
+  stack: 1,
+  row: 0.7,
+  wall: 0.8,
 };
 const MIX_LATE_AT = 60;
 /** Le programme couvre ce temps (au-delà du chrono, la partie est finie). */
@@ -130,7 +162,8 @@ const SCHEDULE_TIME = 140;
 
 /**
  * Un objet : il part du haut au pas `spawnAt`, à la place `x` en travers, descend à `speed`,
- * dérive à `drift` (signée), et sautille avec ce décalage de phase (secondes).
+ * dérive à `drift` (signée), et sautille avec ce décalage de phase (secondes). `inLine` : il
+ * part dans une rangée ou un barrage, avec d'autres.
  */
 export type Rubble = {
   id: number;
@@ -140,6 +173,7 @@ export type Rubble = {
   speed: number;
   drift: number;
   phase: number;
+  inLine: boolean;
 };
 
 const schedules = new Map<string, readonly Rubble[]>();
@@ -154,14 +188,15 @@ export function rubbleSchedule(seed: number, practice: boolean): readonly Rubble
   for (let k = 0; time < SCHEDULE_TIME; k++) {
     const roll = (salt: number) => forestUnit(seed, k, salt);
     const kind = practice ? practiceKind(k) : pickKind(roll(71), time);
-    if (kind === 'row') list.push(...rowOf(list.length, toTick(time), roll(72)));
+    const isLine = kind === 'row' || kind === 'wall';
+    if (isLine) list.push(...lineOf(kind, list.length, toTick(time), roll(72)));
     else list.push(single(list.length, kind, toTick(time), roll));
     const gap = practice
       ? PRACTICE_GAP
       : Math.max(RUBBLE_GAP_MIN, RUBBLE_GAP - time * RUBBLE_GAP_SHRINK) *
         (1 + (roll(73) * 2 - 1) * RUBBLE_JITTER);
     // Après une rangée, un peu d'air : elle prend toute la largeur.
-    time += kind === 'row' ? gap * 1.6 : gap;
+    time += isLine ? gap * 1.8 : gap;
   }
   // Une poignée de graines à la fois (la partie, le bac à sable) : on oublie les plus anciennes.
   if (schedules.size > 8) schedules.delete(schedules.keys().next().value ?? key);
@@ -171,14 +206,24 @@ export function rubbleSchedule(seed: number, practice: boolean): readonly Rubble
 
 const toTick = (seconds: number) => Math.round(seconds / ARENA_STEP);
 
-function practiceKind(k: number): RubbleKind | 'row' {
-  const order = ['barrel', 'can', 'barrel', 'crate', 'wheel', 'barrel', 'wagon', 'row'] as const;
+function practiceKind(k: number): RubbleKind | Line {
+  const order = [
+    'barrel',
+    'can',
+    'boulder',
+    'crate',
+    'wheel',
+    'stack',
+    'wagon',
+    'row',
+    'wall',
+  ] as const;
   return order[k % order.length] ?? 'barrel';
 }
 
-function pickKind(unit: number, time: number): RubbleKind | 'row' {
+function pickKind(unit: number, time: number): RubbleKind | Line {
   const late = Math.min(1, time / MIX_LATE_AT);
-  const kinds = Object.keys(MIX_EARLY) as (RubbleKind | 'row')[];
+  const kinds = Object.keys(MIX_EARLY) as (RubbleKind | Line)[];
   const weights = kinds.map((kind) => MIX_EARLY[kind] + (MIX_LATE[kind] - MIX_EARLY[kind]) * late);
   let left = unit * weights.reduce((sum, weight) => sum + weight, 0);
   for (const [index, kind] of kinds.entries()) {
@@ -206,25 +251,27 @@ function single(
     speed: speed[0] + (speed[1] - speed[0]) * roll(75),
     drift: (roll(76) < 0.5 ? -1 : 1) * (drift[0] + (drift[1] - drift[0]) * roll(77)),
     phase: roll(78) * 2,
+    inLine: false,
   };
 }
 
-/** Une rangée de tonneaux sur toute la largeur, avec un trou d'un tonneau quelque part. */
-function rowOf(firstId: number, spawnAt: number, unit: number): Rubble[] {
-  const reach = RAMP_HALF - RUBBLE.barrel.half;
-  const count = Math.floor((reach * 2) / ROW_STEP) + 1;
+/** Une rangée (ou un barrage) sur toute la largeur, avec un trou quelque part. */
+function lineOf(line: Line, firstId: number, spawnAt: number, unit: number): Rubble[] {
+  const { kind, count, speed } = LINE[line];
+  const reach = RAMP_HALF - RUBBLE[kind].half;
   const gap = Math.floor(unit * count);
   const row: Rubble[] = [];
   for (let index = 0; index < count; index++) {
     if (index === gap) continue;
     row.push({
       id: firstId + row.length,
-      kind: 'barrel',
+      kind,
       spawnAt,
       x: -reach + (index * (reach * 2)) / (count - 1),
-      speed: ROW_SPEED,
+      speed,
       drift: 0,
       phase: 0,
+      inLine: true,
     });
   }
   return row;
@@ -253,11 +300,35 @@ function bounce(x: number, limit: number): number {
   return folded <= limit * 2 ? folded - limit : limit * 3 - folded;
 }
 
-/** Les objets sur la rampe à ce pas (le programme est rangé par départ). */
+/**
+ * Le plus long séjour d'un objet sur la rampe (le plus lent, du haut jusque sous le bas), en
+ * pas : avant ça, tout objet parti est déjà sorti.
+ */
+const LONGEST_STAY = Math.ceil(
+  (RUBBLE_TOP - RUBBLE_GONE) /
+    Math.min(
+      ...Object.values(RUBBLE).map((one) => one.speed[0]),
+      ...Object.values(LINE).map((one) => one.speed),
+    ) /
+    ARENA_STEP,
+);
+
+/**
+ * Les objets sur la rampe à ce pas. Le programme est rangé par départ : on saute ceux partis il
+ * y a trop longtemps (les bots demandent ça des centaines de fois par seconde).
+ */
 export function liveRubble(schedule: readonly Rubble[], tick: number): Rubble[] {
+  let low = 0;
+  let high = schedule.length;
+  while (low < high) {
+    const middle = (low + high) >> 1;
+    if ((schedule[middle]?.spawnAt ?? 0) < tick - LONGEST_STAY) low = middle + 1;
+    else high = middle;
+  }
   const live: Rubble[] = [];
-  for (const rubble of schedule) {
-    if (rubble.spawnAt > tick) break;
+  for (let index = low; index < schedule.length; index++) {
+    const rubble = schedule[index];
+    if (!rubble || rubble.spawnAt > tick) break;
     if (rubbleAt(rubble, tick)) live.push(rubble);
   }
   return live;
