@@ -28,6 +28,7 @@ import { SECRET_AUCTION } from '../secretAuction/secretAuction';
 import { SKY_PHOTO } from '../skyPhoto/skyPhoto';
 import { SPINNING_BAR } from '../spinningBar/spinningBar';
 import { STACKER } from '../stacker/stacker';
+import { TUMBLE_DOWN } from '../tumbleDown/tumbleDown';
 import { UNIQUE_STAIRS } from '../uniqueStairs/uniqueStairs';
 import {
   ARENA_STEP,
@@ -69,6 +70,7 @@ export const ARENAS = {
   hotPotato: HOT_POTATO,
   pileUp: PILE_UP,
   hamsterBall: HAMSTER_BALL,
+  tumbleDown: TUMBLE_DOWN,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
