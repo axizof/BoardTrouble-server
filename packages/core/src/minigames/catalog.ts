@@ -27,7 +27,8 @@ export type MinigameId =
   | 'pileUp'
   | 'hamsterBall'
   | 'tumbleDown'
-  | 'penaltyKicks';
+  | 'penaltyKicks'
+  | 'chifoumi';
 
 /** Moment où l'on joue un mini-jeu. Une manche peut tirer un chacun pour soi ou un jeu d'équipes. */
 export type MinigameOccasion = 'round' | 'oneVsAll' | 'duel' | 'finale' | 'solo';
@@ -71,6 +72,7 @@ export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
   hamsterBall: { occasions: ['round'] },
   tumbleDown: { occasions: ['round'], worlds: 2 },
   penaltyKicks: { occasions: ['oneVsAll'] },
+  chifoumi: { occasions: ['finale'], finalists: { min: 2, max: 2 } },
 };
 
 export const MINIGAME_IDS = Object.keys(MINIGAMES) as MinigameId[];

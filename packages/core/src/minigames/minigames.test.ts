@@ -71,6 +71,7 @@ describe('the minigame catalog', () => {
       'clayShoot',
       'lastRoll',
       'greatCrossing',
+      'chifoumi',
     ]);
     expect(minigameCandidates('finale', 3)).toEqual([
       'pawnSumo',
