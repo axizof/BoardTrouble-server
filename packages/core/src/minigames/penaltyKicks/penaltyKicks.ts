@@ -6,62 +6,51 @@ import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT } from '../aren
 import { forestUnit } from '../offPiste/forest';
 
 // Tirs au but (02-mini-jeux.md, fiche 52), un 1 contre tous : le joueur seul garde la cage, les
-// autres tirent chacun leur tour, 6 tirs en tout. Le tireur vise librement dans la cage (une mire
-// qu'il déplace, cachée au gardien) ; un ramasseur lui roule le ballon, il frappe au moment où le
-// ballon arrive au point de penalty : pile à temps, la frappe part fort et où il vise ; en avance
-// ou en retard, moins vite et de travers ; trop loin du moment, c'est raté. Le gardien se
-// déplace sur sa ligne et plonge (une fois par tir) dans la direction du stick, en réflexe ou en
-// devinant. Il gagne s'il encaisse moins de buts qu'il n'en arrête ; à égalité (3 partout), un tir
-// de plus décide. Plan de la cage : `x` en travers (0 au milieu), `y` la hauteur, en mètres.
+// autres tirent chacun leur tour, 6 tirs en tout. La cage est découpée en 6 zones (gauche,
+// milieu, droite ; en bas, en haut). Le tireur et le gardien choisissent chacun une zone, en
+// secret et en même temps. Puis un ramasseur roule le ballon au tireur, qui frappe au moment où
+// il arrive au point de penalty : à temps, la frappe est forte ; moins juste, elle est faible ;
+// trop loin du moment, c'est raté. Une lucarne (un coin du haut) demande une frappe presque
+// parfaite, sinon elle passe à côté. Le gardien arrête toujours sa zone, et une frappe faible
+// dans une zone voisine. Retour de test : en réflexe, le gardien ne pouvait rien contre une
+// bonne frappe ; c'est maintenant une lecture de l'adversaire, avec un risque pour le tireur. Le
+// gardien gagne s'il encaisse moins de buts qu'il n'en arrête ; à 3 partout, un tir de plus.
 
 /** La cage : 2 × GOAL_HALF de large, GOAL_HEIGHT de haut ; le point de penalty à SPOT_DISTANCE. */
 export const GOAL_HALF = 3;
 export const GOAL_HEIGHT = 2.2;
 export const SPOT_DISTANCE = 9;
-/** La mire du tireur : elle va jusque-là (un peu hors du cadre : on peut tirer à côté), à cette vitesse. */
-export const AIM_LIMIT_X = 3.8;
-export const AIM_LIMIT_Y = 2.9;
-const AIM_SPEED = 3.4;
-/** Le tireur s'avance pendant WALK_TIME ; le ballon part entre ROLL_DELAY et arrive en ROLL_TIME. */
+/**
+ * Les zones : 3 colonnes (de -1 à gauche à 1 à droite) et 2 rangées (0 en bas, 1 en haut),
+ * numérotées rangée par rangée : 0, 1, 2 en bas, 3, 4, 5 en haut.
+ */
+export const ZONES = 6;
+const COLUMN_WIDTH = (GOAL_HALF * 2) / 3;
+const ROW_HEIGHTS = [0.55, 1.65] as const;
+/** Le choix de départ, avant qu'on ne bouge : le milieu en bas. */
+const FIRST_ZONE = 1;
+/** Le tireur s'avance pendant WALK_TIME, puis chacun a CHOOSE_TIME pour choisir sa zone. */
 export const WALK_TIME = 1;
-const ROLL_DELAY: readonly [number, number] = [0.9, 2];
+export const CHOOSE_TIME = 4;
+/** Les deux choix faits : un temps, puis le ballon roule et arrive au point en ROLL_TIME. */
+const REVEAL_PAUSE = 0.35;
 export const ROLL_TIME = 0.9;
 /**
- * La frappe : à PERFECT_KICK près du moment où le ballon arrive, elle est parfaite ; elle se
- * dégrade jusqu'à KICK_WINDOW, au-delà c'est raté. Une frappe parfaite part à FAST_SHOT, la plus
- * mauvaise à SLOW_SHOT, et dévie d'autant plus (jusqu'à SHOT_ERROR mètres) qu'elle est mauvaise.
+ * La frappe : à PERFECT_KICK près du moment où le ballon arrive, elle est parfaite (qualité 1) ;
+ * elle se dégrade jusqu'à KICK_WINDOW, au-delà c'est raté. Une qualité d'au moins STRONG_KICK
+ * fait une frappe forte ; une lucarne en demande LUCARNE_KICK, sinon elle passe à côté.
  */
 export const PERFECT_KICK = 0.04;
 export const KICK_WINDOW = 0.3;
-const FAST_SHOT = 23;
-const SLOW_SHOT = 11;
-/**
- * L'élan du tireur (02-mini-jeux.md, fiche 52) : HINT_LEAD secondes avant que le ballon n'arrive,
- * il penche vers le côté où il vise (si sa mire est à plus de HINT_SIDE du milieu), et tout le
- * monde le voit. Il peut encore corriger, mais pas assez pour changer de coin. Sans ce signe, un
- * gardien ne pouvait que deviner : sa réaction arrivait trop tard sur une bonne frappe.
- */
-export const HINT_LEAD = 0.35;
-const HINT_SIDE = 0.8;
-const SHOT_ERROR = 1.1;
-/** Un tir fini se montre ce temps-là avant le suivant (le but, l'arrêt, le ralenti du public). */
+export const STRONG_KICK = 0.8;
+export const LUCARNE_KICK = 0.88;
+const FAST_SHOT = 22;
+const SLOW_SHOT = 13;
+/** Un tir fini se montre ce temps-là avant le suivant. */
 export const RESULT_TIME = 1.9;
 /** Un tir raté se traîne ce temps avant d'être compté. */
 const FLUFF_TIME = 0.7;
-/** Le gardien : sa vitesse sur la ligne, jusqu'où il va, son plongeon (vitesse, portée). */
-const KEEPER_SPEED = 3.2;
-export const KEEPER_LIMIT = 2.6;
-const DIVE_SPEED = 7.2;
-export const DIVE_REACH = 2.5;
-/** Son corps, pour les arrêts : un bâton (des pieds aux mains), d'une épaisseur de BODY_RADIUS. */
-export const KEEPER_MIDDLE = 1;
-const BODY_RADIUS = 0.5;
-/** Debout, de ses pieds à ses mains levées ; en plongeon, de derrière lui à ses mains tendues. */
-const STANDING_FROM = 0.15;
-const STANDING_TO = 1.9;
-const DIVE_BACK = 0.6;
-const DIVE_HANDS = 0.85;
-/** Les tirs de la séance, et au plus tant de tirs de plus pour départager. */
+/** Les tirs de la séance (plus un pour départager, à 3 partout). */
 export const SHOTS = 6;
 
 export type ShotOutcome = 'goal' | 'save' | 'wide' | 'fluff';
@@ -69,31 +58,35 @@ export type ShotOutcome = 'goal' | 'save' | 'wide' | 'fluff';
 export type PenaltyShot = {
   index: number;
   shooter: PlayerId;
-  /** Le pas où il commence (le tireur s'avance), où le ballon part, où il arrive au point. */
   startAt: number;
-  rollAt: number;
-  arriveAt: number;
-  /** La mire du tireur (cachée au gardien jusqu'à la frappe : null pour lui). */
-  aim: { x: number; y: number } | null;
-  /** La frappe : son pas, sa qualité (0 à 1), où le ballon passe la ligne et à quelle vitesse. */
+  /** Le pas où le temps de choisir est écoulé. */
+  chooseEndsAt: number;
+  /** La zone du tireur (cachée aux autres jusqu'à la frappe : null pour eux), et s'il l'a verrouillée. */
+  aim: number | null;
+  aimLocked: boolean;
+  /** Le pas où le ballon part (les deux ont choisi), et où il arrive au point ; null avant. */
+  rollAt: number | null;
+  arriveAt: number | null;
+  /** La frappe : son pas, sa qualité (0 à 1), sa force, où le ballon passe la ligne et à quelle vitesse. */
   kickAt: number | null;
   quality: number | null;
+  power: 'strong' | 'weak' | null;
   target: { x: number; y: number } | null;
   speed: number;
-  /** Le pas où le ballon passe la ligne de but (ou finit de se traîner), et ce que ça donne. */
+  /** Le pas où le ballon passe la ligne (ou finit de se traîner), et ce que ça donne. */
   endAt: number | null;
   outcome: ShotOutcome | null;
-  /** Le côté vers lequel le tireur penche (-1, 0 au milieu, 1), une fois son élan pris ; ou null. */
-  lean: -1 | 0 | 1 | null;
 };
+
+/** Le dernier stick tenu : on change de zone d'un cran à chaque poussée, pas en tenant. */
+type Stick = { x: number; z: number };
 
 export type PenaltyKeeper = {
   id: PlayerId;
-  x: number;
-  vx: number;
-  /** Son plongeon de ce tir : quand, et vers où (vecteur unité dans le plan de la cage). */
-  diveAt: number | null;
-  dive: { x: number; y: number } | null;
+  /** Sa zone (cachée aux autres jusqu'à la frappe : null pour eux), et s'il l'a verrouillée. */
+  zone: number | null;
+  locked: boolean;
+  stick: Stick;
   held: boolean;
   saves: number;
 };
@@ -102,6 +95,7 @@ export type PenaltyShooter = {
   id: PlayerId;
   /** Personne ne tombe ici : toujours null (le cadre des arènes le demande). */
   fellAt: null;
+  stick: Stick;
   held: boolean;
   goals: number;
   shots: number;
@@ -114,13 +108,38 @@ export type PenaltyState = {
   keeper: PenaltyKeeper;
   fighters: PenaltyShooter[];
   shot: PenaltyShot;
-  /** Les tirs finis, dans l'ordre : qui a tiré, et ce que ça a donné. */
-  history: { shooter: PlayerId; outcome: ShotOutcome }[];
-  /** Le vainqueur, une fois décidé (le gardien ou les tireurs). */
+  /** Les tirs finis, dans l'ordre : qui a tiré, dans quelle zone, et ce que ça a donné. */
+  history: { shooter: PlayerId; zone: number; outcome: ShotOutcome }[];
+  /** Le vainqueur, une fois décidé. */
   winner: 'keeper' | 'shooters' | null;
 };
 
 const toTick = (seconds: number) => Math.round(seconds / ARENA_STEP);
+
+/** La colonne (-1, 0, 1) et la rangée (0 en bas, 1 en haut) d'une zone. */
+export function zoneCell(zone: number): { column: number; row: number } {
+  return { column: (zone % 3) - 1, row: zone >= 3 ? 1 : 0 };
+}
+
+/** Le milieu d'une zone dans le plan de la cage. */
+export function zoneCenter(zone: number): { x: number; y: number } {
+  const { column, row } = zoneCell(zone);
+  return { x: column * COLUMN_WIDTH, y: ROW_HEIGHTS[row] ?? 1 };
+}
+
+/** Une lucarne : un coin du haut. */
+export function isLucarne(zone: number): boolean {
+  const { column, row } = zoneCell(zone);
+  return row === 1 && column !== 0;
+}
+
+/** Deux zones voisines : côte à côte sur une rangée, ou l'une au-dessus de l'autre. */
+export function areNeighbours(a: number, b: number): boolean {
+  const one = zoneCell(a);
+  const two = zoneCell(b);
+  const columns = Math.abs(one.column - two.column);
+  return (one.row === two.row && columns === 1) || (one.row !== two.row && columns === 0);
+}
 
 /** Un nombre propre à chaque joueur, pour varier les tirages d'un joueur à l'autre. */
 function saltOf(player: PlayerId): number {
@@ -129,23 +148,23 @@ function saltOf(player: PlayerId): number {
   return hash;
 }
 
-function newShot(seed: number, index: number, shooter: PlayerId, startAt: number): PenaltyShot {
-  const delay = ROLL_DELAY[0] + (ROLL_DELAY[1] - ROLL_DELAY[0]) * forestUnit(seed, index, 101);
-  const rollAt = startAt + toTick(WALK_TIME + delay);
+function newShot(index: number, shooter: PlayerId, startAt: number): PenaltyShot {
   return {
     index,
     shooter,
     startAt,
-    rollAt,
-    arriveAt: rollAt + toTick(ROLL_TIME),
-    aim: { x: 0, y: GOAL_HEIGHT / 2 },
+    chooseEndsAt: startAt + toTick(WALK_TIME + CHOOSE_TIME),
+    aim: FIRST_ZONE,
+    aimLocked: false,
+    rollAt: null,
+    arriveAt: null,
     kickAt: null,
     quality: null,
+    power: null,
     target: null,
     speed: 0,
     endAt: null,
     outcome: null,
-    lean: null,
   };
 }
 
@@ -153,18 +172,23 @@ function create(
   players: PlayerId[],
   { practice, seed, solo }: { practice: boolean; seed: number; solo?: PlayerId | null },
 ): PenaltyState {
-  // Au bac à sable, toi et un mannequin : il garde la cage, ou c'est lui qui tire quand tu es
-  // le joueur seul (il tire alors tout seul, dummyShot).
   const keeperId = solo ?? players[0] ?? '';
   const shooters = players.filter((id) => id !== keeperId);
-  const first = shooters[0] ?? '';
+  const still = { x: 0, z: 0 };
   return {
     tick: 0,
     practice,
     seed,
-    keeper: { id: keeperId, x: 0, vx: 0, diveAt: null, dive: null, held: false, saves: 0 },
-    fighters: shooters.map((id) => ({ id, fellAt: null, held: false, goals: 0, shots: 0 })),
-    shot: newShot(seed, 0, first, 0),
+    keeper: { id: keeperId, zone: FIRST_ZONE, locked: false, stick: still, held: false, saves: 0 },
+    fighters: shooters.map((id) => ({
+      id,
+      fellAt: null,
+      stick: still,
+      held: false,
+      goals: 0,
+      shots: 0,
+    })),
+    shot: newShot(0, shooters[0] ?? '', 0),
     history: [],
     winner: null,
   };
@@ -178,154 +202,129 @@ function step(state: PenaltyState, inputs: Partial<Record<PlayerId, ArenaInput>>
     keeper: { ...state.keeper },
     fighters: state.fighters.map((one) => ({ ...one })),
     shot: { ...state.shot },
-    history: state.history,
   };
   if (next.winner !== null) return next;
-  const { shot } = next;
-  const shooterInput = inputs[shot.shooter] ?? (state.practice ? dummyShot(state) : IDLE_INPUT);
+  const { shot, keeper } = next;
   const shooter = next.fighters.find((one) => one.id === shot.shooter);
-  if (shooter) aimAndKick(next, shooter, shooterInput);
-  guard(next, inputs[next.keeper.id] ?? IDLE_INPUT);
+  // Au bac à sable, le mannequin d'en face joue tout seul (dummyInput).
+  const shooterInput =
+    inputs[shot.shooter] ?? (state.practice ? dummyInput(next, 'shooter') : IDLE_INPUT);
+  const keeperInput =
+    inputs[keeper.id] ?? (state.practice ? dummyInput(next, 'keeper') : IDLE_INPUT);
+  const isChoosing = tick >= shot.startAt + toTick(WALK_TIME) && shot.rollAt === null;
+  if (shooter) {
+    if (isChoosing && !shot.aimLocked) {
+      shot.aim = choose(shot.aim ?? FIRST_ZONE, shooter, shooterInput);
+      if (pressed(shooter, shooterInput)) shot.aimLocked = true;
+    } else if (shot.rollAt !== null) {
+      kick(next, shooter, pressed(shooter, shooterInput));
+    }
+    shooter.stick = shooterInput.move;
+    shooter.held = shooterInput.primary;
+  }
+  if (isChoosing && !keeper.locked) {
+    keeper.zone = choose(keeper.zone ?? FIRST_ZONE, keeper, keeperInput);
+    if (pressed(keeper, keeperInput)) keeper.locked = true;
+  }
+  keeper.stick = keeperInput.move;
+  keeper.held = keeperInput.primary;
+  // Les deux ont choisi (ou le temps est écoulé) : le ballon part.
+  if (isChoosing && ((shot.aimLocked && keeper.locked) || tick >= shot.chooseEndsAt)) {
+    shot.aimLocked = true;
+    keeper.locked = true;
+    shot.rollAt = tick + toTick(REVEAL_PAUSE);
+    shot.arriveAt = shot.rollAt + toTick(ROLL_TIME);
+  }
   settle(next);
   if (shot.endAt !== null && tick >= shot.endAt + toTick(RESULT_TIME)) nextShot(next);
   return next;
 }
 
-/** Le tireur : il déplace sa mire, et frappe (une fois) quand le ballon roule vers lui. */
-function aimAndKick(state: PenaltyState, shooter: PenaltyShooter, input: ArenaInput): void {
+function pressed(player: { held: boolean }, input: ArenaInput): boolean {
+  return input.primary && !player.held;
+}
+
+/**
+ * Changer de zone : d'un cran à gauche ou à droite, en haut ou en bas, à chaque poussée du
+ * stick ; ou d'un coup, en cliquant une zone (`target`).
+ */
+function choose(zone: number, player: { stick: Stick }, input: ArenaInput): number {
+  if (input.target != null && input.target >= 0 && input.target < ZONES) return input.target;
+  const { column, row } = zoneCell(zone);
+  const was = player.stick;
+  const move = input.move;
+  let nextColumn = column;
+  let nextRow = row;
+  if (move.x > 0.5 && was.x <= 0.5) nextColumn = Math.min(1, column + 1);
+  if (move.x < -0.5 && was.x >= -0.5) nextColumn = Math.max(-1, column - 1);
+  if (move.z < -0.5 && was.z >= -0.5) nextRow = 1;
+  if (move.z > 0.5 && was.z <= 0.5) nextRow = 0;
+  return nextRow * 3 + nextColumn + 1;
+}
+
+/** La frappe : une fois, quand le ballon roule ; sa qualité dit sa force et où elle va. */
+function kick(state: PenaltyState, shooter: PenaltyShooter, isPressed: boolean): void {
   const { shot, tick } = state;
-  const pressed = input.primary && !shooter.held;
-  shooter.held = input.primary;
-  if (shot.kickAt !== null || shot.outcome !== null || tick < shot.startAt + toTick(WALK_TIME))
-    return;
-  const aim = shot.aim ?? { x: 0, y: GOAL_HEIGHT / 2 };
-  shot.aim = {
-    x: clamp(aim.x + input.move.x * AIM_SPEED * ARENA_STEP, -AIM_LIMIT_X, AIM_LIMIT_X),
-    y: clamp(aim.y - input.move.z * AIM_SPEED * ARENA_STEP, 0, AIM_LIMIT_Y),
-  };
-  if (shot.lean === null && tick >= shot.arriveAt - toTick(HINT_LEAD)) {
-    shot.lean = Math.abs(shot.aim.x) < HINT_SIDE ? 0 : shot.aim.x < 0 ? -1 : 1;
-  }
-  const late = (tick - shot.arriveAt) * ARENA_STEP;
+  const isWaiting = shot.arriveAt === null || shot.rollAt === null;
+  if (shot.kickAt !== null || shot.outcome !== null || isWaiting) return;
+  const late = (tick - (shot.arriveAt ?? tick)) * ARENA_STEP;
   // Il n'a pas frappé à temps : le ballon file sous son pied, pas de tir.
   if (late > KICK_WINDOW) {
     fluff(shot, tick);
     return;
   }
-  if (!pressed || tick < shot.rollAt) return;
+  if (!isPressed || tick < (shot.rollAt ?? tick)) return;
   shot.kickAt = tick;
+  shooter.shots += 1;
   if (Math.abs(late) > KICK_WINDOW) {
     fluff(shot, tick);
     return;
   }
   const quality = clamp(1 - (Math.abs(late) - PERFECT_KICK) / (KICK_WINDOW - PERFECT_KICK), 0, 1);
-  const angle = forestUnit(state.seed, shot.index, 102 + saltOf(shooter.id)) * Math.PI * 2;
-  const error = (1 - quality) * SHOT_ERROR;
+  const zone = shot.aim ?? FIRST_ZONE;
+  const center = zoneCenter(zone);
+  // Un peu de jeu autour du milieu de la zone, pour que tous les tirs ne se ressemblent pas.
+  const jitter = (salt: number) => (forestUnit(state.seed, shot.index, salt) * 2 - 1) * 0.35;
+  const isOver = isLucarne(zone) && quality < LUCARNE_KICK;
   shot.quality = quality;
-  shot.speed = SLOW_SHOT + (FAST_SHOT - SLOW_SHOT) * quality;
-  shot.target = {
-    x: shot.aim.x + Math.cos(angle) * error,
-    y: Math.max(0.1, shot.aim.y + Math.sin(angle) * error),
-  };
+  shot.power = quality >= STRONG_KICK ? 'strong' : 'weak';
+  shot.speed = shot.power === 'strong' ? FAST_SHOT : SLOW_SHOT;
+  shot.target = isOver
+    ? { x: Math.sign(center.x) * (GOAL_HALF + 0.5), y: GOAL_HEIGHT + 0.4 }
+    : { x: center.x + jitter(131), y: Math.max(0.25, center.y + jitter(132) * 0.6) };
   shot.endAt = tick + Math.max(1, Math.round(SPOT_DISTANCE / shot.speed / ARENA_STEP));
-  shooter.shots += 1;
 }
 
 function fluff(shot: PenaltyShot, tick: number): void {
   shot.kickAt ??= tick;
   shot.quality = 0;
+  shot.power = null;
   shot.outcome = 'fluff';
   shot.endAt = tick + toTick(FLUFF_TIME);
 }
 
-/** Le gardien : il se déplace sur sa ligne, et plonge une fois par tir, vers où pousse le stick. */
-function guard(state: PenaltyState, input: ArenaInput): void {
-  const { keeper, shot, tick } = state;
-  const pressed = input.primary && !keeper.held;
-  keeper.held = input.primary;
-  const isOpen = shot.outcome === null && (shot.endAt === null || tick <= shot.endAt);
-  if (keeper.diveAt === null && isOpen) {
-    keeper.vx = clamp(input.move.x, -1, 1) * KEEPER_SPEED;
-    keeper.x = clamp(keeper.x + keeper.vx * ARENA_STEP, -KEEPER_LIMIT, KEEPER_LIMIT);
-    if (pressed && tick >= shot.startAt + toTick(WALK_TIME)) {
-      // Sans direction, il saute droit vers le haut.
-      const dx = input.move.x;
-      const dy = -input.move.z;
-      const length = Math.hypot(dx, dy);
-      keeper.diveAt = tick;
-      keeper.dive = length > 0.2 ? { x: dx / length, y: dy / length } : { x: 0, y: 1 };
-    }
-  } else {
-    keeper.vx = 0;
-  }
-}
-
-/** Où est le centre du gardien à ce pas (fraction comprise), et vers où il est tendu. */
-export function keeperPose(
-  keeper: PenaltyKeeper,
-  tick: number,
-): { x: number; y: number; dir: { x: number; y: number } | null } {
-  if (keeper.diveAt === null || keeper.dive === null) {
-    return { x: keeper.x, y: KEEPER_MIDDLE, dir: null };
-  }
-  const flown = Math.min(DIVE_REACH, Math.max(0, tick - keeper.diveAt) * ARENA_STEP * DIVE_SPEED);
-  return {
-    x: keeper.x + keeper.dive.x * flown,
-    // Il ne s'envole pas : un plongeon vers le haut monte moins loin qu'un plongeon de côté.
-    y: Math.max(0.35, KEEPER_MIDDLE + keeper.dive.y * flown * 0.55),
-    dir: keeper.dive,
-  };
-}
-
-/** Le gardien touche-t-il un ballon qui passe la ligne en (x, y) à ce pas ? */
-export function isSaved(
-  keeper: PenaltyKeeper,
-  tick: number,
-  ball: { x: number; y: number },
-): boolean {
-  const pose = keeperPose(keeper, tick);
-  const from = pose.dir
-    ? { x: pose.x - pose.dir.x * DIVE_BACK, y: pose.y - pose.dir.y * DIVE_BACK }
-    : { x: pose.x, y: STANDING_FROM };
-  const to = pose.dir
-    ? { x: pose.x + pose.dir.x * DIVE_HANDS, y: pose.y + pose.dir.y * DIVE_HANDS }
-    : { x: pose.x, y: STANDING_TO };
-  return segmentDistance(ball, from, to) < BODY_RADIUS;
-}
-
-function segmentDistance(
-  point: { x: number; y: number },
-  a: { x: number; y: number },
-  b: { x: number; y: number },
-): number {
-  const ex = b.x - a.x;
-  const ey = b.y - a.y;
-  const share = clamp(
-    ((point.x - a.x) * ex + (point.y - a.y) * ey) / (ex * ex + ey * ey || 1),
-    0,
-    1,
-  );
-  return Math.hypot(point.x - (a.x + ex * share), point.y - (a.y + ey * share));
-}
-
-/** Le ballon passe la ligne : à côté, arrêté, ou dedans. */
+/** Le ballon passe la ligne : à côté, arrêté (sa zone, ou une voisine sur un tir faible), ou dedans. */
 function settle(state: PenaltyState): void {
-  const { shot, tick } = state;
+  const { shot, tick, keeper } = state;
   if (shot.outcome !== null || shot.target === null || shot.endAt === null || tick < shot.endAt) {
     return;
   }
   const { target } = shot;
+  const zone = shot.aim ?? FIRST_ZONE;
   const isOut = Math.abs(target.x) > GOAL_HALF || target.y > GOAL_HEIGHT;
-  if (isOut) shot.outcome = 'wide';
-  else if (isSaved(state.keeper, tick, target)) shot.outcome = 'save';
-  else shot.outcome = 'goal';
+  const guarded = keeper.zone ?? FIRST_ZONE;
+  const isSaved = guarded === zone || (shot.power === 'weak' && areNeighbours(guarded, zone));
+  shot.outcome = isOut ? 'wide' : isSaved ? 'save' : 'goal';
 }
 
 /** Le tir fini compte ; le suivant commence, ou la séance est décidée. */
 function nextShot(state: PenaltyState): void {
   const { shot } = state;
   const outcome = shot.outcome ?? 'fluff';
-  state.history = [...state.history, { shooter: shot.shooter, outcome }];
+  state.history = [
+    ...state.history,
+    { shooter: shot.shooter, zone: shot.aim ?? FIRST_ZONE, outcome },
+  ];
   const shooter = state.fighters.find((one) => one.id === shot.shooter);
   if (outcome === 'goal' && shooter) shooter.goals += 1;
   if (outcome === 'save') state.keeper.saves += 1;
@@ -334,8 +333,8 @@ function nextShot(state: PenaltyState): void {
   const index = shot.index + 1;
   const shooters = state.fighters;
   const nextShooter = shooters[index % Math.max(1, shooters.length)]?.id ?? shot.shooter;
-  state.shot = newShot(state.seed, index, nextShooter, state.tick);
-  state.keeper = { ...state.keeper, x: 0, vx: 0, diveAt: null, dive: null };
+  state.shot = newShot(index, nextShooter, state.tick);
+  state.keeper = { ...state.keeper, zone: FIRST_ZONE, locked: false };
 }
 
 /**
@@ -353,18 +352,21 @@ export function winnerOf(history: { outcome: ShotOutcome }[]): 'keeper' | 'shoot
   return history.at(-1)?.outcome === 'goal' ? 'shooters' : 'keeper';
 }
 
-/** Au bac à sable, le tireur mannequin : il vise un coin tiré au hasard et frappe à peu près à temps. */
-function dummyShot(state: PenaltyState): ArenaInput {
+/**
+ * Au bac à sable, le mannequin d'en face : il choisit une zone au hasard et la verrouille ; s'il
+ * tire, il frappe à peu près à temps.
+ */
+function dummyInput(state: PenaltyState, role: 'shooter' | 'keeper'): ArenaInput {
   const { shot, tick } = state;
   const unit = (salt: number) => forestUnit(state.seed, shot.index, salt);
-  const goal = { x: (unit(103) * 2 - 1) * 2.4, y: 0.3 + unit(104) * 1.6 };
-  const aim = shot.aim ?? goal;
-  const kickAt = shot.arriveAt + Math.round((unit(105) - 0.5) * 4);
-  return {
-    move: { x: clamp((goal.x - aim.x) * 2, -1, 1), z: clamp(-(goal.y - aim.y) * 2, -1, 1) },
-    primary: tick === kickAt,
-    secondary: false,
-  };
+  const zone = Math.floor(unit(role === 'shooter' ? 141 : 142) * ZONES);
+  const isChoosing = shot.rollAt === null && tick >= shot.startAt + toTick(WALK_TIME + 0.8);
+  if (isChoosing) return { move: { x: 0, z: 0 }, primary: true, secondary: false, target: zone };
+  const isKick =
+    role === 'shooter' &&
+    shot.arriveAt !== null &&
+    tick === shot.arriveAt + Math.round((unit(143) - 0.5) * 4);
+  return { move: { x: 0, z: 0 }, primary: isKick, secondary: false };
 }
 
 function isOver(state: PenaltyState): boolean {
@@ -376,94 +378,88 @@ function ranking(state: PenaltyState): PlayerId[][] {
   return state.winner === 'keeper' ? [[state.keeper.id], shooters] : [shooters, [state.keeper.id]];
 }
 
-/** Le gardien ne voit pas la mire du tireur avant la frappe (02-mini-jeux.md : choix cachés). */
+/**
+ * Les choix cachés (02-mini-jeux.md : le tir et le plongeon sont cachés jusqu'au coup de pied) :
+ * jusqu'à la frappe, le gardien ne voit pas la zone du tireur, et les tireurs (et les
+ * spectateurs) ne voient pas celle du gardien. Chacun voit la sienne.
+ */
 function viewFor(state: PenaltyState, viewer: Viewer): PenaltyState {
-  const isKeeper = viewer.type === 'player' && viewer.playerId === state.keeper.id;
-  if (!isKeeper || state.shot.kickAt !== null) return state;
-  return { ...state, shot: { ...state.shot, aim: null } };
+  if (state.shot.kickAt !== null) return state;
+  const id = viewer.type === 'player' ? viewer.playerId : null;
+  const seesAim = id === state.shot.shooter;
+  const seesKeeper = id === state.keeper.id;
+  return {
+    ...state,
+    shot: seesAim ? state.shot : { ...state.shot, aim: null },
+    keeper: seesKeeper ? state.keeper : { ...state.keeper, zone: null },
+  };
 }
 
 /**
- * Les bots tireurs, selon leur niveau : l'écart de leur frappe au bon moment (secondes, tiré
- * entre plus et moins), et jusqu'où ils osent viser vers les poteaux et la lucarne (part de la
- * cage). Les gardiens : le temps qu'ils mettent à réagir à la frappe, leur erreur sur l'endroit
- * où le ballon arrive (m), et la chance qu'ils devinent (plongent avant la frappe, d'un côté au
- * hasard).
+ * Le goût d'un bot pour chaque sorte de zone : le milieu en bas, les coins du bas, le milieu en
+ * haut, les lucarnes. Les tireurs ont aussi l'écart de leur frappe au bon moment (secondes, tiré
+ * entre plus et moins) ; les gardiens, la part des fois où ils gardent la zone où ce tireur a
+ * tiré la dernière fois.
  */
-const SHOOTER: Record<BotLevel, { timing: number; daring: number }> = {
-  easy: { timing: 0.16, daring: 0.75 },
-  normal: { timing: 0.1, daring: 0.88 },
-  expert: { timing: 0.06, daring: 0.96 },
+type Taste = { middle: number; corners: number; top: number; lucarnes: number };
+const SHOOTER: Record<BotLevel, { timing: number; taste: Taste }> = {
+  easy: { timing: 0.14, taste: { middle: 3, corners: 2, top: 1, lucarnes: 0.4 } },
+  normal: { timing: 0.135, taste: { middle: 2, corners: 3, top: 1, lucarnes: 1 } },
+  expert: { timing: 0.125, taste: { middle: 1, corners: 3, top: 1, lucarnes: 1.4 } },
 };
-const KEEPER: Record<BotLevel, { react: number; error: number; guess: number; read: number }> = {
-  easy: { react: 0.29, error: 0.6, guess: 0.12, read: 0.3 },
-  normal: { react: 0.25, error: 0.42, guess: 0.15, read: 0.45 },
-  expert: { react: 0.22, error: 0.3, guess: 0.15, read: 0.55 },
+const KEEPER: Record<BotLevel, { taste: Taste; read: number }> = {
+  easy: { taste: { middle: 1.5, corners: 2, top: 1, lucarnes: 1 }, read: 0 },
+  normal: { taste: { middle: 1.5, corners: 3, top: 1, lucarnes: 1 }, read: 0.4 },
+  expert: { taste: { middle: 1, corners: 3.5, top: 0.8, lucarnes: 2.2 }, read: 0.75 },
 };
-/** Sa réaction varie d'un tir à l'autre, de tant de part et d'autre (secondes). */
-const REACT_JITTER = 0.06;
-/** Il lit l'élan (une chance par tir selon son niveau) : il se décale de tant de ce côté. */
-const LEAN_STEP = 0.6;
-/** Un gardien qui devine plonge tant de secondes avant que le ballon arrive au point. */
-const GUESS_LEAD = 0.1;
+/** Un bot verrouille sa zone au bout de tant de secondes (tiré entre ces bornes). */
+const BOT_THINK: readonly [number, number] = [0.6, 2.4];
 
-function botInput(state: PenaltyState, player: PlayerId, level: BotLevel, _rng: Rng): ArenaInput {
-  if (state.winner !== null) return IDLE_INPUT;
-  if (player === state.keeper.id) return keeperBot(state, level);
-  if (player !== state.shot.shooter) return IDLE_INPUT;
-  const { shot, tick } = state;
-  if (shot.kickAt !== null) return IDLE_INPUT;
-  const unit = (salt: number) => forestUnit(state.seed, shot.index, salt + saltOf(player));
-  const bot = SHOOTER[level];
-  // Un coin choisi pour ce tir, plus ou moins près des poteaux selon son audace.
-  const side = unit(111) < 0.5 ? -1 : 1;
-  const wide = 0.25 + (unit(112) * 0.4 + 0.6) * (bot.daring - 0.25);
-  const goal = {
-    x: unit(113) < 0.15 ? 0 : side * GOAL_HALF * wide,
-    y: unit(114) < 0.5 ? 0.35 : GOAL_HEIGHT * (0.45 + 0.4 * bot.daring),
-  };
-  const aim = shot.aim ?? goal;
-  const kickAt = shot.arriveAt + Math.round(((unit(115) * 2 - 1) * bot.timing) / ARENA_STEP);
-  return {
-    move: { x: clamp((goal.x - aim.x) * 3, -1, 1), z: clamp(-(goal.y - aim.y) * 3, -1, 1) },
-    primary: tick === Math.max(shot.rollAt, kickAt),
-    secondary: false,
-  };
+/** Une zone tirée selon un goût : chaque coin compte pour moitié de son goût (il y en a deux). */
+function pickZone(unit: number, taste: Taste): number {
+  const weights = [
+    taste.corners / 2,
+    taste.middle,
+    taste.corners / 2,
+    taste.lucarnes / 2,
+    taste.top,
+    taste.lucarnes / 2,
+  ];
+  let left = unit * weights.reduce((sum, one) => sum + one, 0);
+  for (const [zone, weight] of weights.entries()) {
+    left -= weight;
+    if (left < 0) return zone;
+  }
+  return FIRST_ZONE;
 }
 
-/** Le gardien bot : il devine parfois, sinon il réagit à la frappe et plonge vers le ballon. */
-function keeperBot(state: PenaltyState, level: BotLevel): ArenaInput {
-  const { shot, tick, keeper } = state;
-  const bot = KEEPER[level];
-  if (keeper.diveAt !== null || shot.outcome !== null) return IDLE_INPUT;
-  const unit = (salt: number) => forestUnit(state.seed, shot.index, salt);
-  const isGuess = unit(121) < bot.guess;
-  if (shot.kickAt === null) {
-    if (isGuess && tick === shot.arriveAt - toTick(GUESS_LEAD)) {
-      const side = unit(122) < 0.5 ? -1 : 1;
-      return { move: { x: side, z: unit(123) < 0.5 ? 0 : -0.8 }, primary: true, secondary: false };
-    }
-    // Il se recentre ; s'il lit l'élan du tireur, il se décale de ce côté.
-    const isRead = shot.lean !== null && unit(126) < bot.read;
-    const spot = isRead ? (shot.lean ?? 0) * LEAN_STEP : 0;
-    return {
-      move: { x: clamp((spot - keeper.x) * 2, -1, 1), z: 0 },
-      primary: false,
-      secondary: false,
-    };
+function botInput(state: PenaltyState, player: PlayerId, level: BotLevel, _rng: Rng): ArenaInput {
+  const { shot, tick } = state;
+  if (state.winner !== null) return IDLE_INPUT;
+  const isKeeper = player === state.keeper.id;
+  if (!isKeeper && player !== shot.shooter) return IDLE_INPUT;
+  const unit = (salt: number) => forestUnit(state.seed, shot.index, salt + saltOf(player));
+  const think = BOT_THINK[0] + (BOT_THINK[1] - BOT_THINK[0]) * unit(151);
+  if (shot.rollAt === null) {
+    const locked = isKeeper ? state.keeper.locked : shot.aimLocked;
+    if (locked || tick < shot.startAt + toTick(WALK_TIME + think)) return IDLE_INPUT;
+    const zone = isKeeper
+      ? keeperZone(state, level, unit)
+      : pickZone(unit(152), SHOOTER[level].taste);
+    return { move: { x: 0, z: 0 }, primary: true, secondary: false, target: zone };
   }
-  const react = bot.react + (unit(127) * 2 - 1) * REACT_JITTER;
-  if (!shot.target || tick < shot.kickAt + toTick(react)) return IDLE_INPUT;
-  // Là où il croit que le ballon va arriver (à son erreur près), et le plongeon pour y être.
-  const errX = (unit(124) * 2 - 1) * bot.error;
-  const errY = (unit(125) * 2 - 1) * bot.error * 0.6;
-  const seen = { x: shot.target.x + errX, y: shot.target.y + errY };
-  if (Math.abs(seen.x) > GOAL_HALF + 0.3 || seen.y > GOAL_HEIGHT + 0.3) return IDLE_INPUT;
-  const dx = seen.x - keeper.x;
-  const dy = (seen.y - KEEPER_MIDDLE) / 0.55;
-  const length = Math.hypot(dx, dy);
-  if (length < 0.5) return { move: { x: 0, z: 0 }, primary: true, secondary: false };
-  return { move: { x: dx / length, z: -dy / length }, primary: true, secondary: false };
+  if (isKeeper || shot.arriveAt === null || shot.kickAt !== null) return IDLE_INPUT;
+  const error = Math.round(((unit(153) * 2 - 1) * SHOOTER[level].timing) / ARENA_STEP);
+  const kickAt = Math.max(shot.rollAt, shot.arriveAt + error);
+  return { move: { x: 0, z: 0 }, primary: tick === kickAt, secondary: false };
+}
+
+/** Le gardien bot : une zone selon son goût, ou celle où ce tireur a tiré la dernière fois. */
+function keeperZone(state: PenaltyState, level: BotLevel, unit: (salt: number) => number): number {
+  const bot = KEEPER[level];
+  const last = [...state.history].reverse().find((one) => one.shooter === state.shot.shooter);
+  if (last && unit(154) < bot.read) return last.zone;
+  return pickZone(unit(155), bot.taste);
 }
 
 function clamp(value: number, low: number, high: number): number {
