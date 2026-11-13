@@ -2,12 +2,14 @@ import type { BotLevel } from '../../bots/boardBot';
 import type { PlayerId } from '../../game/types';
 import type { Rng } from '../../random/rng';
 import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT } from '../arena/arena';
+import { minigameWorld } from '../catalog';
 import { forestUnit } from '../offPiste/forest';
 import {
   liveRubble,
   RAMP_HALF,
   RAMP_LENGTH,
   RUBBLE,
+  RUBBLE_TOP,
   type Rubble,
   type RubbleKind,
   rubbleAt,
@@ -33,8 +35,11 @@ const RUN_ACCEL = 16;
 /** Le saut : environ 1,15 m de haut, 0,7 s en l'air. */
 const JUMP_SPEED = 6.5;
 const GRAVITY = 18;
-/** Touché : à terre ce temps (il glisse vers le bas), puis intouchable ce temps en se relevant. */
-export const TUMBLE_DOWN_TIME = 1;
+/**
+ * Touché : à terre ce temps (il glisse vers le bas, 12 à 15 m selon l'objet), puis intouchable
+ * ce temps en se relevant.
+ */
+export const TUMBLE_DOWN_TIME = 1.4;
 export const TUMBLE_SAFE_TIME = 1.2;
 
 /** Le chrono, et le temps laissé aux autres une fois le premier arrivé (secondes). */
@@ -82,6 +87,18 @@ export type TumbleState = {
 };
 
 const toTick = (seconds: number) => Math.round(seconds / ARENA_STEP);
+
+/**
+ * Les mondes (retour de test : que ce qui dégringole varie) : la mine des Ateliers ou le Marais.
+ * Seul le décor change, les objets gardent leurs tailles et leurs trajets ; il se tire de la
+ * graine de la partie (minigameWorld), et le menu Mini-jeux peut le choisir.
+ */
+export const TUMBLE_WORLDS = ['mine', 'swamp'] as const;
+export type TumbleWorld = (typeof TUMBLE_WORLDS)[number];
+
+export function tumbleWorld(seed: number): TumbleWorld {
+  return TUMBLE_WORLDS[minigameWorld(seed, TUMBLE_WORLDS.length)] ?? 'mine';
+}
 
 function create(
   players: PlayerId[],
@@ -259,9 +276,13 @@ function ranking(state: TumbleState): PlayerId[][] {
  */
 const BOT: Record<BotLevel, { horizon: number; delay: number; careless: number }> = {
   easy: { horizon: 0.6, delay: 0.2, careless: 0.18 },
-  normal: { horizon: 0.8, delay: 0.12, careless: 0.1 },
-  expert: { horizon: 1.1, delay: 0.07, careless: 0.06 },
+  normal: { horizon: 0.9, delay: 0.1, careless: 0.08 },
+  expert: { horizon: 1.05, delay: 0.08, careless: 0.05 },
 };
+/** Chaque bot a son couloir préféré, à au plus tant du milieu (m). */
+const LANE_SPREAD = 2.5;
+/** Le plus rapide des objets (m/s) : au-delà de sa portée, un objet ne peut pas l'atteindre à temps. */
+const FASTEST_RUBBLE = Math.max(...Object.values(RUBBLE).map((one) => one.speed[1]));
 /** Une étourderie dure ce temps (secondes). */
 const CARELESS_TIME = 0.5;
 /** Les gestes qu'il essaie : de côté (-1, 0, 1), monter ou rester, sauter ou non. */
@@ -296,7 +317,15 @@ function botInput(state: TumbleState, player: PlayerId, level: BotLevel, _rng: R
   // Il voit les objets comme ils étaient il y a `delay` : il les croit plus haut qu'ils ne sont.
   const lag = toTick(bot.delay);
   const steps = toTick(bot.horizon);
-  const live = liveRubble(schedule, state.tick + steps);
+  const lane = (forestUnit(state.seed, saltOf(player), 82) * 2 - 1) * LANE_SPREAD;
+  // Seuls comptent les objets qui peuvent l'atteindre dans son horizon (le plus rapide descend à
+  // 11 m/s, lui monte à RUN_SPEED) : un bot essaie douze gestes à chaque pas, ça coûte cher.
+  const reach = (FASTEST_RUBBLE + RUN_SPEED) * bot.horizon + 3;
+  const live = liveRubble(schedule, state.tick + steps).filter((rubble) => {
+    // Pas encore parti (pour ce qu'il en voit) : il est en haut.
+    const s = rubbleAt(rubble, state.tick - lag)?.s ?? RUBBLE_TOP;
+    return s > me.s - 3 && s - me.s < reach;
+  });
   let best: { input: ArenaInput; score: number } | null = null;
   for (const side of SIDES) {
     for (const forward of FORWARDS) {
@@ -307,8 +336,9 @@ function botInput(state: TumbleState, player: PlayerId, level: BotLevel, _rng: R
           secondary: false,
         };
         const score = rollout(me, input, live, state.tick, steps, lag);
-        // À score égal : sans sauter, au milieu de la rampe plutôt qu'au bord.
-        const tidy = score - (jump ? 0.3 : 0) - Math.abs(me.x + side) * 0.05;
+        // À score égal : sans sauter, et vers son couloir préféré. Sans ce couloir, deux bots du
+        // même niveau collés au départ faisaient les mêmes choix et arrivaient ensemble.
+        const tidy = score - (jump ? 0.3 : 0) - Math.abs(me.x + side - lane) * 0.05;
         if (!best || tidy > best.score) best = { input, score: tidy };
       }
     }

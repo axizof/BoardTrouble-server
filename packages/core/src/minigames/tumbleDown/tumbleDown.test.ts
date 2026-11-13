@@ -16,6 +16,7 @@ import {
   TUMBLE_TIME_LIMIT,
   type TumbleRunner,
   type TumbleState,
+  tumbleWorld,
 } from './tumbleDown';
 
 const steps = (seconds: number) => Math.round(seconds / ARENA_STEP);
@@ -69,14 +70,14 @@ describe('La dégringolade', () => {
         if (rubble.kind === 'wagon') expect(Math.abs(at.x)).toBeCloseTo(RAIL_X);
       }
     }
-    // Une rangée de tonneaux laisse toujours un trou.
+    // Une rangée de tonneaux ou un barrage de piles laisse toujours un trou.
     const rows = new Map<number, number>();
     for (const rubble of schedule) {
-      if (rubble.kind === 'barrel' && rubble.drift === 0 && rubble.phase === 0) {
-        rows.set(rubble.spawnAt, (rows.get(rubble.spawnAt) ?? 0) + 1);
-      }
+      if (rubble.inLine) rows.set(rubble.spawnAt, (rows.get(rubble.spawnAt) ?? 0) + 1);
     }
-    for (const count of rows.values()) expect(count).toBeLessThan(7);
+    expect(rows.size).toBeGreaterThan(3);
+    for (const count of rows.values()) expect(count).toBe(6);
+    expect(schedule.some((one) => one.kind === 'stack' && one.inLine)).toBe(true);
   });
 
   test('you climb at a steady pace, and reaching the top ends your run', () => {
@@ -111,7 +112,7 @@ describe('La dégringolade', () => {
     const hit = run(placed, (s) => runner(s).knock !== null);
     expect(runner(hit).knock?.kind).toBe('barrel');
     const fallen = run(hit, (s) => runner(s).downed <= 0);
-    expect(runner(placed).s - runner(fallen).s).toBeGreaterThan(4);
+    expect(runner(placed).s - runner(fallen).s).toBeGreaterThan(10);
     expect(runner(fallen).safe).toBeGreaterThan(0);
     let cleared = false;
     for (let lead = 0; lead < steps(0.6) && !cleared; lead++) {
@@ -125,16 +126,24 @@ describe('La dégringolade', () => {
     expect(cleared).toBe(true);
   });
 
-  test('a wheel is too tall to jump: only stepping aside dodges it', () => {
-    const { placed, meetAt } = facing('wheel');
-    for (let lead = 0; lead < steps(0.6); lead++) {
-      const jumped = run(
-        placed,
-        (s) => s.tick >= meetAt + steps(0.5) || runner(s).knock !== null,
-        (s) => ({ a: { ...IDLE_INPUT, primary: s.tick === meetAt - lead } }),
-      );
-      expect(runner(jumped).knock?.kind).toBe('wheel');
+  test('wheels, boulders and stacks are too tall to jump: only stepping aside dodges them', () => {
+    for (const kind of ['wheel', 'boulder', 'stack'] as const) {
+      const { placed, meetAt } = facing(kind);
+      for (let lead = 0; lead < steps(0.6); lead += 2) {
+        const jumped = run(
+          placed,
+          (s) => s.tick >= meetAt + steps(0.5) || runner(s).knock !== null,
+          (s) => ({ a: { ...IDLE_INPUT, primary: s.tick === meetAt - lead } }),
+        );
+        expect(runner(jumped).knock?.kind).toBe(kind);
+      }
     }
+  });
+
+  test('the world comes from the seed: the mine or the swamp, half the time each', () => {
+    expect(tumbleWorld(4)).toBe('mine');
+    expect(tumbleWorld(5)).toBe('swamp');
+    expect(tumbleWorld(-3)).toBe('swamp');
   });
 
   test('the finishers rank by time, the others by the highest point they reached', () => {
