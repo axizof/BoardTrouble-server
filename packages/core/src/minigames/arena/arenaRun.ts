@@ -12,6 +12,7 @@ import { COMBINATION } from '../combination/combination';
 import { CONVEYOR_SORT } from '../conveyorSort/conveyorSort';
 import { FALLING_PLATES } from '../fallingPlates/fallingPlates';
 import { GREAT_CROSSING } from '../greatCrossing/greatCrossing';
+import { HAMSTER_BALL } from '../hamsterBall/hamsterBall';
 import { HIGH_NOON } from '../highNoon/highNoon';
 import { HOT_POTATO } from '../hotPotato/hotPotato';
 import { LAST_ROLL } from '../lastRoll/lastRoll';
@@ -67,6 +68,7 @@ export const ARENAS = {
   greatCrossing: GREAT_CROSSING,
   hotPotato: HOT_POTATO,
   pileUp: PILE_UP,
+  hamsterBall: HAMSTER_BALL,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */

@@ -61,7 +61,7 @@ function contextFor(state: GameState, seed: number): Context {
 
 describe('the minigame catalog', () => {
   test('offers each occasion its own minigames, and finales by number of finalists', () => {
-    expect(minigameCandidates('round', 4)).toHaveLength(17);
+    expect(minigameCandidates('round', 4)).toHaveLength(18);
     expect(minigameCandidates('duel', 2)).toEqual(['highNoon', 'clayShoot']);
     expect(minigameCandidates('oneVsAll', 4)).toEqual(['bigDie', 'rampart']);
     expect(minigameCandidates('solo', 1)).toEqual(['perfectGauge', 'combination']);

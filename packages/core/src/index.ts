@@ -29,6 +29,7 @@ export * from './minigames/conveyorSort/conveyorSort';
 export * from './minigames/fallingPlates/fallingPlates';
 export * from './minigames/greatCrossing/greatCrossing';
 export * from './minigames/greatCrossing/lanes';
+export * from './minigames/hamsterBall/hamsterBall';
 export * from './minigames/highNoon/highNoon';
 export * from './minigames/hotPotato/hotPotato';
 export * from './minigames/hotPotato/office';
