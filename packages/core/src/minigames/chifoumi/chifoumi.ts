@@ -45,8 +45,11 @@ export type ChifoumiPlayer = {
   gesture: Gesture | null;
   /** Il a validé son choix de cette étape. */
   locked: boolean;
-  /** Le geste qu'il regarde (aux flèches), avant de valider. */
-  cursor: number;
+  /**
+   * Le geste qu'il montre aux flèches, avant de valider ; null tant qu'il n'a rien montré dans
+   * cette étape (retour de test : un geste montré d'office passait pour déjà choisi).
+   */
+  cursor: number | null;
   stick: number;
   held: boolean;
 };
@@ -106,7 +109,7 @@ function freshPlayer(id: PlayerId): ChifoumiPlayer {
     announce: null,
     gesture: null,
     locked: false,
-    cursor: 0,
+    cursor: null,
     stick: 0,
     held: false,
   };
@@ -160,8 +163,12 @@ function pick(player: ChifoumiPlayer, input: ArenaInput, isAnnounce: boolean): v
     player.cursor = input.target;
     choice = input.target;
   } else {
-    if (input.move.x > 0.5 && player.stick <= 0.5) player.cursor = (player.cursor + 1) % 3;
-    if (input.move.x < -0.5 && player.stick >= -0.5) player.cursor = (player.cursor + 2) % 3;
+    // La première poussée montre le geste du bord : la pierre à gauche, les ciseaux à droite.
+    const shown = player.cursor;
+    if (input.move.x > 0.5 && player.stick <= 0.5)
+      player.cursor = shown === null ? 2 : (shown + 1) % 3;
+    if (input.move.x < -0.5 && player.stick >= -0.5)
+      player.cursor = shown === null ? 0 : (shown + 2) % 3;
     if (input.primary && !player.held) choice = player.cursor;
   }
   if (choice === null) return;
@@ -175,19 +182,25 @@ function pick(player: ChifoumiPlayer, input: ArenaInput, isAnnounce: boolean): v
 function advance(state: ChifoumiState): void {
   const { round, tick } = state;
   const unlock = () => {
-    for (const player of state.fighters) player.locked = false;
+    for (const player of state.fighters) Object.assign(player, { locked: false, cursor: null });
   };
+  /** Pas validé à temps : le geste qu'il montrait, s'il en montrait un. */
+  const shown = (player: ChifoumiPlayer) =>
+    player.cursor === null ? null : (GESTURES[player.cursor] ?? null);
   if (round.phase === 'announce') {
-    // Pas d'annonce à temps : il n'en fait pas (il ne pourra pas doubler).
+    // Ni validée ni montrée à temps : pas d'annonce (il ne pourra pas doubler).
+    for (const player of state.fighters) if (!player.locked) player.announce = shown(player);
     Object.assign(round, { phase: 'read', phaseAt: tick });
     unlock();
   } else if (round.phase === 'read') {
     Object.assign(round, { phase: 'choose', phaseAt: tick });
   } else if (round.phase === 'choose') {
-    // Pas de geste à temps : un au hasard (02-mini-jeux.md, fiche 55).
+    // Ni validé ni montré à temps : un au hasard (02-mini-jeux.md, fiche 55).
     for (const [index, player] of state.fighters.entries()) {
       player.gesture ??=
-        GESTURES[Math.floor(forestUnit(state.seed, round.index, 161 + index) * 3)] ?? 'rock';
+        shown(player) ??
+        GESTURES[Math.floor(forestUnit(state.seed, round.index, 161 + index) * 3)] ??
+        'rock';
       player.locked = true;
     }
     Object.assign(round, { phase: 'shake', phaseAt: tick });
@@ -239,7 +252,7 @@ function nextRound(state: ChifoumiState): void {
   // Au bac à sable, la partie recommence à zéro une fois gagnée.
   if (state.practice && leader) for (const player of state.fighters) player.points = 0;
   for (const player of state.fighters) {
-    Object.assign(player, { announce: null, gesture: null, locked: false });
+    Object.assign(player, { announce: null, gesture: null, locked: false, cursor: null });
   }
   state.round = {
     index: round.index + 1,
