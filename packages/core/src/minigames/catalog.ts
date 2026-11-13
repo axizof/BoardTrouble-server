@@ -72,7 +72,7 @@ export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
   hamsterBall: { occasions: ['round'] },
   tumbleDown: { occasions: ['round'], worlds: 2 },
   penaltyKicks: { occasions: ['oneVsAll'] },
-  chifoumi: { occasions: ['finale'], finalists: { min: 2, max: 2 } },
+  chifoumi: { occasions: ['finale'], finalists: { min: 2, max: 6 } },
 };
 
 export const MINIGAME_IDS = Object.keys(MINIGAMES) as MinigameId[];

@@ -5,12 +5,14 @@ import type { Rng } from '../../random/rng';
 import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT } from '../arena/arena';
 import { forestUnit } from '../offPiste/forest';
 
-// Chifoumi du sommet (02-mini-jeux.md, fiche 55), une finale à 2 : pierre, feuille, ciseaux, en
-// deux manches gagnantes. Chaque manche : chacun choisit en secret un geste à annoncer, puis les
-// deux annonces sont dévoilées ensemble (on peut mentir) ; chacun choisit ensuite en secret son
-// vrai geste ; chi-fou-mi, on révèle. Gagner la manche vaut 1 point, et 2 si on gagne avec le
-// geste qu'on avait annoncé : du bluff et de la lecture, plus que la chance. Une manche nulle se
-// rejoue. Le premier à 2 points gagne.
+// Chifoumi du sommet (02-mini-jeux.md, fiche 55), une finale : pierre, feuille, ciseaux en
+// face-à-face. Chaque manche : chacun choisit en secret un geste à annoncer, puis les deux
+// annonces sont dévoilées ensemble (on peut mentir) ; chacun choisit ensuite en secret son vrai
+// geste ; chi-fou-mi, on révèle. Gagner la manche vaut 1 point, et 2 si on gagne avec le geste
+// qu'on avait annoncé : du bluff et de la lecture, plus que la chance. Une manche nulle se
+// rejoue. À deux finalistes, un seul duel ; à plus (rare), un tableau à élimination directe
+// (idée de l'utilisateur) : des duels l'un après l'autre, les autres regardent, jusqu'à la
+// finale des deux derniers.
 
 export type Gesture = 'rock' | 'paper' | 'scissors';
 export const GESTURES: readonly Gesture[] = ['rock', 'paper', 'scissors'];
@@ -21,18 +23,39 @@ export const BEATS: Record<Gesture, Gesture> = {
   scissors: 'paper',
 };
 
-/** Les points pour gagner la partie. */
-export const POINTS_TO_WIN = 3;
+/**
+ * Les points pour gagner un duel : la finale en 3 (avec l'annonce, en 2 une seule manche la
+ * décidait trop souvent), les duels d'avant en 2 (le tableau ne doit pas traîner).
+ */
+export const FINAL_POINTS = 3;
+const EARLY_POINTS = 2;
+/** Un duel s'annonce ce temps-là (« Demi-finale : A contre B ») avant sa première manche. */
+export const CHIFOUMI_MATCH = 2.4;
 /** Le temps d'annoncer, de lire les annonces, de choisir, puis le chi-fou-mi et la révélation. */
 export const CHIFOUMI_ANNOUNCE = 4;
 export const CHIFOUMI_READ = 1.6;
 export const CHIFOUMI_CHOOSE = 5;
 export const CHIFOUMI_SHAKE = 1.5;
 export const CHIFOUMI_RESULT = 2.6;
-/** Au-delà de tant de manches (des nulles à la chaîne), on s'arrête : le plus de points gagne. */
+/** Au-delà de tant de manches dans un duel (des nulles à la chaîne), le plus de points l'emporte. */
 const MAX_ROUNDS = 15;
+/** Dans le tableau : une place encore à jouer, et une place vide (un qualifié d'office en face). */
+const PENDING = '';
+const BYE = '-';
 
-export type ChifoumiPhase = 'announce' | 'read' | 'choose' | 'shake' | 'result';
+export type ChifoumiPhase = 'match' | 'announce' | 'read' | 'choose' | 'shake' | 'result';
+
+/**
+ * Le duel en cours : son tour dans le tableau (0 le premier) et sa place dans ce tour, les deux
+ * finalistes qui s'affrontent, les points pour l'emporter, et le nombre de manches jouées.
+ */
+export type ChifoumiMatch = {
+  round: number;
+  slot: number;
+  players: [PlayerId, PlayerId];
+  target: number;
+  rounds: number;
+};
 
 export type ChifoumiPlayer = {
   id: PlayerId;
@@ -76,12 +99,21 @@ export type ChifoumiState = {
     winner: PlayerId | null;
     gain: number;
   }[];
-  /** Le vainqueur, une fois décidé (null : pas encore ; '' : égalité au bout des manches). */
+  /**
+   * Le tableau : tour par tour, qui occupe chaque place (PENDING : à jouer ; BYE : personne). Le
+   * dernier tour n'a qu'une place : le vainqueur.
+   */
+  bracket: string[][];
+  match: ChifoumiMatch;
+  /** Le tour où chaque perdant a été éliminé. */
+  eliminated: Record<PlayerId, number>;
+  /** Le vainqueur, une fois décidé. */
   winner: PlayerId | null;
 };
 
 const toTick = (seconds: number) => Math.round(seconds / ARENA_STEP);
 const PHASE_TIME: Record<ChifoumiPhase, number> = {
+  match: CHIFOUMI_MATCH,
   announce: CHIFOUMI_ANNOUNCE,
   read: CHIFOUMI_READ,
   choose: CHIFOUMI_CHOOSE,
@@ -115,19 +147,94 @@ function freshPlayer(id: PlayerId): ChifoumiPlayer {
   };
 }
 
+/**
+ * L'ordre des têtes de série sur le tableau (1 contre le dernier, 2 contre l'avant-dernier...),
+ * pour que les qualifiés d'office soient les premiers et ne se croisent pas trop tôt.
+ */
+function seedOrder(size: number): number[] {
+  let order = [1];
+  while (order.length < size) {
+    const width = order.length * 2;
+    order = order.flatMap((seed) => [seed, width + 1 - seed]);
+  }
+  return order;
+}
+
+/** Le tableau de départ : les finalistes dans l'ordre reçu, des places vides pour compléter. */
+function bracketOf(players: PlayerId[]): string[][] {
+  let size = 2;
+  while (size < players.length) size *= 2;
+  const rounds = [seedOrder(size).map((seed) => players[seed - 1] ?? BYE)];
+  for (let width = size / 2; width >= 1; width /= 2) rounds.push(Array(width).fill(PENDING));
+  return rounds;
+}
+
 function create(
   players: PlayerId[],
   { practice, seed }: { practice: boolean; seed: number },
 ): ChifoumiState {
-  return {
+  const state: ChifoumiState = {
     tick: 0,
     practice,
     seed,
     fighters: players.map(freshPlayer),
-    round: { index: 0, phase: 'announce', phaseAt: 0, winner: null, gain: 0 },
+    round: { index: 0, phase: 'match', phaseAt: 0, winner: null, gain: 0 },
     history: [],
+    bracket: bracketOf(players),
+    match: {
+      round: 0,
+      slot: 0,
+      players: [players[0] ?? '', players[1] ?? ''],
+      target: FINAL_POINTS,
+      rounds: 0,
+    },
+    eliminated: {},
     winner: null,
   };
+  nextMatch(state);
+  return state;
+}
+
+/** Le dernier tour du tableau : la finale. */
+export function isFinal(state: ChifoumiState, round = state.match.round): boolean {
+  return round === state.bracket.length - 2;
+}
+
+/**
+ * Le prochain duel du tableau : le premier dont les deux places sont connues. Un finaliste face à
+ * une place vide passe tout seul au tour suivant. Plus de duel : le vainqueur est en haut.
+ */
+function nextMatch(state: ChifoumiState): void {
+  const { bracket } = state;
+  for (let round = 0; round < bracket.length - 1; round++) {
+    const places = bracket[round] ?? [];
+    const next = bracket[round + 1] ?? [];
+    for (let slot = 0; slot < next.length; slot++) {
+      const a = places[slot * 2] ?? BYE;
+      const b = places[slot * 2 + 1] ?? BYE;
+      if (next[slot] !== PENDING || a === PENDING || b === PENDING) continue;
+      if (a === BYE || b === BYE) {
+        next[slot] = a === BYE ? b : a;
+        nextMatch(state);
+        return;
+      }
+      state.match = {
+        round,
+        slot,
+        players: [a, b],
+        target: isFinal(state, round) ? FINAL_POINTS : EARLY_POINTS,
+        rounds: 0,
+      };
+      for (const player of state.fighters) player.points = 0;
+      return;
+    }
+  }
+  state.winner = bracket.at(-1)?.[0] ?? null;
+}
+
+/** Ce joueur joue le duel en cours. */
+export function isInMatch(state: ChifoumiState, player: PlayerId): boolean {
+  return state.match.players.includes(player);
 }
 
 function step(state: ChifoumiState, inputs: Partial<Record<PlayerId, ArenaInput>>): ChifoumiState {
@@ -141,14 +248,15 @@ function step(state: ChifoumiState, inputs: Partial<Record<PlayerId, ArenaInput>
   if (next.winner !== null) return next;
   const { round } = next;
   const isPicking = round.phase === 'announce' || round.phase === 'choose';
-  for (const player of next.fighters) {
+  const duelists = next.fighters.filter((one) => isInMatch(next, one.id));
+  for (const player of duelists) {
     const input = inputs[player.id] ?? (state.practice ? dummyInput(next, player.id) : IDLE_INPUT);
     if (isPicking && !player.locked) pick(player, input, round.phase === 'announce');
     player.stick = input.move.x;
     player.held = input.primary;
   }
   const isDue = (tick - round.phaseAt) * ARENA_STEP >= PHASE_TIME[round.phase];
-  const allLocked = next.fighters.every((one) => one.locked);
+  const allLocked = duelists.every((one) => one.locked);
   if (isDue || (isPicking && allLocked)) advance(next);
   return next;
 }
@@ -187,7 +295,9 @@ function advance(state: ChifoumiState): void {
   /** Pas validé à temps : le geste qu'il montrait, s'il en montrait un. */
   const shown = (player: ChifoumiPlayer) =>
     player.cursor === null ? null : (GESTURES[player.cursor] ?? null);
-  if (round.phase === 'announce') {
+  if (round.phase === 'match') {
+    Object.assign(round, { phase: 'announce', phaseAt: tick });
+  } else if (round.phase === 'announce') {
     // Ni validée ni montrée à temps : pas d'annonce (il ne pourra pas doubler).
     for (const player of state.fighters) if (!player.locked) player.announce = shown(player);
     Object.assign(round, { phase: 'read', phaseAt: tick });
@@ -197,6 +307,7 @@ function advance(state: ChifoumiState): void {
   } else if (round.phase === 'choose') {
     // Ni validé ni montré à temps : un au hasard (02-mini-jeux.md, fiche 55).
     for (const [index, player] of state.fighters.entries()) {
+      if (!isInMatch(state, player.id)) continue;
       player.gesture ??=
         shown(player) ??
         GESTURES[Math.floor(forestUnit(state.seed, round.index, 161 + index) * 3)] ??
@@ -214,7 +325,9 @@ function advance(state: ChifoumiState): void {
 
 /** La révélation : qui gagne la manche, et combien (2 avec le geste annoncé). */
 function reveal(state: ChifoumiState): void {
-  const [a, b] = state.fighters;
+  const [first, second] = state.match.players;
+  const a = state.fighters.find((one) => one.id === first);
+  const b = state.fighters.find((one) => one.id === second);
   if (!a || !b) return;
   const result = duel(a.gesture ?? 'rock', b.gesture ?? 'rock');
   const winner = result > 0 ? a : result < 0 ? b : null;
@@ -225,42 +338,48 @@ function reveal(state: ChifoumiState): void {
 }
 
 function nextRound(state: ChifoumiState): void {
-  const { round } = state;
+  const { round, match } = state;
+  const duelists = state.fighters.filter((one) => isInMatch(state, one.id));
   state.history = [
     ...state.history,
     {
       moves: Object.fromEntries(
-        state.fighters.map((one) => [
-          one.id,
-          { announce: one.announce, gesture: one.gesture ?? 'rock' },
-        ]),
+        duelists.map((one) => [one.id, { announce: one.announce, gesture: one.gesture ?? 'rock' }]),
       ),
       winner: round.winner,
       gain: round.gain,
     },
   ];
-  const leader = state.fighters.find((one) => one.points >= POINTS_TO_WIN);
-  if (!state.practice && leader) {
-    state.winner = leader.id;
-    return;
-  }
-  if (!state.practice && state.history.length >= MAX_ROUNDS) {
-    const [a, b] = state.fighters;
-    state.winner = !a || !b || a.points === b.points ? '' : a.points > b.points ? a.id : b.id;
-    return;
-  }
-  // Au bac à sable, la partie recommence à zéro une fois gagnée.
-  if (state.practice && leader) for (const player of state.fighters) player.points = 0;
+  match.rounds += 1;
   for (const player of state.fighters) {
     Object.assign(player, { announce: null, gesture: null, locked: false, cursor: null });
   }
-  state.round = {
+  const next = {
     index: round.index + 1,
     phase: 'announce',
     phaseAt: state.tick,
     winner: null,
     gain: 0,
-  };
+  } as const;
+  state.round = { ...next };
+  const leader = duelists.find((one) => one.points >= match.target);
+  // Des nulles à la chaîne : le plus de points l'emporte (à égalité, le premier du duel).
+  const isTooLong = match.rounds >= MAX_ROUNDS;
+  if (!leader && !isTooLong) return;
+  // Au bac à sable, le duel recommence à zéro une fois gagné.
+  if (state.practice) {
+    for (const player of state.fighters) player.points = 0;
+    return;
+  }
+  const [a, b] = duelists;
+  const winner = leader ?? (a && b && b.points > a.points ? b : a);
+  if (!winner) return;
+  const loser = match.players.find((id) => id !== winner.id) ?? '';
+  const place = state.bracket[match.round + 1];
+  if (place) place[match.slot] = winner.id;
+  state.eliminated = { ...state.eliminated, [loser]: match.round };
+  nextMatch(state);
+  if (state.winner === null) state.round = { ...next, phase: 'match' };
 }
 
 /** Au bac à sable, le mannequin d'en face joue au hasard, sans traîner. */
@@ -277,10 +396,15 @@ function isOver(state: ChifoumiState): boolean {
   return !state.practice && state.winner !== null;
 }
 
+/** Le classement : le vainqueur, puis les éliminés, du dernier tour au premier (ex aequo par tour). */
 function ranking(state: ChifoumiState): PlayerId[][] {
   const ids = state.fighters.map((one) => one.id);
   if (!state.winner) return [ids];
-  return [[state.winner], ids.filter((id) => id !== state.winner)];
+  const rounds = [...new Set(Object.values(state.eliminated))].sort((x, y) => y - x);
+  return [
+    [state.winner],
+    ...rounds.map((round) => ids.filter((id) => state.eliminated[id] === round)),
+  ];
 }
 
 /**
@@ -335,7 +459,8 @@ function counter(gesture: Gesture): Gesture {
 function botInput(state: ChifoumiState, player: PlayerId, level: BotLevel, _rng: Rng): ArenaInput {
   const { round, tick } = state;
   const me = state.fighters.find((one) => one.id === player);
-  const other = state.fighters.find((one) => one.id !== player);
+  const rival = state.match.players.find((id) => id !== player);
+  const other = isInMatch(state, player) ? state.fighters.find((one) => one.id === rival) : null;
   const isPicking = round.phase === 'announce' || round.phase === 'choose';
   if (!me || !other || !isPicking || me.locked || state.winner !== null) return IDLE_INPUT;
   const unit = (salt: number) => forestUnit(state.seed, round.index, salt + saltOf(player));

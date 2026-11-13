@@ -6,9 +6,11 @@ import {
   CHIFOUMI_ANNOUNCE,
   type ChifoumiState,
   duel,
+  FINAL_POINTS,
   GESTURES,
   type Gesture,
-  POINTS_TO_WIN,
+  isFinal,
+  isInMatch,
 } from './chifoumi';
 
 const steps = (seconds: number) => Math.round(seconds / ARENA_STEP);
@@ -17,8 +19,11 @@ const pick = (gesture: Gesture): ArenaInput => ({
   target: GESTURES.indexOf(gesture),
 });
 
+/** Une finale à deux, passé l'annonce du duel : on en est à annoncer. */
 function fresh(): ChifoumiState {
-  return CHIFOUMI.create(['a', 'b'], { practice: false, seed: 1 });
+  let state = CHIFOUMI.create(['a', 'b'], { practice: false, seed: 1 });
+  while (state.round.phase === 'match') state = CHIFOUMI.step(state, {});
+  return state;
 }
 
 /** Joue une manche : les annonces de chacun, puis leurs gestes (validés d'un clic). */
@@ -59,7 +64,7 @@ describe('Chifoumi du sommet', () => {
     expect(points(state, 'a')).toBe(1);
     state = playRound(state, { a: 'paper', b: 'rock' }, { a: 'paper', b: 'rock' });
     expect(points(state, 'a')).toBe(3);
-    expect(POINTS_TO_WIN).toBe(3);
+    expect(FINAL_POINTS).toBe(3);
     expect(CHIFOUMI.isOver(state)).toBe(true);
     expect(CHIFOUMI.ranking(state)).toEqual([['a'], ['b']]);
     const draw = playRound(fresh(), { a: 'rock', b: 'rock' }, { a: 'paper', b: 'paper' });
@@ -142,6 +147,37 @@ describe('Chifoumi du sommet', () => {
     for (let k = 0; k < steps(120); k++) state = CHIFOUMI.step(state, {});
     expect(state.history.length).toBeGreaterThan(3);
     expect(CHIFOUMI.isOver(state)).toBe(false);
-    expect(Math.max(...state.fighters.map((one) => one.points))).toBeLessThan(POINTS_TO_WIN);
+    expect(Math.max(...state.fighters.map((one) => one.points))).toBeLessThan(FINAL_POINTS);
+  });
+
+  test('with more finalists, a bracket: duels one after the other, byes for the first seeds', () => {
+    const four = CHIFOUMI.create(['a', 'b', 'c', 'd'], { practice: false, seed: 5 });
+    expect(four.match.players).toEqual(['a', 'd']);
+    expect(isInMatch(four, 'b')).toBe(false);
+    expect(isFinal(four)).toBe(false);
+    const three = CHIFOUMI.create(['a', 'b', 'c'], { practice: false, seed: 5 });
+    // La tête de série passe d'office : le premier duel oppose les deux autres.
+    expect(three.match.players).toEqual(['b', 'c']);
+    expect(three.bracket[1]?.[0]).toBe('a');
+  });
+
+  test('between bots, a four-player bracket ends with a winner, the finalist, then the semi losers', () => {
+    const ids = ['a', 'b', 'c', 'd'];
+    let state = CHIFOUMI.create(ids, { practice: false, seed: 9 });
+    const rng = new Rng(9);
+    let semiTargets = 0;
+    for (let k = 0; k < steps(900) && !CHIFOUMI.isOver(state); k++) {
+      const current = state;
+      if (!isFinal(current)) semiTargets = current.match.target;
+      state = CHIFOUMI.step(
+        current,
+        Object.fromEntries(ids.map((id) => [id, CHIFOUMI.botInput(current, id, 'normal', rng)])),
+      );
+    }
+    expect(CHIFOUMI.isOver(state)).toBe(true);
+    expect(semiTargets).toBe(2);
+    const ranking = CHIFOUMI.ranking(state);
+    expect(ranking.map((group) => group.length)).toEqual([1, 1, 2]);
+    expect(ranking.flat().sort()).toEqual(ids);
   });
 });
