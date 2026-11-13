@@ -80,6 +80,16 @@ describe('La dégringolade', () => {
     expect(schedule.some((one) => one.kind === 'stack' && one.inLine)).toBe(true);
   });
 
+  test('the ramp is already busy at the start, but the bottom is clear', () => {
+    const schedule = rubbleSchedule(9, false);
+    const onRamp = schedule.map((rubble) => rubbleAt(rubble, 0)).filter((at) => at !== null);
+    expect(onRamp.length).toBeGreaterThan(8);
+    for (const at of onRamp) expect(at.s).toBeGreaterThan(15);
+    expect(new Set(schedule.map((rubble) => rubble.id)).size).toBe(schedule.length);
+    expect(schedule.some((rubble) => rubble.kind === 'plank')).toBe(true);
+    expect(schedule.some((rubble) => rubble.kind === 'ball')).toBe(true);
+  });
+
   test('you climb at a steady pace, and reaching the top ends your run', () => {
     const state = TUMBLE_DOWN.create(['a', 'b'], { practice: false, seed: 1 });
     // Intouchable le temps du test : seule compte la course.

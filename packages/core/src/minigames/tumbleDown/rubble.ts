@@ -18,7 +18,16 @@ export const RAIL_X = 2.2;
 export const RUBBLE_TOP = RAMP_LENGTH + 3;
 const RUBBLE_GONE = -4;
 
-export type RubbleKind = 'barrel' | 'can' | 'crate' | 'wheel' | 'wagon' | 'boulder' | 'stack';
+export type RubbleKind =
+  | 'barrel'
+  | 'can'
+  | 'crate'
+  | 'wheel'
+  | 'wagon'
+  | 'boulder'
+  | 'stack'
+  | 'plank'
+  | 'ball';
 
 /**
  * Chaque sorte : sa demi-largeur (en travers) et sa demi-longueur (le long de la rampe), sa
@@ -112,17 +121,45 @@ export const RUBBLE: Record<
     hopPeriod: 1,
     push: 14,
   },
+  // Une poutre en travers, très large et basse : s'écarter ne suffit pas toujours, il faut sauter.
+  plank: {
+    half: 2,
+    depth: 0.22,
+    height: 0.4,
+    speed: [6.5, 8],
+    drift: [0, 1.2],
+    hop: 0,
+    hopPeriod: 1,
+    push: 12,
+  },
+  // Une boule qui bondit haut et vite en zigzag : la sauter au bon moment, ou l'éviter.
+  ball: {
+    half: 0.35,
+    depth: 0.35,
+    height: 0.7,
+    speed: [8, 10],
+    drift: [2.5, 4],
+    hop: 0.9,
+    hopPeriod: 0.55,
+    push: 12,
+  },
 };
 
 /**
- * Le rythme : le premier objet part à FIRST_RUBBLE, puis un toutes les RUBBLE_GAP secondes au
+ * Le rythme : la rampe est déjà pleine au départ (le programme commence PRE_ROLL secondes avant,
+ * sans rien dans les START_CLEAR premiers mètres) ; retour de test : quand tout partait du haut au
+ * départ, on montait la moitié de la rampe avant de croiser le premier objet. Puis un objet
+ * toutes les RUBBLE_GAP secondes au
  * début, de plus en plus serrés (jusqu'à RUBBLE_GAP_MIN), à 30 % près. De temps en temps, une
  * rangée de tonneaux côte à côte, avec un trou pour passer (ou à sauter), ou un barrage de piles
  * avec un seul passage (trop haut : il faut aller au trou).
  */
-const FIRST_RUBBLE = 1.5;
+const PRE_ROLL = 14;
+const START_CLEAR = 18;
+/** Au bac à sable, rien d'avance : le premier objet part à PRACTICE_FIRST. */
+const PRACTICE_FIRST = 1.5;
 const RUBBLE_GAP = 1;
-const RUBBLE_GAP_MIN = 0.55;
+const RUBBLE_GAP_MIN = 0.5;
 const RUBBLE_GAP_SHRINK = 0.006;
 const RUBBLE_JITTER = 0.3;
 /** Au bac à sable : un objet toutes les 1,6 s, toujours. */
@@ -144,6 +181,8 @@ const MIX_EARLY: Record<RubbleKind | Line, number> = {
   stack: 0.6,
   row: 0.3,
   wall: 0.3,
+  plank: 0.8,
+  ball: 1,
 };
 const MIX_LATE: Record<RubbleKind | Line, number> = {
   barrel: 2,
@@ -155,6 +194,8 @@ const MIX_LATE: Record<RubbleKind | Line, number> = {
   stack: 1,
   row: 0.7,
   wall: 0.8,
+  plank: 1.2,
+  ball: 1.5,
 };
 const MIX_LATE_AT = 60;
 /** Le programme couvre ce temps (au-delà du chrono, la partie est finie). */
@@ -184,16 +225,22 @@ export function rubbleSchedule(seed: number, practice: boolean): readonly Rubble
   const known = schedules.get(key);
   if (known) return known;
   const list: Rubble[] = [];
-  let time = FIRST_RUBBLE;
+  let time = practice ? PRACTICE_FIRST : -PRE_ROLL;
   for (let k = 0; time < SCHEDULE_TIME; k++) {
     const roll = (salt: number) => forestUnit(seed, k, salt);
-    const kind = practice ? practiceKind(k) : pickKind(roll(71), time);
+    const kind = practice ? practiceKind(k) : pickKind(roll(71), Math.max(0, time));
     const isLine = kind === 'row' || kind === 'wall';
-    if (isLine) list.push(...lineOf(kind, list.length, toTick(time), roll(72)));
-    else list.push(single(list.length, kind, toTick(time), roll));
+    const added = isLine
+      ? lineOf(kind, list.length, toTick(time), roll(72))
+      : [single(list.length, kind, toTick(time), roll)];
+    // Parti avant le départ : gardé seulement s'il est encore assez haut quand on part.
+    const isClear = added.every((one) => (rubbleAt(one, 0)?.s ?? RUBBLE_TOP) > START_CLEAR);
+    if (time >= 0 || isClear) {
+      list.push(...added.map((one, index) => ({ ...one, id: list.length + index })));
+    }
     const gap = practice
       ? PRACTICE_GAP
-      : Math.max(RUBBLE_GAP_MIN, RUBBLE_GAP - time * RUBBLE_GAP_SHRINK) *
+      : Math.max(RUBBLE_GAP_MIN, RUBBLE_GAP - Math.max(0, time) * RUBBLE_GAP_SHRINK) *
         (1 + (roll(73) * 2 - 1) * RUBBLE_JITTER);
     // Après une rangée, un peu d'air : elle prend toute la largeur.
     time += isLine ? gap * 1.8 : gap;
@@ -215,6 +262,8 @@ function practiceKind(k: number): RubbleKind | Line {
     'wheel',
     'stack',
     'wagon',
+    'plank',
+    'ball',
     'row',
     'wall',
   ] as const;

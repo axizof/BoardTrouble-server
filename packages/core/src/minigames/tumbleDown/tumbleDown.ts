@@ -275,9 +275,9 @@ function ranking(state: TumbleState): PlayerId[][] {
  * ils foncent tout droit sans regarder (une étourderie, tirée par seconde).
  */
 const BOT: Record<BotLevel, { horizon: number; delay: number; careless: number }> = {
-  easy: { horizon: 0.6, delay: 0.2, careless: 0.18 },
+  easy: { horizon: 0.7, delay: 0.18, careless: 0.14 },
   normal: { horizon: 0.9, delay: 0.1, careless: 0.08 },
-  expert: { horizon: 1.05, delay: 0.08, careless: 0.05 },
+  expert: { horizon: 1.05, delay: 0.08, careless: 0.06 },
 };
 /** Chaque bot a son couloir préféré, à au plus tant du milieu (m). */
 const LANE_SPREAD = 2.5;
