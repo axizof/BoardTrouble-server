@@ -7,6 +7,7 @@ import { BIG_DIE } from '../bigDie/bigDie';
 import { BOARD_REFLEX } from '../boardReflex/boardReflex';
 import { CARD_MEMORY } from '../cardMemory/cardMemory';
 import type { MinigameId } from '../catalog';
+import { CHIFOUMI } from '../chifoumi/chifoumi';
 import { CLAY_SHOOT } from '../clayShoot/clayShoot';
 import { COMBINATION } from '../combination/combination';
 import { CONVEYOR_SORT } from '../conveyorSort/conveyorSort';
@@ -73,6 +74,7 @@ export const ARENAS = {
   hamsterBall: HAMSTER_BALL,
   tumbleDown: TUMBLE_DOWN,
   penaltyKicks: PENALTY_KICKS,
+  chifoumi: CHIFOUMI,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
