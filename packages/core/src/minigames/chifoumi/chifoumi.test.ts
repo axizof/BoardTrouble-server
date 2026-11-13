@@ -98,14 +98,27 @@ describe('Chifoumi du sommet', () => {
     }
   });
 
-  test('arrows turn through the gestures, Action locks the one shown', () => {
+  test('nothing is shown before the first arrow; arrows turn through the gestures, Action locks', () => {
     let state = fresh();
+    state = CHIFOUMI.step(state, { a: { ...IDLE_INPUT, primary: true } });
+    expect(state.fighters[0]?.cursor).toBeNull();
+    expect(state.fighters[0]?.locked).toBe(false);
+    const left = { ...IDLE_INPUT, move: { x: -1, z: 0 } };
     const right = { ...IDLE_INPUT, move: { x: 1, z: 0 } };
-    state = CHIFOUMI.step(state, { a: right });
+    state = CHIFOUMI.step(state, { a: left });
     state = CHIFOUMI.step(state, { a: IDLE_INPUT });
+    state = CHIFOUMI.step(state, { a: right });
     state = CHIFOUMI.step(state, { a: { ...IDLE_INPUT, primary: true } });
     expect(state.fighters[0]?.announce).toBe('paper');
     expect(state.fighters[0]?.locked).toBe(true);
+  });
+
+  test('not locked in time, the gesture shown with the arrows is the one played', () => {
+    let state = fresh();
+    while (state.round.phase !== 'choose') state = CHIFOUMI.step(state, {});
+    state = CHIFOUMI.step(state, { a: { ...IDLE_INPUT, move: { x: 1, z: 0 } } });
+    while (state.round.phase === 'choose') state = CHIFOUMI.step(state, {});
+    expect(state.fighters[0]?.gesture).toBe('scissors');
   });
 
   test('between bots, the final ends with a winner in a few rounds', () => {
