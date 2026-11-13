@@ -48,6 +48,8 @@ export * from './minigames/secretAuction/secretAuction';
 export * from './minigames/skyPhoto/skyPhoto';
 export * from './minigames/spinningBar/spinningBar';
 export * from './minigames/stacker/stacker';
+export * from './minigames/tumbleDown/rubble';
+export * from './minigames/tumbleDown/tumbleDown';
 export * from './minigames/uniqueStairs/uniqueStairs';
 export * from './random/rng';
 export * from './recap/chronicle';

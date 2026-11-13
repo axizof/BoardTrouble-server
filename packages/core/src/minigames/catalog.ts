@@ -25,7 +25,8 @@ export type MinigameId =
   | 'greatCrossing'
   | 'hotPotato'
   | 'pileUp'
-  | 'hamsterBall';
+  | 'hamsterBall'
+  | 'tumbleDown';
 
 /** Moment où l'on joue un mini-jeu. Une manche peut tirer un chacun pour soi ou un jeu d'équipes. */
 export type MinigameOccasion = 'round' | 'oneVsAll' | 'duel' | 'finale' | 'solo';
@@ -65,6 +66,7 @@ export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
   hotPotato: { occasions: ['round', 'finale'], finalists: { min: 3, max: 6 } },
   pileUp: { occasions: ['round'] },
   hamsterBall: { occasions: ['round'] },
+  tumbleDown: { occasions: ['round'] },
 };
 
 export const MINIGAME_IDS = Object.keys(MINIGAMES) as MinigameId[];
