@@ -17,6 +17,7 @@ import { HAMSTER_BALL } from '../hamsterBall/hamsterBall';
 import { HIGH_NOON } from '../highNoon/highNoon';
 import { HOT_POTATO } from '../hotPotato/hotPotato';
 import { LAST_ROLL } from '../lastRoll/lastRoll';
+import { LOG_JOUST } from '../logJoust/logJoust';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
 import { OFF_PISTE } from '../offPiste/offPiste';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
@@ -75,6 +76,7 @@ export const ARENAS = {
   tumbleDown: TUMBLE_DOWN,
   penaltyKicks: PENALTY_KICKS,
   chifoumi: CHIFOUMI,
+  logJoust: LOG_JOUST,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
