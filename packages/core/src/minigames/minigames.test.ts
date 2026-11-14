@@ -62,7 +62,7 @@ function contextFor(state: GameState, seed: number): Context {
 describe('the minigame catalog', () => {
   test('offers each occasion its own minigames, and finales by number of finalists', () => {
     expect(minigameCandidates('round', 4)).toHaveLength(19);
-    expect(minigameCandidates('duel', 2)).toEqual(['highNoon', 'clayShoot']);
+    expect(minigameCandidates('duel', 2)).toEqual(['highNoon', 'clayShoot', 'logJoust']);
     expect(minigameCandidates('oneVsAll', 4)).toEqual(['bigDie', 'rampart', 'penaltyKicks']);
     expect(minigameCandidates('solo', 1)).toEqual(['perfectGauge', 'combination']);
     expect(minigameCandidates('finale', 2)).toEqual([
@@ -72,6 +72,7 @@ describe('the minigame catalog', () => {
       'lastRoll',
       'greatCrossing',
       'chifoumi',
+      'logJoust',
     ]);
     expect(minigameCandidates('finale', 3)).toEqual([
       'pawnSumo',
@@ -150,9 +151,10 @@ describe('the minigame wheel', () => {
       type: 'chooseTarget',
       playerId: 'bob',
     }).state;
-    expect(fighting.phase).toMatchObject({
-      step: { type: 'awaitDuelResult', minigame: 'highNoon' },
-    });
+    if (fighting.phase.type !== 'turn' || fighting.phase.step.type !== 'awaitDuelResult') {
+      throw new Error('Duel attendu');
+    }
+    expect(minigameCandidates('duel', 2)).toContain(fighting.phase.step.minigame);
 
     const gate = setup([...emptySpaces(2), { type: 'skillGate' }, ...emptySpaces(20)]);
     const testing = act(
