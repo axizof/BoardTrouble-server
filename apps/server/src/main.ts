@@ -9,6 +9,7 @@ import { FileBans } from './admin/fileBans';
 import adminPage from './admin/index.html';
 import { LogBuffer } from './admin/logBuffer';
 import { GameServer, type Peer } from './gameServer';
+import { FileSaveSlots } from './saveSlots';
 import { UpdateChecker } from './updates';
 
 // Le serveur Board Trouble (01-architecture.md, sections 3 et 10) : il sert le jeu lui-même (la
@@ -24,6 +25,7 @@ import { UpdateChecker } from './updates';
 //                                  des à-coups de la moitié), dans les deux sens
 //   --data <dossier>   BT_DATA     où garder ses données (bannis, presets) : `data/` par défaut
 //   BT_ADMIN_PASSWORD             le mot de passe du tableau de bord (sinon tiré au lancement)
+//   BT_SAVE_SLOTS                 combien de parties gardées en même temps (3 par défaut)
 //   BT_UPDATE_REPO                le repo GitHub dont suivre les Releases (le repo du serveur)
 //   BT_NO_UPDATE_CHECK=1          ne pas chercher de mises à jour
 
@@ -96,7 +98,10 @@ const settings = readSettings();
 const hasClient = existsSync(join(settings.client, 'index.html'));
 const store = new DataStore(settings.data, log);
 const bans = new FileBans(store);
-const game = new GameServer({ name: settings.name, maxRooms: 8, log, bans });
+/** Les emplacements de sauvegarde des parties (BT_SAVE_SLOTS, 3 par défaut). */
+const saveSlots = Math.max(1, Math.min(20, Number(process.env.BT_SAVE_SLOTS) || 3));
+const saves = new FileSaveSlots(join(settings.data, 'saves'), saveSlots, log);
+const game = new GameServer({ name: settings.name, maxRooms: 8, log, bans, saves });
 /** Le mot de passe du tableau de bord (hors de cette machine), affiché au lancement s'il est tiré. */
 const adminPassword = process.env.BT_ADMIN_PASSWORD || randomBytes(6).toString('base64url');
 
@@ -209,6 +214,7 @@ const admin = new AdminHub({
   log,
   onStop: () => shutdown(false),
   onRestart: () => shutdown(true),
+  saveSlots,
   onUpdate: async () => {
     if (game.adminRooms().some((room) => room.view.phase === 'playing')) {
       return 'Une partie est en cours : la mise à jour attendra sa fin.';

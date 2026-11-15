@@ -24,6 +24,16 @@ export type Identity = { id: string; secret: string };
 
 export type Profile = { name: string; appearance: Appearance };
 
+/** Une partie sauvegardée sur le serveur, telle que l'hôte la voit au salon pour la reprendre. */
+export type SaveSummary = {
+  slot: number;
+  roomName: string;
+  /** Date de la sauvegarde (ISO). */
+  savedAt: string;
+  round: number;
+  players: string[];
+};
+
 export type RoomClientMessage =
   | { type: 'hello'; protocol: number; version: string; identity: Identity; profile: Profile }
   | { type: 'listRooms' }
@@ -42,6 +52,8 @@ export type RoomClientMessage =
   | { type: 'kick'; member: string }
   | { type: 'ban'; member: string }
   | { type: 'unban'; member: string }
+  /** L'hôte, au salon : reprendre la partie sauvegardée de cet emplacement. */
+  | { type: 'resumeSave'; slot: number }
   /** La réponse au `ping` du serveur (il mesure ainsi la latence de chacun). */
   | { type: 'pong'; id: number };
 
@@ -57,12 +69,25 @@ export type ServerRefusal =
   | 'tooManyRooms'
   | 'notReady'
   | 'chatTooFast'
+  /** La sauvegarde à reprendre n'existe plus, ou elle est illisible. */
+  | 'noSave'
   /** On t'a sorti du salon (ou banni). */
   | 'kicked';
 
 export type RoomHostMessage =
   /** La réponse au `hello` : le serveur, sa version, et ses salons. */
-  | { type: 'welcome'; serverName: string; version: string; rooms: RoomSummary[] }
+  /**
+   * La réponse au `hello` : le serveur, sa version, ses salons ; `roomId` : le salon où l'on
+   * revient (une partie en cours qui garde sa place), ou null (après un redémarrage du serveur,
+   * la partie affichée n'existe plus).
+   */
+  | {
+      type: 'welcome';
+      serverName: string;
+      version: string;
+      rooms: RoomSummary[];
+      roomId: string | null;
+    }
   | { type: 'rooms'; rooms: RoomSummary[] }
   /** Le salon où l'on est (à chaque changement), ou null quand on en sort. */
   | { type: 'room'; room: RoomView | null }
@@ -70,7 +95,9 @@ export type RoomHostMessage =
   /** Des lignes du tchat : les dernières en arrivant, puis chaque nouvelle. */
   | { type: 'chat'; lines: ChatLine[] }
   /** Le serveur mesure la latence : le client répond `pong` avec le même numéro. */
-  | { type: 'ping'; id: number };
+  | { type: 'ping'; id: number }
+  /** Au salon : les parties sauvegardées du serveur (l'hôte peut en reprendre une). */
+  | { type: 'saves'; saves: SaveSummary[]; slots: number };
 
 /** Tout ce qu'un client peut envoyer à un serveur, et tout ce qu'il peut en recevoir. */
 export type NetClientMessage = RoomClientMessage | ClientMessage;
@@ -127,6 +154,8 @@ export function parseNetMessage(text: string): NetClientMessage | null {
       return isMemberId(data.member) && Number.isInteger(data.seat)
         ? { type: 'assignSeat', member: data.member, seat: data.seat as number }
         : null;
+    case 'resumeSave':
+      return Number.isInteger(data.slot) ? { type: 'resumeSave', slot: data.slot as number } : null;
     case 'pong':
       return Number.isSafeInteger(data.id) ? { type: 'pong', id: data.id as number } : null;
     case 'kick':

@@ -29,6 +29,7 @@ function setup() {
     onStop: () => {},
     onRestart: () => {},
     onUpdate: async () => null,
+    saveSlots: 3,
   });
   const page = (isLocal: boolean, address = '10.0.0.2') => {
     const received: AdminOutbound[] = [];

@@ -6,7 +6,7 @@ import type { Viewer } from '../game/views';
 import { botAppearance, botCharacters, CHARACTER_NAMES } from '../lobby/bots';
 import type { Appearance } from '../lobby/players';
 import { Rng } from '../random/rng';
-import { GameSession, type Seat } from '../session/session';
+import { GameSession, type Seat, type SessionSave } from '../session/session';
 
 // Un salon du serveur (01-architecture.md, section 7) : ses membres, sa table (une place par
 // joueur : un humain ou un bot), son hôte et ses réglages, puis la partie qu'il lance. Pur et sans
@@ -92,6 +92,21 @@ export type RoomSummary = {
   humans: number;
   tableSize: TableSize;
   phase: RoomPhase;
+};
+
+/** Version du format de sauvegarde d'un salon : une autre version n'est pas chargée. */
+export const ROOM_SAVE_VERSION = 1;
+
+/**
+ * La partie d'un salon, sauvegardée (01-architecture.md, section 9) : ses réglages, sa table
+ * (qui est à quelle place), ses joueurs (pour leur réserver leur place à la reprise) et la partie.
+ */
+export type RoomSave = {
+  version: typeof ROOM_SAVE_VERSION;
+  settings: RoomSettings;
+  seats: RoomSeat[];
+  members: { id: MemberId; name: string; appearance: Appearance }[];
+  session: SessionSave;
 };
 
 /** Un salon accueille au plus tant de monde (joueurs et spectateurs). */
@@ -320,6 +335,54 @@ export class Room {
     for (const member of [...this.#members.values()]) {
       if (!member.isConnected) this.leave(member.id);
     }
+  }
+
+  /** La partie en cours, à sauvegarder (pas en plein mini-jeu : null), ou null sans partie. */
+  toSave(): RoomSave | null {
+    const session = this.#session;
+    if (!session || session.isPlayingArena || session.isFinished) return null;
+    const seated = new Set(this.#seats.flatMap((seat) => (seat.member ? [seat.member] : [])));
+    return {
+      version: ROOM_SAVE_VERSION,
+      settings: { ...this.#settings },
+      seats: this.#seats.map((seat) => ({ ...seat })),
+      members: [...this.#members.values()]
+        .filter((member) => seated.has(member.id))
+        .map(({ id, name, appearance }) => ({ id, name, appearance })),
+      session: session.toSave(),
+    };
+  }
+
+  /**
+   * L'hôte reprend une partie sauvegardée (au salon) : ses réglages, sa table, sa partie. Chaque
+   * place reste à son joueur d'origine (reconnu à son identifiant) : présent, il la joue ;
+   * absent, un bot Facile la joue jusqu'à son arrivée. Les membres présents sans place regardent
+   * (l'hôte peut leur donner celle d'un bot). Lève une erreur si la sauvegarde est illisible.
+   */
+  resume(by: MemberId, save: RoomSave, board: Board, now: number): RoomResult {
+    if (by !== this.#hostId) return refuse('notHost');
+    if (this.#phase !== 'lobby') return refuse('alreadyPlaying');
+    if (save.version !== ROOM_SAVE_VERSION)
+      throw new Error(`Salon d'une autre version (${save.version})`);
+    const session = GameSession.restore(board, save.session, now);
+    for (const member of save.members) {
+      if (!this.#members.has(member.id))
+        this.#members.set(member.id, { ...member, isConnected: false });
+    }
+    this.#settings = { ...save.settings };
+    this.#seats = save.seats.map((seat) => ({ ...seat, isAway: false }));
+    this.#seats.forEach((seat, index) => {
+      const owner = seat.member ? this.#members.get(seat.member) : undefined;
+      if (seat.member && !owner?.isConnected) {
+        seat.isAway = true;
+        session.setControl(seatPlayerId(index), AWAY_BOT);
+      } else if (owner) {
+        session.setControl(seatPlayerId(index), 'human');
+      }
+    });
+    this.#session = session;
+    this.#phase = 'playing';
+    return OK;
   }
 
   /** L'index de la place de ce membre, ou -1. */

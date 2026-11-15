@@ -6,6 +6,7 @@ import {
   GAME_VERSION,
   type GameEvent,
   type MemberId,
+  MINIGAME_NAMES,
   type NetClientMessage,
   type NetHostMessage,
   type PlayerId,
@@ -18,10 +19,12 @@ import {
   type RoomRefusal,
   type RoomSettings,
   type RoomView,
+  type SaveSummary,
   type ServerRefusal,
   seatPlayerId,
   whoMustAct,
 } from '@board-trouble/core';
+import { SAVE_FILE_VERSION, type SaveSlots } from './saveSlots';
 
 // Le serveur de jeu, sans le réseau (01-architecture.md, sections 3, 5 et 7) : les connexions,
 // les salons et les parties qu'ils hébergent. Bun (main.ts) lui passe chaque connexion et chaque
@@ -40,6 +43,8 @@ export type ServerOptions = {
   awayAfter?: number;
   /** Les bannis du serveur (le tableau de bord), gardés sur disque par main.ts. */
   bans?: ServerBans;
+  /** Les parties sauvegardées (data/saves) ; absent : rien n'est sauvegardé. */
+  saves?: SaveSlots;
 };
 
 /** Les bannis de tout le serveur : leur identifiant et leur pseudo. */
@@ -62,6 +67,9 @@ export type AdminPlayer = {
 
 /** Ce que le tableau de bord voit d'un salon : sa vue, et où en est sa partie. */
 export type AdminRoom = { view: RoomView; step: string | null };
+
+/** Une sauvegarde vue du tableau de bord : `inUse`, un salon la joue en ce moment. */
+export type AdminSave = SaveSummary & { inUse: boolean };
 
 type Connection = {
   peer: Peer;
@@ -94,6 +102,13 @@ type HostedRoom = {
   awayTimers: Map<MemberId, ReturnType<typeof setTimeout>>;
   /** Ceux qui reviennent pendant un mini-jeu : ils reprennent leur place à sa fin. */
   pendingReturns: Set<MemberId>;
+  /** L'emplacement de sauvegarde de sa partie, ou null (pas de partie, ou aucun de libre). */
+  slot: number | null;
+  /**
+   * Une partie à reprendre dès que le premier de ses joueurs arrive (reprise depuis le tableau
+   * de bord : sans personne, les bots joueraient seuls), ou null.
+   */
+  pendingSave: number | null;
 };
 
 /** Déconnecté en partie depuis tant (ms) : un bot Facile prend sa place, qu'il retrouvera. */
@@ -236,6 +251,44 @@ export class GameServer {
     this.#broadcastRooms();
   }
 
+  adminSaves(): AdminSave[] {
+    return (this.#options.saves?.list() ?? []).map((save) => ({
+      ...save,
+      inUse: this.#slotInUse(save.slot),
+    }));
+  }
+
+  /**
+   * Reprend une sauvegarde depuis le tableau de bord : un salon à son nom (et son mot de passe),
+   * qui la relance dès que le premier de ses joueurs arrive.
+   */
+  adminResumeSave(slot: number): ServerRefusal | null {
+    const game = this.#options.saves?.read(slot);
+    if (!game) return 'noSave';
+    if (this.#slotInUse(slot)) return 'alreadyPlaying';
+    if (this.#rooms.size >= this.#options.maxRooms) return 'tooManyRooms';
+    let code = roomCode();
+    while (this.#rooms.has(code)) code = roomCode();
+    const hosted = this.#host(
+      new Room(code, game.roomName, game.password !== null),
+      game.password,
+      true,
+    );
+    hosted.pendingSave = slot;
+    this.#rooms.set(code, hosted);
+    this.#options.log(
+      `Le tableau de bord a rouvert "${game.roomName}" (${code}) pour reprendre sa partie`,
+    );
+    this.#broadcastRooms();
+    return null;
+  }
+
+  adminDeleteSave(slot: number): void {
+    if (this.#slotInUse(slot)) return;
+    this.#options.saves?.remove(slot);
+    this.#broadcastSaves();
+  }
+
   adminUnban(id: MemberId): void {
     this.#options.bans?.remove(id);
   }
@@ -339,16 +392,17 @@ export class GameServer {
     connection.profile = message.profile;
     this.#byId.set(id, connection);
     this.#options.log(`${message.profile.name} est arrivé`);
+    // Revenu en pleine partie : il reprend sa place.
+    const back = [...this.#rooms.values()].find(
+      (hosted) => hosted.room.phase === 'playing' && hosted.room.member(id) !== undefined,
+    );
     this.#send(connection, {
       type: 'welcome',
       serverName: this.#options.name,
       version: GAME_VERSION,
       rooms: this.#summaries(),
+      roomId: back?.room.id ?? null,
     });
-    // Revenu en pleine partie : il reprend sa place.
-    const back = [...this.#rooms.values()].find(
-      (hosted) => hosted.room.phase === 'playing' && hosted.room.member(id) !== undefined,
-    );
     if (back) this.#enter(connection, back);
   }
 
@@ -368,10 +422,14 @@ export class GameServer {
   }
 
   /** Un salon à héberger, son mot de passe haché. */
-  #host(room: Room, password: string | null): HostedRoom {
+  /** Un salon à héberger ; `password` : en clair, ou déjà haché (`isHashed`, une sauvegarde). */
+  #host(room: Room, password: string | null, isHashed = false): HostedRoom {
     return {
       room,
-      password: password === null ? null : Bun.password.hashSync(password, 'bcrypt'),
+      password:
+        password === null || isHashed ? password : Bun.password.hashSync(password, 'bcrypt'),
+      slot: null,
+      pendingSave: null,
       timer: undefined,
       closeTimer: undefined,
       isRecapSent: false,
@@ -419,6 +477,15 @@ export class GameServer {
     hosted.closeTimer = undefined;
     connection.roomId = room.id;
     this.#send(connection, { type: 'chat', lines: [...room.chat] });
+    const saves = this.#options.saves;
+    if (saves && room.phase === 'lobby') {
+      this.#send(connection, { type: 'saves', saves: saves.list(), slots: saves.count });
+    }
+    // Une partie reprise depuis le tableau de bord démarre avec le premier de ses joueurs.
+    if (hosted.pendingSave !== null && room.hostId === connection.id) {
+      const refused = this.#resume(hosted, connection.id, hosted.pendingSave);
+      if (refused) this.#refuse(connection, refused);
+    }
     // Revenu à temps : pas de bot ; revenu après : il reprend sa place (à la fin d'un mini-jeu).
     clearTimeout(hosted.awayTimers.get(connection.id));
     hosted.awayTimers.delete(connection.id);
@@ -565,6 +632,15 @@ export class GameServer {
         }
         return;
       }
+      case 'resumeSave': {
+        if (room.hostId !== id) {
+          this.#refuse(connection, 'notHost');
+          return;
+        }
+        const refused = this.#resume(hosted, id, message.slot);
+        if (refused) this.#refuse(connection, refused);
+        return;
+      }
       case 'reclaimSeat':
         if (room.isAway(id)) this.#giveBack(hosted, id);
         return;
@@ -640,6 +716,13 @@ export class GameServer {
     }
     hosted.isRecapSent = false;
     this.#options.log(`Partie lancée dans le salon "${room.name}" (${room.id})`);
+    hosted.slot = this.#freeSlot();
+    if (this.#options.saves && hosted.slot === null) {
+      this.#announce(
+        hosted,
+        "Plus d'emplacement de sauvegarde libre : cette partie ne sera pas sauvegardée",
+      );
+    }
     this.#broadcastRoom(hosted);
     const session = room.session;
     if (!session) return;
@@ -649,8 +732,88 @@ export class GameServer {
       this.#send(member, session.snapshot(viewer, now()));
       this.#send(member, session.update(viewer, started.events, now()));
     }
+    this.#persist(hosted);
     this.#schedule(hosted);
     this.#broadcastRooms();
+  }
+
+  /** Reprend une partie sauvegardée dans ce salon (l'hôte, ou le premier arrivé). */
+  #resume(hosted: HostedRoom, by: MemberId, slot: number): ServerRefusal | null {
+    const { room } = hosted;
+    const game = this.#options.saves?.read(slot);
+    if (!game) return 'noSave';
+    if (this.#slotInUse(slot)) return 'alreadyPlaying';
+    let result: ReturnType<Room['resume']>;
+    try {
+      result = room.resume(by, game.room, this.#board, now());
+    } catch (error) {
+      this.#options.log(`Sauvegarde ${slot} impossible à reprendre : ${String(error)}`);
+      return 'noSave';
+    }
+    if (!result.ok) return result.reason;
+    hosted.slot = slot;
+    hosted.pendingSave = null;
+    hosted.isRecapSent = false;
+    this.#announce(hosted, `Partie reprise : manche ${game.room.session.state.round}`);
+    this.#broadcastRoom(hosted);
+    const session = room.session;
+    if (session) {
+      for (const member of this.#members(hosted)) {
+        if (member.id !== null)
+          this.#send(member, session.snapshot(room.viewerOf(member.id), now()));
+      }
+    }
+    this.#schedule(hosted);
+    this.#broadcastRooms();
+    this.#broadcastSaves();
+    return null;
+  }
+
+  /** Un emplacement libre (ni sauvegardé, ni pris par un salon en partie), ou null. */
+  #freeSlot(): number | null {
+    const saves = this.#options.saves;
+    if (!saves) return null;
+    const taken = new Set(saves.list().map((save) => save.slot));
+    for (let slot = 1; slot <= saves.count; slot++) {
+      if (!taken.has(slot) && !this.#slotInUse(slot)) return slot;
+    }
+    return null;
+  }
+
+  #slotInUse(slot: number): boolean {
+    return [...this.#rooms.values()].some(
+      (hosted) => hosted.slot === slot && hosted.room.phase === 'playing',
+    );
+  }
+
+  /** Sauvegarde la partie du salon (après une étape résolue ; jamais en plein mini-jeu). */
+  #persist(hosted: HostedRoom): void {
+    const saves = this.#options.saves;
+    const save = hosted.room.toSave();
+    if (!saves || hosted.slot === null || !save) return;
+    try {
+      saves.write(hosted.slot, {
+        version: SAVE_FILE_VERSION,
+        savedAt: new Date().toISOString(),
+        roomName: hosted.room.name,
+        password: hosted.password,
+        room: save,
+      });
+    } catch (error) {
+      // Une sauvegarde ratée n'arrête pas la partie : on le note, la suivante réessaiera.
+      this.#options.log(`Sauvegarde ratée (salon ${hosted.room.id}) : ${String(error)}`);
+    }
+  }
+
+  /** Les parties sauvegardées, à ceux qui sont au salon (l'hôte peut en reprendre une). */
+  #broadcastSaves(): void {
+    const saves = this.#options.saves;
+    if (!saves) return;
+    const message = { type: 'saves', saves: saves.list(), slots: saves.count } as const;
+    for (const hosted of this.#rooms.values()) {
+      if (hosted.room.phase !== 'lobby') continue;
+      for (const member of this.#members(hosted)) this.#send(member, message);
+    }
   }
 
   #play(
@@ -737,6 +900,7 @@ export class GameServer {
       if (member.id === null) continue;
       this.#send(member, session.update(room.viewerOf(member.id), events, now()));
     }
+    this.#persist(hosted);
     if (session.isPlayingArena || hosted.isRecapSent) return;
     const recap = session.recapMessage();
     if (recap?.type !== 'recap') return;
@@ -744,9 +908,13 @@ export class GameServer {
     for (const member of this.#members(hosted)) this.#send(member, recap);
     clearTimeout(hosted.timer);
     room.finishGame();
+    // Finie : son emplacement de sauvegarde se libère.
+    if (hosted.slot !== null) this.#options.saves?.remove(hosted.slot);
+    hosted.slot = null;
     this.#options.log(`Partie finie dans le salon "${room.name}" (${room.id})`);
     this.#broadcastRoom(hosted);
     this.#broadcastRooms();
+    this.#broadcastSaves();
   }
 
   #broadcastArena(hosted: HostedRoom): void {
@@ -799,8 +967,7 @@ function stepOf(room: Room): string | null {
   if (!session) return null;
   const arena = session.arenaMessage({ type: 'spectator' }, now());
   if (arena.type === 'arena' && arena.run) {
-    // (Les noms des mini-jeux sont dans le client : ici, leur identifiant.)
-    return `Mini-jeu ${arena.run.minigame} (${STAGE_NAMES[arena.run.stage]})`;
+    return `${MINIGAME_NAMES[arena.run.minigame]} (${STAGE_NAMES[arena.run.stage]})`;
   }
   const snapshot = session.snapshot({ type: 'spectator' }, now());
   if (snapshot.type !== 'snapshot') return null;

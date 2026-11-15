@@ -185,6 +185,35 @@ describe('presence in the game', () => {
   });
 });
 
+describe('saved games', () => {
+  test('a game saved in a room resumes elsewhere: each seat waits for its own player', () => {
+    const room = lobby();
+    room.start(ana.id, board, 7, 0);
+    const save = room.toSave();
+    if (!save) throw new Error('rien à sauvegarder');
+    // Après un redémarrage du serveur : Ana revient seule, crée un salon, reprend la partie.
+    const again = new Room('ROOM2', 'Reprise', false);
+    again.join(ana);
+    expect(again.resume(ana.id, save, board, 0).ok).toBe(true);
+    expect(again.phase).toBe('playing');
+    expect(again.viewerOf(ana.id)).toEqual({ type: 'player', playerId: 'p1' });
+    expect(again.session?.seats.p1?.control).toBe('human');
+    // Bob n'est pas là : un bot Facile tient sa place, à son nom.
+    expect(again.isAway(bob.id)).toBe(true);
+    expect(again.session?.seats.p2?.control).toBe('easy');
+    expect(again.member(bob.id)).toMatchObject({ name: 'Bob', isConnected: false });
+    // Il arrive : c'est sa place qu'il retrouve.
+    again.join(bob);
+    expect(again.reclaim(bob.id).ok).toBe(true);
+    expect(again.viewerOf(bob.id)).toEqual({ type: 'player', playerId: 'p2' });
+    expect(again.session?.seats.p2?.control).toBe('human');
+  });
+
+  test('nothing is saved in the middle of a minigame, nor once the game is over', () => {
+    expect(lobby().toSave()).toBeNull();
+  });
+});
+
 describe('the network messages', () => {
   const identity = { id: 'abcdefghijklmnop', secret: 'a'.repeat(40) };
   const profile = { name: '  Ana  ', appearance: naturalAppearance('fox') };

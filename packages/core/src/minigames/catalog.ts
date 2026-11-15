@@ -49,6 +49,47 @@ export type MinigameDefinition = {
   worlds?: number;
 };
 
+/**
+ * Le nom de chaque mini-jeu, tel que les joueurs le lisent (le client en montre aussi une phrase
+ * d'explication ; le serveur s'en sert dans son tableau de bord).
+ */
+export const MINIGAME_NAMES: Record<MinigameId, string> = {
+  meltingPlatform: 'Plateforme fondante',
+  pawnSumo: 'Sumo des pions',
+  spinningBar: 'Barre tournante',
+  stacker: 'Empileur',
+  cardMemory: 'Mémoire des cartes',
+  boardReflex: 'Réflexe du Plateau',
+  secretAuction: 'Enchères secrètes',
+  uniqueStairs: "L'escalier des uniques",
+  rhythmTugOfWar: 'Tir à la corde rythmé',
+  bigDie: 'Le Gros Dé',
+  rampart: 'Le Rempart',
+  highNoon: 'Duel au soleil',
+  clayShoot: 'Ball-trap',
+  lastRoll: 'Le dernier lancer',
+  perfectGauge: 'Jauge parfaite',
+  combination: 'Combinaison',
+  conveyorSort: 'Tapis express',
+  fallingPlates: 'Pile ou chute',
+  skyPhoto: 'Clic-clac !',
+  ridgeRide: 'Sur le fil',
+  offPiste: 'Hors-piste !',
+  greatCrossing: 'La grande traversée',
+  hotPotato: 'Patate explosive',
+  pileUp: 'Gare à la pile !',
+  hamsterBall: 'Bille en tête',
+  tumbleDown: 'La dégringolade',
+  penaltyKicks: 'Tirs au but',
+  chifoumi: 'Chifoumi du sommet',
+  armWrestling: 'Bras de fer',
+  cannoneer: 'Le Canonnier',
+  freshPaint: 'Peinture fraîche',
+  miniGolf: 'Mini-golf',
+  kingOfHill: 'Roi de la colline',
+  logJoust: 'Joute sur le tronc',
+};
+
 export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
   meltingPlatform: { occasions: ['round'] },
   pawnSumo: { occasions: ['round', 'finale'], finalists: { min: 2, max: 6 } },

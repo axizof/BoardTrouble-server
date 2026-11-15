@@ -6,6 +6,7 @@ import {
   PROTOCOL_VERSION,
 } from '@board-trouble/core';
 import { GameServer } from './gameServer';
+import { MemorySaveSlots } from './saveSlots';
 
 /** Un faux client : ce qu'il a reçu, et s'il a été fermé. */
 function client(server: GameServer, id: string, name: string, secret = 's'.repeat(40)) {
@@ -186,6 +187,60 @@ describe('the game server', () => {
     expect(cleo.last('snapshot')?.you).toBe('p3');
     expect(ana.last('seats')?.seats.p3?.kind).toBe('human');
     expect(cleo.last('snapshot')?.state.players[2]?.name).toBe('Cleo');
+  });
+
+  test('a game is saved as it goes; after a restart, its players resume it and find their seats', () => {
+    const saves = new MemorySaveSlots(3);
+    server = new GameServer({ name: 'Test', maxRooms: 4, log: () => {}, saves });
+    const ana = client(server, 'ana-000000000000001', 'Ana');
+    const bob = client(server, 'bob-000000000000002', 'Bob');
+    ana.hello();
+    bob.hello();
+    ana.send({ type: 'createRoom', name: 'Partie', password: null });
+    bob.send({ type: 'joinRoom', roomId: ana.last('room')?.room?.id, password: null });
+    ana.send({ type: 'startGame' });
+    expect(saves.list()).toMatchObject([
+      {
+        slot: 1,
+        roomName: 'Partie',
+        players: ['Ana', 'Bob', expect.any(String), expect.any(String)],
+      },
+    ]);
+    // Le serveur redémarre : un nouveau serveur, les mêmes sauvegardes.
+    server.close();
+    server = new GameServer({ name: 'Test', maxRooms: 4, log: () => {}, saves });
+    const back = client(server, 'ana-000000000000001', 'Ana');
+    back.hello();
+    back.send({ type: 'createRoom', name: 'Reprise', password: null });
+    expect(back.last('saves')?.saves[0]?.slot).toBe(1);
+    back.send({ type: 'resumeSave', slot: 1 });
+    expect(back.last('snapshot')?.you).toBe('p1');
+    expect(back.last('room')?.room?.seats[1]).toMatchObject({
+      member: 'bob-000000000000002',
+      isAway: true,
+    });
+    const bobBack = client(server, 'bob-000000000000002', 'Bob');
+    bobBack.hello();
+    bobBack.send({ type: 'joinRoom', roomId: back.last('room')?.room?.id, password: null });
+    expect(bobBack.last('snapshot')?.you).toBe('p2');
+  });
+
+  test('from the dashboard, a saved game reopens and starts again with its first player', () => {
+    const saves = new MemorySaveSlots(3);
+    server = new GameServer({ name: 'Test', maxRooms: 4, log: () => {}, saves });
+    const ana = client(server, 'ana-000000000000001', 'Ana');
+    ana.hello();
+    ana.send({ type: 'createRoom', name: 'Soirée', password: null });
+    ana.send({ type: 'startGame' });
+    server.close();
+    server = new GameServer({ name: 'Test', maxRooms: 4, log: () => {}, saves });
+    expect(server.adminResumeSave(1)).toBeNull();
+    const room = server.adminRooms()[0]?.view;
+    expect(room?.name).toBe('Soirée');
+    const back = client(server, 'ana-000000000000001', 'Ana');
+    back.hello();
+    back.send({ type: 'joinRoom', roomId: room?.id, password: null });
+    expect(back.last('snapshot')?.you).toBe('p1');
   });
 
   test('nothing is done before saying hello, and garbage is ignored', () => {
