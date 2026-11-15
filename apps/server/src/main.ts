@@ -1,12 +1,19 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { join, normalize, resolve, sep } from 'node:path';
 import { GAME_VERSION } from '@board-trouble/core';
+import { AdminHub, type AdminPeer } from './admin/adminHub';
+import { DataStore } from './admin/dataStore';
+import { FileBans } from './admin/fileBans';
+import adminPage from './admin/index.html';
+import { LogBuffer } from './admin/logBuffer';
 import { GameServer, type Peer } from './gameServer';
 
 // Le serveur Board Trouble (01-architecture.md, sections 3 et 10) : il sert le jeu lui-même (la
 // page et la connexion de jeu ont la même origine : en LAN, ni contenu mixte ni accès au réseau
-// local à autoriser) et héberge les salons sur une WebSocket (`/ws`).
+// local à autoriser) et héberge les salons sur une WebSocket (`/ws`). Son tableau de bord est sur
+// `/admin` (sa connexion sur `/admin/ws`).
 //
 // Réglages (ligne de commande, sinon variables d'environnement) :
 //   --port 7350        BT_PORT
@@ -14,8 +21,10 @@ import { GameServer, type Peer } from './gameServer';
 //   --client <dossier> BT_CLIENT   le jeu compilé (dist du client)
 //   --lag 80           BT_LAG      développement : simule un réseau lent (ms de latence, plus
 //                                  des à-coups de la moitié), dans les deux sens
+//   --data <dossier>   BT_DATA     où garder ses données (bannis, presets) : `data/` par défaut
+//   BT_ADMIN_PASSWORD             le mot de passe du tableau de bord (sinon tiré au lancement)
 
-type Settings = { port: number; name: string; client: string; lag: number };
+type Settings = { port: number; name: string; client: string; lag: number; data: string };
 
 function readSettings(): Settings {
   const args = process.argv.slice(2);
@@ -35,12 +44,18 @@ function readSettings(): Settings {
         process.env.BT_CLIENT ??
         join(import.meta.dir, '../../../../client/dist'),
     ),
+    data: resolve(option('--data') ?? process.env.BT_DATA ?? 'data'),
   };
 }
 
+/** Le journal : la console, et la console du tableau de bord (les 500 dernières lignes). */
+const logs = new LogBuffer(500);
+
 function log(line: string): void {
   const time = new Date().toLocaleTimeString('fr-FR');
-  console.log(`[${time}] ${line}`);
+  const stamped = `[${time}] ${line}`;
+  console.log(stamped);
+  logs.push(stamped);
 }
 
 /** Les adresses où les autres joueurs du réseau local peuvent ouvrir le jeu. */
@@ -76,10 +91,21 @@ function clientFile(root: string, pathname: string): Response {
 
 const settings = readSettings();
 const hasClient = existsSync(join(settings.client, 'index.html'));
-const game = new GameServer({ name: settings.name, maxRooms: 8, log });
+const store = new DataStore(settings.data, log);
+const bans = new FileBans(store);
+const game = new GameServer({ name: settings.name, maxRooms: 8, log, bans });
+/** Le mot de passe du tableau de bord (hors de cette machine), affiché au lancement s'il est tiré. */
+const adminPassword = process.env.BT_ADMIN_PASSWORD || randomBytes(6).toString('base64url');
+
+/** Les adresses de la machine elle-même : le tableau de bord y entre sans mot de passe. */
+const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 type SocketData = {
+  /** Une connexion de jeu, ou du tableau de bord. */
+  kind: 'game' | 'admin';
   connection: ReturnType<GameServer['connect']> | null;
+  admin: ReturnType<AdminHub['connect']> | null;
+  address: string;
   /** Le retard simulé, dans chaque sens (`--lag`). */
   outbound: (deliver: () => void) => void;
   inbound: (deliver: () => void) => void;
@@ -87,13 +113,18 @@ type SocketData = {
 
 const server = Bun.serve<SocketData>({
   port: settings.port,
+  routes: { '/admin': adminPage },
   fetch(request, bun) {
     const url = new URL(request.url);
-    if (url.pathname === '/ws') {
+    if (url.pathname === '/ws' || url.pathname === '/admin/ws') {
+      const isAdmin = url.pathname === '/admin/ws';
       const data: SocketData = {
+        kind: isAdmin ? 'admin' : 'game',
         connection: null,
-        outbound: delayed(settings.lag),
-        inbound: delayed(settings.lag),
+        admin: null,
+        address: bun.requestIP(request)?.address ?? '',
+        outbound: delayed(isAdmin ? 0 : settings.lag),
+        inbound: delayed(isAdmin ? 0 : settings.lag),
       };
       return bun.upgrade(request, { data })
         ? undefined
@@ -116,19 +147,26 @@ const server = Bun.serve<SocketData>({
     // tombé, sinon vus au bout de 2 minutes. Un joueur inactif mais présent n'est pas coupé.
     idleTimeout: 30,
     open(socket) {
-      const peer: Peer = {
+      const peer: Peer & AdminPeer = {
         send: (text) => socket.data.outbound(() => socket.send(text)),
         close: () => socket.data.outbound(() => socket.close()),
       };
-      socket.data.connection = game.connect(peer);
+      const { address } = socket.data;
+      if (socket.data.kind === 'admin') {
+        socket.data.admin = admin.connect(peer, LOOPBACK.has(address), address);
+      } else {
+        socket.data.connection = game.connect(peer, address);
+      }
     },
     message(socket, message) {
-      const { connection } = socket.data;
+      const { connection, admin: adminConnection } = socket.data;
       const text = typeof message === 'string' ? message : '';
+      if (adminConnection) admin.receive(adminConnection, text);
       if (connection) socket.data.inbound(() => game.receive(connection, text));
     },
     close(socket) {
-      const { connection } = socket.data;
+      const { connection, admin: adminConnection } = socket.data;
+      if (adminConnection) admin.disconnect(adminConnection);
       if (connection) game.disconnect(connection);
     },
   },
@@ -136,16 +174,49 @@ const server = Bun.serve<SocketData>({
 
 // (Undefined seulement pour un serveur sur un socket Unix, pas ici.)
 const port = server.port ?? settings.port;
+
+/** Arrête tout ; `restart` : relance le même serveur (mêmes réglages) une fois le port libéré. */
+function shutdown(restart: boolean): void {
+  log(restart ? 'Redémarrage du serveur' : 'Arrêt du serveur');
+  clearInterval(pinging);
+  admin.close();
+  game.close();
+  server.stop(true);
+  if (restart) {
+    // La même commande (bun et ce script, ou l'exécutable), qui hérite de cette console.
+    Bun.spawn([process.execPath, ...process.argv.slice(1)], {
+      stdio: ['inherit', 'inherit', 'inherit'],
+    });
+  }
+  process.exit(0);
+}
+
+const admin = new AdminHub({
+  game,
+  logs,
+  store,
+  bans,
+  password: adminPassword,
+  serverInfo: () => ({ name: settings.name, port, addresses: lanAddresses(port) }),
+  // Les mises à jour arrivent à l'étape suivante (les releases).
+  update: () => null,
+  log,
+  onStop: () => shutdown(false),
+  onRestart: () => shutdown(true),
+});
+/** La latence de chacun, mesurée toutes les 5 s (le tableau de bord l'affiche). */
+const pinging = setInterval(() => game.pingAll(), 5000);
 log(`Board Trouble ${GAME_VERSION} : "${settings.name}" sur le port ${port}`);
 log(`Sur cette machine : http://localhost:${port}`);
 for (const address of lanAddresses(port)) log(`Sur le réseau local : ${address}`);
 if (settings.lag > 0) log(`Réseau lent simulé : ${settings.lag} ms de latence (développement)`);
 if (!hasClient)
   log(`Attention : pas de jeu compilé dans ${settings.client} (npm run build côté client)`);
+log(`Tableau de bord : http://localhost:${port}/admin`);
+if (!process.env.BT_ADMIN_PASSWORD) {
+  log(
+    `  depuis une autre machine, mot de passe : ${adminPassword} (ou fixe-le : BT_ADMIN_PASSWORD)`,
+  );
+}
 
-process.on('SIGINT', () => {
-  log('Arrêt du serveur');
-  game.close();
-  server.stop(true);
-  process.exit(0);
-});
+process.on('SIGINT', () => shutdown(false));

@@ -133,6 +133,42 @@ describe('presence in the game', () => {
     expect(room.chat.at(-1)).toMatchObject({ name: 'Ana', text: 'ligne 59' });
   });
 
+  test('forcing the next step plays the awaited human at once, without counting them absent', () => {
+    const room = lobby();
+    room.start(ana.id, board, 7, 0);
+    const session = room.session;
+    if (!session) throw new Error('no session');
+    // Les bots passent la présentation ; puis la partie attend Ana et Bob (45 s chacun).
+    session.tick(1_000);
+    session.tick(2_000);
+    expect(session.tick(3_000)).toBeNull();
+    const waiting = (now: number) => {
+      const message = session.snapshot({ type: 'spectator' }, now);
+      if (message.type !== 'snapshot') throw new Error('snapshot attendu');
+      const { phase } = message.state;
+      return phase.type === 'intro' ? phase.waiting.length : 0;
+    };
+    expect(waiting(3_000)).toBe(2);
+    expect(session.forceNext(3_000)).not.toBeNull();
+    expect(waiting(3_000)).toBe(1);
+    expect(session.takeAutoPlayed()).toEqual([]);
+  });
+
+  test('a room created from the dashboard takes its settings and bot levels without a host', () => {
+    const room = new Room('ADMIN1', 'Du tableau de bord', false);
+    expect(room.configure({ ...DEFAULT_ROOM_SETTINGS, tableSize: 6 }, ['expert', 'easy']).ok).toBe(
+      true,
+    );
+    expect(room.view().seats.map((seat) => seat.botLevel)).toEqual([
+      'expert',
+      'easy',
+      'normal',
+      'normal',
+      'normal',
+      'normal',
+    ]);
+  });
+
   test('the session says which humans it played itself when their time ran out', () => {
     const room = lobby();
     room.start(ana.id, board, 7, 0);
