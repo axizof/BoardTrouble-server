@@ -33,7 +33,8 @@ export type MinigameId =
   | 'kingOfHill'
   | 'cannoneer'
   | 'freshPaint'
-  | 'armWrestling';
+  | 'armWrestling'
+  | 'miniGolf';
 
 /** Moment où l'on joue un mini-jeu. Une manche peut tirer un chacun pour soi ou un jeu d'équipes. */
 export type MinigameOccasion = 'round' | 'oneVsAll' | 'duel' | 'finale' | 'solo';
@@ -83,6 +84,7 @@ export const MINIGAMES: Record<MinigameId, MinigameDefinition> = {
   cannoneer: { occasions: ['oneVsAll'] },
   freshPaint: { occasions: ['round'] },
   armWrestling: { occasions: ['duel', 'finale'], finalists: { min: 2, max: 2 } },
+  miniGolf: { occasions: ['round'] },
 };
 
 export const MINIGAME_IDS = Object.keys(MINIGAMES) as MinigameId[];
