@@ -392,16 +392,17 @@ export class GameServer {
     connection.profile = message.profile;
     this.#byId.set(id, connection);
     this.#options.log(`${message.profile.name} est arrivé`);
+    // Revenu en pleine partie : il reprend sa place.
+    const back = [...this.#rooms.values()].find(
+      (hosted) => hosted.room.phase === 'playing' && hosted.room.member(id) !== undefined,
+    );
     this.#send(connection, {
       type: 'welcome',
       serverName: this.#options.name,
       version: GAME_VERSION,
       rooms: this.#summaries(),
+      roomId: back?.room.id ?? null,
     });
-    // Revenu en pleine partie : il reprend sa place.
-    const back = [...this.#rooms.values()].find(
-      (hosted) => hosted.room.phase === 'playing' && hosted.room.member(id) !== undefined,
-    );
     if (back) this.#enter(connection, back);
   }
 

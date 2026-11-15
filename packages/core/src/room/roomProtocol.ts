@@ -76,7 +76,18 @@ export type ServerRefusal =
 
 export type RoomHostMessage =
   /** La réponse au `hello` : le serveur, sa version, et ses salons. */
-  | { type: 'welcome'; serverName: string; version: string; rooms: RoomSummary[] }
+  /**
+   * La réponse au `hello` : le serveur, sa version, ses salons ; `roomId` : le salon où l'on
+   * revient (une partie en cours qui garde sa place), ou null (après un redémarrage du serveur,
+   * la partie affichée n'existe plus).
+   */
+  | {
+      type: 'welcome';
+      serverName: string;
+      version: string;
+      rooms: RoomSummary[];
+      roomId: string | null;
+    }
   | { type: 'rooms'; rooms: RoomSummary[] }
   /** Le salon où l'on est (à chaque changement), ou null quand on en sort. */
   | { type: 'room'; room: RoomView | null }
