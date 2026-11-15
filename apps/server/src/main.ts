@@ -9,6 +9,7 @@ import { FileBans } from './admin/fileBans';
 import adminPage from './admin/index.html';
 import { LogBuffer } from './admin/logBuffer';
 import { GameServer, type Peer } from './gameServer';
+import { UpdateChecker } from './updates';
 
 // Le serveur Board Trouble (01-architecture.md, sections 3 et 10) : il sert le jeu lui-même (la
 // page et la connexion de jeu ont la même origine : en LAN, ni contenu mixte ni accès au réseau
@@ -23,6 +24,8 @@ import { GameServer, type Peer } from './gameServer';
 //                                  des à-coups de la moitié), dans les deux sens
 //   --data <dossier>   BT_DATA     où garder ses données (bannis, presets) : `data/` par défaut
 //   BT_ADMIN_PASSWORD             le mot de passe du tableau de bord (sinon tiré au lancement)
+//   BT_UPDATE_REPO                le repo GitHub dont suivre les Releases (le repo du serveur)
+//   BT_NO_UPDATE_CHECK=1          ne pas chercher de mises à jour
 
 type Settings = { port: number; name: string; client: string; lag: number; data: string };
 
@@ -179,6 +182,7 @@ const port = server.port ?? settings.port;
 function shutdown(restart: boolean): void {
   log(restart ? 'Redémarrage du serveur' : 'Arrêt du serveur');
   clearInterval(pinging);
+  updates.stop();
   admin.close();
   game.close();
   server.stop(true);
@@ -191,6 +195,9 @@ function shutdown(restart: boolean): void {
   process.exit(0);
 }
 
+/** Les mises à jour (BT_NO_UPDATE_CHECK=1 pour ne pas regarder). */
+const updates = new UpdateChecker(log);
+
 const admin = new AdminHub({
   game,
   logs,
@@ -198,11 +205,18 @@ const admin = new AdminHub({
   bans,
   password: adminPassword,
   serverInfo: () => ({ name: settings.name, port, addresses: lanAddresses(port) }),
-  // Les mises à jour arrivent à l'étape suivante (les releases).
-  update: () => null,
+  update: () => updates.available,
   log,
   onStop: () => shutdown(false),
   onRestart: () => shutdown(true),
+  onUpdate: async () => {
+    if (game.adminRooms().some((room) => room.view.phase === 'playing')) {
+      return 'Une partie est en cours : la mise à jour attendra sa fin.';
+    }
+    const error = await updates.apply();
+    if (!error) shutdown(true);
+    return error;
+  },
 });
 /** La latence de chacun, mesurée toutes les 5 s (le tableau de bord l'affiche). */
 const pinging = setInterval(() => game.pingAll(), 5000);

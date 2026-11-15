@@ -187,7 +187,13 @@ function overview({ server, rooms, players }: AdminState): string {
   const playing = rooms.filter((room) => room.view.phase === 'playing').length;
   return `${
     server.update
-      ? `<div class="banner"><strong>Version ${escapeHtml(server.update.version)} disponible.</strong> ${escapeHtml(server.update.notes)}</div>`
+      ? `<div class="banner"><strong>Version ${escapeHtml(server.update.version)} disponible.</strong>
+          <pre class="notes">${escapeHtml(server.update.notes)}</pre>
+          ${
+            server.update.canApply
+              ? '<button class="button is-primary" data-confirm="applyUpdate">Mettre à jour et redémarrer</button>'
+              : '<span class="muted">Le serveur tourne depuis les sources : mets-le à jour avec git pull, puis relance-le.</span>'
+          }</div>`
       : ''
   }<div class="grid">
     ${stat(String(players.length), plural(players.length, 'joueur connecté', 'joueurs connectés'))}
@@ -422,6 +428,11 @@ function confirmation(button: HTMLElement): { text: string; action: AdminInbound
       return {
         text: 'Redémarrer le serveur ? Les parties en cours seront perdues.',
         action: { type: 'restart' },
+      };
+    case 'applyUpdate':
+      return {
+        text: 'Installer la nouvelle version et redémarrer le serveur ? (Impossible pendant une partie.)',
+        action: { type: 'applyUpdate' },
       };
     case 'stop':
       return {

@@ -1,5 +1,6 @@
 import type { BotLevel, RoomSettings } from '@board-trouble/core';
 import type { AdminPlayer, AdminRoom } from '../gameServer';
+import type { AvailableUpdate } from '../updates';
 import type { SystemStats } from './systemStats';
 
 // Les messages entre la page du tableau de bord et le serveur (`/admin/ws`). Partagés par les
@@ -17,8 +18,8 @@ export type AdminState = {
     /** Depuis quand il tourne (horloge du serveur, ms). */
     uptime: number;
     stats: SystemStats;
-    /** Une version plus récente publiée, ou null (étape suivante : les mises à jour). */
-    update: { version: string; notes: string } | null;
+    /** Une version plus récente publiée, ou null ; `canApply` : un clic l'installe. */
+    update: AvailableUpdate | null;
   };
   rooms: AdminRoom[];
   players: AdminPlayer[];
@@ -36,7 +37,8 @@ export type AdminInbound =
   | { type: 'savePreset'; preset: Preset }
   | { type: 'deletePreset'; name: string }
   | { type: 'stop' }
-  | { type: 'restart' };
+  | { type: 'restart' }
+  | { type: 'applyUpdate' };
 
 export type AdminOutbound =
   /** `needsPassword` : la page doit donner le mot de passe admin (hors de la machine du serveur). */
