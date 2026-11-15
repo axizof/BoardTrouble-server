@@ -103,6 +103,7 @@ describe('a game session', () => {
     throw new Error('Aucune partie ne tire le Sumo en premier');
   });
 
+  // Comme pour le duel ci-dessous : des parties entières jusqu'à tomber sur le Gros Dé.
   test('plays a 1-vs-all arena with the lone player on their own side, then rewards them', () => {
     for (let seed = 1; seed < 400; seed++) {
       const { session } = start(BOTS, seed);
@@ -120,7 +121,7 @@ describe('a game session', () => {
       return;
     }
     throw new Error('Aucune partie ne joue le Gros Dé en 1 contre tous');
-  });
+  }, 30_000);
 
   // Joue des parties entières jusqu'à tomber sur un duel : avec les mini-jeux longs (Hors-piste
   // dure 3 minutes entre bots), il lui faut plus que les 5 s par défaut.
