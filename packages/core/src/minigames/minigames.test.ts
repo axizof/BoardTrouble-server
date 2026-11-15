@@ -61,7 +61,7 @@ function contextFor(state: GameState, seed: number): Context {
 
 describe('the minigame catalog', () => {
   test('offers each occasion its own minigames, and finales by number of finalists', () => {
-    expect(minigameCandidates('round', 4)).toHaveLength(21);
+    expect(minigameCandidates('round', 4)).toHaveLength(22);
     expect(minigameCandidates('duel', 2)).toEqual([
       'highNoon',
       'clayShoot',
@@ -114,7 +114,7 @@ describe('the minigame wheel', () => {
       counted.minigames.played = { ...played, cardMemory: 0 };
       if (drawMinigame(contextFor(counted, seed), 'round', 4) === 'cardMemory') fresh++;
     }
-    // Poids 1 contre 0,25 pour chacun des 20 autres (0,125 pour Pile ou chute) : environ une fois
+    // Poids 1 contre 0,25 pour chacun des 21 autres (0,125 pour Pile ou chute) : environ une fois
     // sur six.
     expect(fresh / 600).toBeGreaterThan(0.12);
     expect(fresh / 600).toBeLessThan(0.42);

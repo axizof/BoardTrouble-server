@@ -23,6 +23,7 @@ import { KING_OF_HILL } from '../kingOfHill/kingOfHill';
 import { LAST_ROLL } from '../lastRoll/lastRoll';
 import { LOG_JOUST } from '../logJoust/logJoust';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
+import { MINI_GOLF } from '../miniGolf/miniGolf';
 import { OFF_PISTE } from '../offPiste/offPiste';
 import { PAWN_SUMO } from '../pawnSumo/pawnSumo';
 import { PENALTY_KICKS } from '../penaltyKicks/penaltyKicks';
@@ -85,6 +86,7 @@ export const ARENAS = {
   cannoneer: CANNONEER,
   freshPaint: FRESH_PAINT,
   armWrestling: ARM_WRESTLING,
+  miniGolf: MINI_GOLF,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
