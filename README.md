@@ -14,7 +14,18 @@ Le serveur fait autorité : il applique toutes les règles, tire les dés et ne 
 
 ## État du projet
 
-En conception. Le code arrive après la validation des documents de conception.
+Le moteur de règles, les mini-jeux et leurs bots sont faits ; le multijoueur arrive par étapes (salons et parties en réseau d'abord).
+
+## Lancer un serveur
+
+Pour l'instant, depuis les sources (les exécutables viendront avec les releases) : le client cloné à côté de ce repo et compilé (`npm run build` dans le client), puis :
+
+```
+bun run start                       # port 7350 par défaut
+bun run start --port 7400 --name "Les copains" --client ../client/dist
+```
+
+La console affiche les adresses à donner aux joueurs (celle de ta machine et celles du réseau local). Les joueurs ouvrent l'une d'elles dans leur navigateur : le serveur leur envoie le jeu lui-même, puis ils choisissent Multijoueur, rejoignent ou créent un salon (avec un mot de passe s'ils veulent). Les réglages existent aussi en variables d'environnement : `BT_PORT`, `BT_NAME`, `BT_CLIENT`.
 
 ## Licence
 
@@ -25,7 +36,7 @@ En conception. Le code arrive après la validation des documents de conception.
 ```
 packages/core/      règles du jeu : plateau, dés, tours, portes, bots (TypeScript pur, tourne aussi dans le navigateur)
 tools/simulator/    simulateur d'équilibrage : des milliers de parties entre bots
-apps/server/        serveur réseau (à venir) : salons, reconnexion, modération, sauvegardes
+apps/server/        serveur réseau : sert le jeu, salons, parties (reconnexion, modération et sauvegardes à venir)
 ```
 
 ## Développement
