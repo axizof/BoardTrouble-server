@@ -63,7 +63,12 @@ describe('the minigame catalog', () => {
   test('offers each occasion its own minigames, and finales by number of finalists', () => {
     expect(minigameCandidates('round', 4)).toHaveLength(20);
     expect(minigameCandidates('duel', 2)).toEqual(['highNoon', 'clayShoot', 'logJoust']);
-    expect(minigameCandidates('oneVsAll', 4)).toEqual(['bigDie', 'rampart', 'penaltyKicks']);
+    expect(minigameCandidates('oneVsAll', 4)).toEqual([
+      'bigDie',
+      'rampart',
+      'penaltyKicks',
+      'cannoneer',
+    ]);
     expect(minigameCandidates('solo', 1)).toEqual(['perfectGauge', 'combination']);
     expect(minigameCandidates('finale', 2)).toEqual([
       'pawnSumo',
