@@ -75,8 +75,11 @@ export type ArenaGame<State extends ArenaState> = {
 
 /** La plus grande visée acceptée (un indice d'élément). */
 const MAX_TARGET = 255;
-/** Un point visé au-delà de ça (mètres, sur chaque axe) est ramené à cette limite. */
-const MAX_POINT = 50;
+/**
+ * Un point visé au-delà de ça (mètres, sur chaque axe) est ramené à cette limite. Large : les
+ * trous du Mini-golf sont posés côte à côte, le dernier à 80 m (un test du Mini-golf le vérifie).
+ */
+const MAX_POINT = 200;
 
 /** Remet une commande reçue d'un client dans les bornes (le client n'est jamais cru). */
 export function sanitizeInput(input: unknown): ArenaInput {

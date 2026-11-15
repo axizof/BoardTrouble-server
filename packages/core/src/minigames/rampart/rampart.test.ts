@@ -126,7 +126,7 @@ describe('the rampart', () => {
 
   test('an aimed point from a client is kept within bounds', () => {
     expect(sanitizeInput({ point: { x: 2, z: -3 } }).point).toEqual({ x: 2, z: -3 });
-    expect(sanitizeInput({ point: { x: 1e9, z: 0 } }).point).toEqual({ x: 50, z: 0 });
+    expect(sanitizeInput({ point: { x: 1e9, z: 0 } }).point).toEqual({ x: 200, z: 0 });
     expect(sanitizeInput({ point: { x: Number.NaN, z: 0 } }).point).toBeNull();
     expect(sanitizeInput({ point: 'here' }).point).toBeNull();
   });

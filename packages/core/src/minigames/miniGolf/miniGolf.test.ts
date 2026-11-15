@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { Rng } from '../../random/rng';
-import { ARENA_STEP, type ArenaInput, IDLE_INPUT } from '../arena/arena';
+import { ARENA_STEP, type ArenaInput, IDLE_INPUT, sanitizeInput } from '../arena/arena';
 import { advanceBall, type BallMotion } from './golfPhysics';
 import { GOLF_HOLES, type GolfHole } from './holes';
 import {
@@ -157,6 +157,11 @@ describe('Mini-golf', () => {
     const uneven = shotSpeed([-0.1, -0.6, -0.5, -0.4, -0.3, -0.3, -0.1, 0]);
     expect(even).toBeGreaterThan(0);
     expect(uneven).toBeCloseTo(even, 5);
+  });
+
+  test('a point aimed on the last hole, far along the world, reaches the game untouched', () => {
+    const far = { x: holeOffset(GOLF_COURSE - 1).x + 15, z: -15 };
+    expect(sanitizeInput({ ...IDLE_INPUT, point: far }).point).toEqual(far);
   });
 
   test('a stopped ball keeps the aim of its shot (the camera does not turn by itself)', () => {
