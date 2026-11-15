@@ -671,6 +671,24 @@ export class GameServer {
         if (refused) this.#refuse(connection, refused);
         return;
       }
+      case 'deleteSave':
+        if (room.hostId !== id) {
+          this.#refuse(connection, 'notHost');
+          return;
+        }
+        if (this.#slotInUse(message.slot)) {
+          this.#refuse(connection, 'alreadyPlaying');
+          return;
+        }
+        this.#options.saves?.remove(message.slot);
+        this.#options.log(`${room.member(id)?.name} a supprimé la sauvegarde ${message.slot}`);
+        this.#broadcastSaves();
+        return;
+      case 'stopGame': {
+        const refused = this.#stopGame(hosted, id);
+        if (refused) this.#refuse(connection, refused);
+        return;
+      }
       case 'reclaimSeat':
         if (room.isAway(id)) this.#giveBack(hosted, id);
         return;
@@ -765,6 +783,45 @@ export class GameServer {
     this.#persist(hosted);
     this.#schedule(hosted);
     this.#broadcastRooms();
+  }
+
+  /**
+   * L'hôte arrête la partie pour tout le monde : elle reste dans son emplacement (sa dernière
+   * étape résolue ; en plein mini-jeu, celle d'avant), à reprendre depuis le salon. Sans
+   * emplacement libre, elle continue : l'arrêter la perdrait.
+   */
+  #stopGame(hosted: HostedRoom, by: MemberId): ServerRefusal | null {
+    const { room } = hosted;
+    if (room.hostId !== by) return 'notHost';
+    if (room.phase !== 'playing') return 'notPlaying';
+    // Lancée quand tout était plein : un emplacement a pu se libérer depuis.
+    if (hosted.slot === null) hosted.slot = this.#freeSlot();
+    const slot = hosted.slot;
+    if (slot === null) return 'noSaveSlot';
+    this.#persist(hosted);
+    if (!this.#options.saves?.read(slot)) {
+      // Rien d'écrit (pris à l'instant, en plein mini-jeu) : on rend l'emplacement.
+      hosted.slot = null;
+      return 'noSaveSlot';
+    }
+    const result = room.stopGame(by);
+    if (!result.ok) return result.reason;
+    clearTimeout(hosted.timer);
+    for (const timer of hosted.awayTimers.values()) clearTimeout(timer);
+    hosted.awayTimers.clear();
+    hosted.autoPlays.clear();
+    hosted.pendingReturns.clear();
+    hosted.slot = null;
+    for (const member of this.#members(hosted)) this.#send(member, { type: 'gameStopped' });
+    this.#announce(
+      hosted,
+      `${room.member(by)?.name} a arrêté la partie : elle est sauvegardée, à reprendre depuis le salon`,
+    );
+    this.#options.log(`Partie arrêtée et sauvegardée (${slot}) dans le salon "${room.name}"`);
+    this.#broadcastRoom(hosted);
+    this.#broadcastRooms();
+    this.#broadcastSaves();
+    return null;
   }
 
   /** Reprend une partie sauvegardée dans ce salon (l'hôte, ou le premier arrivé). */

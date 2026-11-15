@@ -63,6 +63,10 @@ export type RoomClientMessage =
   | { type: 'unban'; member: string }
   /** L'hôte, au salon : reprendre la partie sauvegardée de cet emplacement. */
   | { type: 'resumeSave'; slot: number }
+  /** L'hôte, au salon : supprime une partie sauvegardée (libère son emplacement). */
+  | { type: 'deleteSave'; slot: number }
+  /** L'hôte, en partie : l'arrête pour tout le monde, sauvegardée. */
+  | { type: 'stopGame' }
   /** La réponse au `ping` du serveur (il mesure ainsi la latence de chacun). */
   | { type: 'pong'; id: number };
 
@@ -80,6 +84,8 @@ export type ServerRefusal =
   | 'chatTooFast'
   /** La sauvegarde à reprendre n'existe plus, ou elle est illisible. */
   | 'noSave'
+  /** Arrêter la partie : aucun emplacement de sauvegarde libre pour la garder. */
+  | 'noSaveSlot'
   /** On t'a sorti du salon (ou banni). */
   | 'kicked';
 
@@ -107,7 +113,9 @@ export type RoomHostMessage =
   /** Le serveur mesure la latence : le client répond `pong` avec le même numéro. */
   | { type: 'ping'; id: number }
   /** Au salon : les parties sauvegardées du serveur (l'hôte peut en reprendre une). */
-  | { type: 'saves'; saves: SaveSummary[]; slots: number };
+  | { type: 'saves'; saves: SaveSummary[]; slots: number }
+  /** L'hôte a arrêté la partie (sauvegardée) : chacun revient au salon. */
+  | { type: 'gameStopped' };
 
 /** Tout ce qu'un client peut envoyer à un serveur, et tout ce qu'il peut en recevoir. */
 export type NetClientMessage = RoomClientMessage | ClientMessage;
@@ -165,6 +173,7 @@ export function parseNetMessage(text: string): NetClientMessage | null {
     case 'listRooms':
     case 'leaveRoom':
     case 'startGame':
+    case 'stopGame':
     case 'arenaReady':
     case 'reclaimSeat':
       return { type: data.type };
@@ -177,7 +186,9 @@ export function parseNetMessage(text: string): NetClientMessage | null {
         ? { type: 'assignSeat', member: data.member, seat: data.seat as number }
         : null;
     case 'resumeSave':
-      return Number.isInteger(data.slot) ? { type: 'resumeSave', slot: data.slot as number } : null;
+    case 'deleteSave':
+      return Number.isInteger(data.slot) ? { type: data.type, slot: data.slot as number } : null;
+
     case 'pong':
       return Number.isSafeInteger(data.id) ? { type: 'pong', id: data.id as number } : null;
     case 'kick':
