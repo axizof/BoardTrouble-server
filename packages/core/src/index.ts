@@ -14,6 +14,7 @@ export * from './interactions/interactions';
 export * from './items/catalog';
 export * from './items/useItem';
 export * from './jail/jail';
+export * from './lobby/bots';
 export * from './lobby/players';
 export * from './minigames/arena/arena';
 export * from './minigames/arena/arenaRun';
