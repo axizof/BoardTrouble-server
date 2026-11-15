@@ -33,6 +33,10 @@ Pour tester comme par Internet : `bun run start --lag 80` simule un réseau lent
 
 Sur `http://localhost:7350/admin` (le port du serveur) : la vue d'ensemble (joueurs, salons, processeur, mémoire, adresses à donner), les salons (en créer un à partir d'un preset, forcer l'étape suivante d'une partie bloquée, fermer), les joueurs (ping, expulser, bannir de tout le serveur), la console en direct, et les réglages (presets de salon, redémarrer, arrêter). Depuis la machine du serveur, il s'ouvre directement ; depuis une autre, il demande le mot de passe admin : celui de la variable `BT_ADMIN_PASSWORD`, sinon un mot de passe tiré au lancement et affiché dans la console. Les bannis et les presets sont gardés dans `data/` (option `--data`, variable `BT_DATA`).
 
+### Les mises à jour
+
+Le serveur regarde la dernière Release de ce repo au lancement, puis toutes les 6 heures. Une version plus récente s'affiche dans le tableau de bord : un clic l'installe et redémarre le serveur (jamais pendant une partie) quand il tourne en exécutable ; lancé depuis les sources, mets-le à jour avec `git pull`. `BT_NO_UPDATE_CHECK=1` pour ne pas chercher de mise à jour.
+
 ## Licence
 
 [GNU AGPL-3.0](LICENSE) : tu peux héberger, modifier et redistribuer ce serveur librement. Si tu mets en ligne une version modifiée, tu dois publier son code source sous la même licence.
