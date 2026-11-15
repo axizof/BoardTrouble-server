@@ -3,6 +3,7 @@ import { prepareBoard } from '../board/board';
 import { buildMontTrouble } from '../boards/montTrouble';
 import type { GameEvent } from '../game/types';
 import { naturalAppearance } from '../lobby/players';
+import { minigameCandidates } from '../minigames/catalog';
 import { FOUR_PLAYERS } from '../testing/fixtures';
 import { animationTime } from './pacing';
 import { GameSession, type Seat, type SeatControl, type SessionSave } from './session';
@@ -36,6 +37,9 @@ const BOTS: Record<string, SeatControl> = {
   cam: 'easy',
   dan: 'expert',
 };
+
+/** Les mini-jeux de duel : le test du duel prend le premier qui sort (plus vite qu'un seul). */
+const DUELS: string[] = minigameCandidates('duel', 2);
 
 describe('a game session', () => {
   test('lets bots play a whole game on their own, never before the animations end', () => {
@@ -133,7 +137,7 @@ describe('a game session', () => {
       for (let wake = session.nextWakeAt(); wake !== null && !ended; wake = session.nextWakeAt()) {
         const events = session.tick(wake) ?? [];
         const run = session.arenaMessage({ type: 'spectator' }, wake);
-        const isDuel = run.type === 'arena' && run.run?.minigame === 'clayShoot';
+        const isDuel = run.type === 'arena' && DUELS.includes(run.run?.minigame ?? '');
         if (isDuel && run.run) duelists = run.run.players;
         ended = events.find((event) => event.type === 'duelEnded');
       }
@@ -143,7 +147,7 @@ describe('a game session', () => {
       expect(session.isPlayingArena).toBe(false);
       return;
     }
-    throw new Error('Aucune partie ne joue le Ball-trap en duel');
+    throw new Error('Aucune partie ne joue un duel');
   }, 30_000);
 
   test('plays the skill gate challenge with the gate player alone, then opens or keeps the gate', () => {
