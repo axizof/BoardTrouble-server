@@ -21,6 +21,8 @@ export * from './minigames/arena/body';
 export * from './minigames/arena/reveal';
 export * from './minigames/bigDie/bigDie';
 export * from './minigames/boardReflex/boardReflex';
+export * from './minigames/cannoneer/cannoneer';
+export * from './minigames/cannoneer/fort';
 export * from './minigames/cardMemory/cardMemory';
 export * from './minigames/catalog';
 export * from './minigames/chifoumi/chifoumi';

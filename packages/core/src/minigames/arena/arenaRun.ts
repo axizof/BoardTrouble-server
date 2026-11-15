@@ -5,6 +5,7 @@ import type { Viewer } from '../../game/views';
 import type { Rng } from '../../random/rng';
 import { BIG_DIE } from '../bigDie/bigDie';
 import { BOARD_REFLEX } from '../boardReflex/boardReflex';
+import { CANNONEER } from '../cannoneer/cannoneer';
 import { CARD_MEMORY } from '../cardMemory/cardMemory';
 import type { MinigameId } from '../catalog';
 import { CHIFOUMI } from '../chifoumi/chifoumi';
@@ -79,6 +80,7 @@ export const ARENAS = {
   chifoumi: CHIFOUMI,
   logJoust: LOG_JOUST,
   kingOfHill: KING_OF_HILL,
+  cannoneer: CANNONEER,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
