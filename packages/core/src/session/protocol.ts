@@ -45,4 +45,6 @@ export type HostMessage =
   /** Le mini-jeu d'arène en cours (30 fois par seconde pendant le jeu), ou null quand il finit. */
   | { type: 'arena'; run: ArenaRunView | null }
   /** La partie est finie : son récap (classement, graphe, titres, score, stats). */
-  | { type: 'recap'; recap: GameRecap };
+  | { type: 'recap'; recap: GameRecap }
+  /** Qui joue chaque place a changé (en multi : un absent remplacé par un bot, un retour). */
+  | { type: 'seats'; seats: Record<PlayerId, SeatView> };

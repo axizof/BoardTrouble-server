@@ -90,6 +90,65 @@ test('after the game, the room goes back to the lobby; who left during the game 
   expect(room.view().seats.map((seat) => seat.member)).toEqual([ana.id, null, null, null]);
 });
 
+describe('presence in the game', () => {
+  test('an away member is played by an easy bot, and only they can take their seat back', () => {
+    const room = lobby();
+    room.start(ana.id, board, 7, 0);
+    expect(room.replaceAway(bob.id)).toBe('p2');
+    expect(room.session?.seats.p2?.control).toBe('easy');
+    expect(room.reclaim(ana.id)).toEqual({ ok: false, reason: 'notAway' });
+    expect(room.reclaim(bob.id).ok).toBe(true);
+    expect(room.session?.seats.p2?.control).toBe('human');
+  });
+
+  test('the host gives a bot seat to someone who arrived mid-game: the seat takes their name', () => {
+    const room = lobby();
+    room.start(ana.id, board, 7, 0);
+    const cleo = {
+      id: 'cleo-0000000000000003',
+      name: 'Cleo',
+      appearance: naturalAppearance('duck'),
+    };
+    room.join(cleo);
+    expect(room.assignSeat(bob.id, cleo.id, 2)).toEqual({ ok: false, reason: 'notHost' });
+    expect(room.assignSeat(ana.id, cleo.id, 1)).toEqual({ ok: false, reason: 'seatTaken' });
+    expect(room.assignSeat(ana.id, cleo.id, 2).ok).toBe(true);
+    expect(room.viewerOf(cleo.id)).toEqual({ type: 'player', playerId: 'p3' });
+    expect(room.session?.seats.p3?.control).toBe('human');
+    expect(room.session?.snapshot({ type: 'spectator' }, 0)).toMatchObject({
+      state: {
+        players: expect.arrayContaining([expect.objectContaining({ id: 'p3', name: 'Cleo' })]),
+      },
+    });
+  });
+
+  test('a banned member cannot come back; the chat keeps its last lines', () => {
+    const room = lobby();
+    expect(room.remove(ana.id, bob.id, true).ok).toBe(true);
+    expect(room.join(bob)).toEqual({ ok: false, reason: 'banned' });
+    room.unban(ana.id, bob.id);
+    expect(room.join(bob).ok).toBe(true);
+    for (let index = 0; index < 60; index++) room.say(ana.id, `ligne ${index}`);
+    expect(room.chat).toHaveLength(50);
+    expect(room.chat.at(-1)).toMatchObject({ name: 'Ana', text: 'ligne 59' });
+  });
+
+  test('the session says which humans it played itself when their time ran out', () => {
+    const room = lobby();
+    room.start(ana.id, board, 7, 0);
+    const session = room.session;
+    if (!session) throw new Error('no session');
+    let played: string[] = [];
+    for (let index = 0; index < 30 && played.length === 0; index++) {
+      // (L'heure avance : après chaque action, la session attend la fin de ses animations.)
+      session.tick(10_000_000 * (index + 1));
+      played = session.takeAutoPlayed();
+    }
+    expect(played.length).toBeGreaterThan(0);
+    expect(['p1', 'p2']).toContain(played[0] ?? '');
+  });
+});
+
 describe('the network messages', () => {
   const identity = { id: 'abcdefghijklmnop', secret: 'a'.repeat(40) };
   const profile = { name: '  Ana  ', appearance: naturalAppearance('fox') };
