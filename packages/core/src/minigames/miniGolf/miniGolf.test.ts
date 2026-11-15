@@ -11,8 +11,11 @@ import {
   golfScore,
   HOLE_TIME,
   holeOffset,
+  MAX_BACKSWING,
+  MAX_POWER_SPEED,
   MAX_STROKES,
   MINI_GOLF,
+  MOUSE_MAX_POWER,
 } from './miniGolf';
 
 const steps = (seconds: number) => Math.round(seconds / ARENA_STEP);
@@ -37,7 +40,7 @@ function onHole(id: string, players = ['a']): GolfState {
 }
 
 /** Un coup à la souris : viser `aim`, reculer, puis avancer à cette vitesse (m/s au sol). */
-function swing(state: GolfState, id: string, aim: number, speed: number): GolfState {
+function swing(state: GolfState, id: string, aim: number, speed: number, from = -0.6): GolfState {
   const ball = state.fighters.find((one) => one.id === id);
   if (!ball) throw new Error('no ball');
   const offset = holeOffset(ball.hole);
@@ -52,7 +55,7 @@ function swing(state: GolfState, id: string, aim: number, speed: number): GolfSt
   });
   let current = MINI_GOLF.step(state, { [id]: input(2, false) });
   current = MINI_GOLF.step(current, { [id]: input(2, true) });
-  let along = -0.6;
+  let along = from;
   for (let k = 0; k < 60 && current.fighters.find((one) => one.id === id)?.phase === 'ready'; k++) {
     current = MINI_GOLF.step(current, { [id]: input(along, true) });
     along += speed * ARENA_STEP;
@@ -162,6 +165,37 @@ describe('Mini-golf', () => {
   test('a point aimed on the last hole, far along the world, reaches the game untouched', () => {
     const far = { x: holeOffset(GOLF_COURSE - 1).x + 15, z: -15 };
     expect(sanitizeInput({ ...IDLE_INPUT, point: far }).point).toEqual(far);
+  });
+
+  test('a faster swing than full power, after a long backswing, shoots harder; slower swings are unchanged', () => {
+    const shotSpeed = (headSpeed: number) => {
+      let state = onHole('conveyor');
+      state = swing(state, 'a', Math.PI, headSpeed, -MAX_BACKSWING);
+      return Math.hypot(state.fighters[0]?.vx ?? 0, state.fighters[0]?.vz ?? 0);
+    };
+    // (La balle a déjà roulé un pas quand on la mesure : un peu moins que sa vitesse de départ.)
+    const near = (speed: number, expected: number) =>
+      expect(Math.abs(speed - expected)).toBeLessThan(expected * 0.06);
+    near(shotSpeed(FULL_SWING_SPEED), MAX_POWER_SPEED);
+    near(shotSpeed(FULL_SWING_SPEED * 0.5), MAX_POWER_SPEED * 0.5);
+    near(shotSpeed(FULL_SWING_SPEED * 2), MAX_POWER_SPEED * MOUSE_MAX_POWER);
+  });
+
+  test('a ball hitting a mushroom bumper is counted (the client plays a sound)', () => {
+    const bumpers = hole('bumpers');
+    const mushroom = bumpers.features.find((feature) => feature.kind === 'bumper');
+    if (mushroom?.kind !== 'bumper') throw new Error('no bumper');
+    const ball: BallMotion = {
+      x: mushroom.x,
+      z: mushroom.z + 1.2,
+      vx: 0,
+      vz: -3,
+      airborne: 0,
+      piped: -1,
+    };
+    for (let k = 0; k < 20; k++) advanceBall(ball, bumpers, 0, k, ARENA_STEP);
+    expect(ball.bumps).toBe(1);
+    expect(ball.vz).toBeGreaterThan(0);
   });
 
   test('a stopped ball keeps the aim of its shot (the camera does not turn by itself)', () => {

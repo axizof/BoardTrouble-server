@@ -38,7 +38,13 @@ export const FULL_SWING_SPEED = 8.6;
 /** À la souris : il faut reculer le putter d'au moins ça (m) derrière la balle. */
 export const MIN_BACKSWING = 0.15;
 /** Le putter ne recule pas plus que ça (m) derrière la balle (le client le retient là). */
-export const MAX_BACKSWING = 1.3;
+export const MAX_BACKSWING = 2;
+/**
+ * À la souris, un geste plus vif que FULL_SWING_SPEED tire encore plus fort, jusqu'à tant de fois
+ * la pleine puissance (avec un grand recul, on a la place de lancer le putter plus vite) ; en
+ * deçà, rien ne change. Le stick et le clavier s'arrêtent à la pleine puissance.
+ */
+export const MOUSE_MAX_POWER = 1.35;
 /** Au clavier : la charge pleine en tant de secondes. */
 const CHARGE_TIME = 1.2;
 /** Au stick ou au clavier : la visée tourne à tant de radians par seconde. */
@@ -191,6 +197,7 @@ function create(
     vz: 0,
     airborne: 0,
     piped: -1,
+    bumps: 0,
     phase: 'ready' as GolfPhase,
     phaseAt: 0,
     strokes: Array.from({ length: GOLF_COURSE }, () => 0),
@@ -336,7 +343,7 @@ function aimAndSwing(state: GolfState, ball: GolfBall, input: ArenaInput): void 
     if (swing.back >= MIN_BACKSWING && along >= 0 && swing.trail.length >= 2) {
       const first = swing.trail[0] ?? along;
       const speed = (along - first) / ((swing.trail.length - 1) * ARENA_STEP);
-      shoot(state, ball, Math.min(1, Math.max(0, speed / FULL_SWING_SPEED)));
+      shoot(state, ball, Math.min(MOUSE_MAX_POWER, Math.max(0, speed / FULL_SWING_SPEED)));
     }
     return;
   }
