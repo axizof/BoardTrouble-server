@@ -30,6 +30,8 @@ export * from './minigames/clayShoot/clayShoot';
 export * from './minigames/combination/combination';
 export * from './minigames/conveyorSort/conveyorSort';
 export * from './minigames/fallingPlates/fallingPlates';
+export * from './minigames/freshPaint/atelier';
+export * from './minigames/freshPaint/freshPaint';
 export * from './minigames/greatCrossing/greatCrossing';
 export * from './minigames/greatCrossing/lanes';
 export * from './minigames/hamsterBall/hamsterBall';
