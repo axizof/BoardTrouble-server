@@ -118,6 +118,7 @@ export type RoomRefusal =
   | 'roomFull'
   | 'nameTaken'
   | 'alreadyPlaying'
+  | 'notPlaying'
   | 'notInLobby'
   | 'tableTooSmall'
   | 'noHuman'
@@ -335,6 +336,17 @@ export class Room {
     for (const member of [...this.#members.values()]) {
       if (!member.isConnected) this.leave(member.id);
     }
+  }
+
+  /**
+   * L'hôte arrête la partie pour tout le monde : retour au salon. Le serveur la garde (sa
+   * dernière sauvegarde), à reprendre plus tard.
+   */
+  stopGame(by: MemberId): RoomResult {
+    if (by !== this.#hostId) return refuse('notHost');
+    if (this.#phase !== 'playing') return refuse('notPlaying');
+    this.finishGame();
+    return OK;
   }
 
   /** La partie en cours, à sauvegarder (pas en plein mini-jeu : null), ou null sans partie. */

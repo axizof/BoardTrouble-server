@@ -226,6 +226,61 @@ describe('the game server', () => {
     expect(bobBack.last('snapshot')?.you).toBe('p2');
   });
 
+  test('the host stops the game for everyone: it stays saved, and the host resumes it later', () => {
+    const saves = new MemorySaveSlots(3);
+    server = new GameServer({ name: 'Test', maxRooms: 4, log: () => {}, saves });
+    const ana = client(server, 'ana-000000000000001', 'Ana');
+    const bob = client(server, 'bob-000000000000002', 'Bob');
+    ana.hello();
+    bob.hello();
+    ana.send({ type: 'createRoom', name: 'Partie', password: null });
+    bob.send({ type: 'joinRoom', roomId: ana.last('room')?.room?.id, password: null });
+    ana.send({ type: 'startGame' });
+    // Seul l'hôte peut l'arrêter.
+    bob.send({ type: 'stopGame' });
+    expect(bob.last('refused')?.reason).toBe('notHost');
+    ana.send({ type: 'stopGame' });
+    expect(bob.last('gameStopped')).toEqual({ type: 'gameStopped' });
+    expect(bob.last('room')?.room?.phase).toBe('lobby');
+    expect(ana.last('saves')?.saves).toMatchObject([{ slot: 1, roomName: 'Partie' }]);
+    ana.send({ type: 'resumeSave', slot: 1 });
+    expect(bob.last('snapshot')?.you).toBe('p2');
+  });
+
+  test('without a free save slot, the game cannot be stopped (it would be lost)', () => {
+    const saves = new MemorySaveSlots(1);
+    server = new GameServer({ name: 'Test', maxRooms: 4, log: () => {}, saves });
+    const ana = client(server, 'ana-000000000000001', 'Ana');
+    const bob = client(server, 'bob-000000000000002', 'Bob');
+    ana.hello();
+    bob.hello();
+    ana.send({ type: 'createRoom', name: 'Premier', password: null });
+    ana.send({ type: 'startGame' });
+    bob.send({ type: 'createRoom', name: 'Second', password: null });
+    bob.send({ type: 'startGame' });
+    bob.send({ type: 'stopGame' });
+    expect(bob.last('refused')?.reason).toBe('noSaveSlot');
+    expect(bob.last('room')?.room?.phase).toBe('playing');
+  });
+
+  test('in the room, the host deletes a saved game, never one being played', () => {
+    const saves = new MemorySaveSlots(3);
+    server = new GameServer({ name: 'Test', maxRooms: 4, log: () => {}, saves });
+    const ana = client(server, 'ana-000000000000001', 'Ana');
+    const bob = client(server, 'bob-000000000000002', 'Bob');
+    ana.hello();
+    bob.hello();
+    ana.send({ type: 'createRoom', name: 'En cours', password: null });
+    ana.send({ type: 'startGame' });
+    bob.send({ type: 'createRoom', name: 'Salon', password: null });
+    bob.send({ type: 'deleteSave', slot: 1 });
+    expect(bob.last('refused')?.reason).toBe('alreadyPlaying');
+    ana.send({ type: 'stopGame' });
+    bob.send({ type: 'deleteSave', slot: 1 });
+    expect(saves.list()).toEqual([]);
+    expect(bob.last('saves')?.saves).toEqual([]);
+  });
+
   test('from the dashboard, a saved game reopens and starts again with its first player', () => {
     const saves = new MemorySaveSlots(3);
     server = new GameServer({ name: 'Test', maxRooms: 4, log: () => {}, saves });
