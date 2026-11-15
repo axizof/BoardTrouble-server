@@ -34,6 +34,8 @@ export * from './minigames/hamsterBall/hamsterBall';
 export * from './minigames/highNoon/highNoon';
 export * from './minigames/hotPotato/hotPotato';
 export * from './minigames/hotPotato/office';
+export * from './minigames/kingOfHill/kingOfHill';
+export * from './minigames/kingOfHill/ruins';
 export * from './minigames/lastRoll/lastRoll';
 export * from './minigames/logJoust/logJoust';
 export * from './minigames/meltingPlatform/meltingPlatform';

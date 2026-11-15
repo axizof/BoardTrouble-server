@@ -16,6 +16,7 @@ import { GREAT_CROSSING } from '../greatCrossing/greatCrossing';
 import { HAMSTER_BALL } from '../hamsterBall/hamsterBall';
 import { HIGH_NOON } from '../highNoon/highNoon';
 import { HOT_POTATO } from '../hotPotato/hotPotato';
+import { KING_OF_HILL } from '../kingOfHill/kingOfHill';
 import { LAST_ROLL } from '../lastRoll/lastRoll';
 import { LOG_JOUST } from '../logJoust/logJoust';
 import { MELTING_PLATFORM } from '../meltingPlatform/meltingPlatform';
@@ -77,6 +78,7 @@ export const ARENAS = {
   penaltyKicks: PENALTY_KICKS,
   chifoumi: CHIFOUMI,
   logJoust: LOG_JOUST,
+  kingOfHill: KING_OF_HILL,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
