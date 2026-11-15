@@ -4,6 +4,7 @@
   "type": "module",
   "workspaces": [
     "packages/*",
+    "apps/*",
     "tools/*"
   ],
   "scripts": {
@@ -13,7 +14,8 @@
     "test": "bun test",
     "check": "biome ci . && tsc --noEmit && bun test",
     "simulate": "bun run tools/simulator/src/main.ts",
-    "simulate:minigames": "bun run tools/simulator/src/minigames.ts"
+    "simulate:minigames": "bun run tools/simulator/src/minigames.ts",
+    "start": "bun run apps/server/src/main.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.15",

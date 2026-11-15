@@ -268,6 +268,19 @@ export class Room {
     return { ok: true, events: created.events };
   }
 
+  /**
+   * La partie est finie : retour au salon pour la suivante, avec les mêmes réglages. Ceux qui
+   * sont partis pendant la partie quittent le salon et leur place redevient un bot.
+   */
+  finishGame(): void {
+    if (this.#phase !== 'playing') return;
+    this.#phase = 'lobby';
+    this.#session = null;
+    for (const member of [...this.#members.values()]) {
+      if (!member.isConnected) this.leave(member.id);
+    }
+  }
+
   /** Ce que la partie montre à ce membre : sa place s'il en a une, sinon la vue spectateur. */
   viewerOf(id: MemberId): Viewer {
     const index = this.#seats.findIndex((seat) => seat.member === id);

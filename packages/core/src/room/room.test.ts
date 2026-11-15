@@ -79,6 +79,17 @@ describe('a room', () => {
   });
 });
 
+test('after the game, the room goes back to the lobby; who left during the game is gone', () => {
+  const room = lobby();
+  room.start(ana.id, board, 7, 0);
+  room.leave(bob.id);
+  room.finishGame();
+  expect(room.phase).toBe('lobby');
+  expect(room.session).toBeNull();
+  expect(room.member(bob.id)).toBeUndefined();
+  expect(room.view().seats.map((seat) => seat.member)).toEqual([ana.id, null, null, null]);
+});
+
 describe('the network messages', () => {
   const identity = { id: 'abcdefghijklmnop', secret: 'a'.repeat(40) };
   const profile = { name: '  Ana  ', appearance: naturalAppearance('fox') };
