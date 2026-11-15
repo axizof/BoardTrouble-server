@@ -13,6 +13,7 @@ import { CLAY_SHOOT } from '../clayShoot/clayShoot';
 import { COMBINATION } from '../combination/combination';
 import { CONVEYOR_SORT } from '../conveyorSort/conveyorSort';
 import { FALLING_PLATES } from '../fallingPlates/fallingPlates';
+import { FRESH_PAINT } from '../freshPaint/freshPaint';
 import { GREAT_CROSSING } from '../greatCrossing/greatCrossing';
 import { HAMSTER_BALL } from '../hamsterBall/hamsterBall';
 import { HIGH_NOON } from '../highNoon/highNoon';
@@ -81,6 +82,7 @@ export const ARENAS = {
   logJoust: LOG_JOUST,
   kingOfHill: KING_OF_HILL,
   cannoneer: CANNONEER,
+  freshPaint: FRESH_PAINT,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
