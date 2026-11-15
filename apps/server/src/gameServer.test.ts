@@ -37,9 +37,24 @@ let server: GameServer;
 afterEach(() => server?.close());
 
 function newServer(): GameServer {
-  server = new GameServer({ name: 'Test', maxRooms: 4, log: () => {} });
+  server = new GameServer({ name: 'Test', maxRooms: 4, log: () => {}, awayAfter: 20 });
   return server;
 }
+
+/** Ana crée un salon, Bob le rejoint ; Ana lance la partie. */
+function twoInGame() {
+  newServer();
+  const ana = client(server, 'ana-000000000000001', 'Ana');
+  const bob = client(server, 'bob-000000000000002', 'Bob');
+  ana.hello();
+  bob.hello();
+  ana.send({ type: 'createRoom', name: 'Partie', password: null });
+  bob.send({ type: 'joinRoom', roomId: ana.last('room')?.room?.id, password: null });
+  ana.send({ type: 'startGame' });
+  return { ana, bob };
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe('the game server', () => {
   test('a client of another version is refused and told the server version', () => {
@@ -126,6 +141,51 @@ describe('the game server', () => {
     back.hello();
     expect(back.last('room')?.room?.phase).toBe('playing');
     expect(back.last('snapshot')?.you).toBe('p1');
+  });
+
+  test('a player away too long is played by an easy bot, and takes the seat back on return', async () => {
+    const { ana, bob } = twoInGame();
+    server.disconnect(bob.connection);
+    await wait(60);
+    expect(ana.last('seats')?.seats.p2?.kind).toBe('bot');
+    expect(ana.last('chat')?.lines.at(-1)?.text).toContain('Bob');
+    const back = client(server, 'bob-000000000000002', 'Bob');
+    back.hello();
+    expect(back.last('snapshot')?.you).toBe('p2');
+    expect(ana.last('seats')?.seats.p2?.kind).toBe('human');
+  });
+
+  test('chat lines reach everyone in the room, too many too fast are refused', () => {
+    const { ana, bob } = twoInGame();
+    ana.send({ type: 'chat', text: '  salut   tout le monde ' });
+    expect(bob.last('chat')?.lines.at(-1)).toMatchObject({
+      name: 'Ana',
+      text: 'salut tout le monde',
+    });
+    for (let index = 0; index < 6; index++) ana.send({ type: 'chat', text: `spam ${index}` });
+    expect(ana.last('refused')?.reason).toBe('chatTooFast');
+  });
+
+  test('the host kicks (who may come back) or bans (who may not)', () => {
+    const { ana, bob } = twoInGame();
+    ana.send({ type: 'ban', member: 'bob-000000000000002' });
+    expect(bob.last('refused')?.reason).toBe('kicked');
+    expect(bob.last('room')?.room).toBeNull();
+    expect(ana.last('seats')?.seats.p2?.kind).toBe('bot');
+    bob.send({ type: 'joinRoom', roomId: ana.last('room')?.room?.id, password: null });
+    expect(bob.last('refused')?.reason).toBe('banned');
+  });
+
+  test('someone arriving mid-game watches, then the host gives them a bot seat', () => {
+    const { ana } = twoInGame();
+    const cleo = client(server, 'cleo-00000000000003', 'Cleo');
+    cleo.hello();
+    cleo.send({ type: 'joinRoom', roomId: ana.last('room')?.room?.id, password: null });
+    expect(cleo.last('snapshot')?.you).toBeNull();
+    ana.send({ type: 'assignSeat', member: 'cleo-00000000000003', seat: 2 });
+    expect(cleo.last('snapshot')?.you).toBe('p3');
+    expect(ana.last('seats')?.seats.p3?.kind).toBe('human');
+    expect(cleo.last('snapshot')?.state.players[2]?.name).toBe('Cleo');
   });
 
   test('nothing is done before saying hello, and garbage is ignored', () => {

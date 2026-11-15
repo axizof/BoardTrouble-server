@@ -4,6 +4,8 @@ import { type Appearance, checkNickname, readAppearance } from '../lobby/players
 import { sanitizeInput } from '../minigames/arena/arena';
 import type { ClientMessage, HostMessage } from '../session/protocol';
 import {
+  CHAT_MAX,
+  type ChatLine,
   DECISION_TIMES,
   type RoomRefusal,
   type RoomSettings,
@@ -31,7 +33,15 @@ export type RoomClientMessage =
   | { type: 'setProfile'; profile: Profile }
   | { type: 'setSettings'; settings: RoomSettings }
   | { type: 'setBotLevel'; seat: number; level: BotLevel }
-  | { type: 'startGame' };
+  | { type: 'startGame' }
+  | { type: 'chat'; text: string }
+  /** Revenir à sa place, que jouait un bot pendant son absence. */
+  | { type: 'reclaimSeat' }
+  /** L'hôte : placer un membre sur la place d'un bot, le sortir du salon, le bannir, le débannir. */
+  | { type: 'assignSeat'; member: string; seat: number }
+  | { type: 'kick'; member: string }
+  | { type: 'ban'; member: string }
+  | { type: 'unban'; member: string };
 
 /** Pourquoi le serveur refuse : la connexion, ou une demande dans le salon. */
 export type ServerRefusal =
@@ -43,7 +53,10 @@ export type ServerRefusal =
   | 'tooManyTries'
   | 'noRoom'
   | 'tooManyRooms'
-  | 'notReady';
+  | 'notReady'
+  | 'chatTooFast'
+  /** On t'a sorti du salon (ou banni). */
+  | 'kicked';
 
 export type RoomHostMessage =
   /** La réponse au `hello` : le serveur, sa version, et ses salons. */
@@ -51,7 +64,9 @@ export type RoomHostMessage =
   | { type: 'rooms'; rooms: RoomSummary[] }
   /** Le salon où l'on est (à chaque changement), ou null quand on en sort. */
   | { type: 'room'; room: RoomView | null }
-  | { type: 'refused'; reason: ServerRefusal; version?: string };
+  | { type: 'refused'; reason: ServerRefusal; version?: string }
+  /** Des lignes du tchat : les dernières en arrivant, puis chaque nouvelle. */
+  | { type: 'chat'; lines: ChatLine[] };
 
 /** Tout ce qu'un client peut envoyer à un serveur, et tout ce qu'il peut en recevoir. */
 export type NetClientMessage = RoomClientMessage | ClientMessage;
@@ -98,7 +113,20 @@ export function parseNetMessage(text: string): NetClientMessage | null {
     case 'leaveRoom':
     case 'startGame':
     case 'arenaReady':
+    case 'reclaimSeat':
       return { type: data.type };
+    case 'chat': {
+      const text = readChat(data.text);
+      return text === null ? null : { type: 'chat', text };
+    }
+    case 'assignSeat':
+      return isMemberId(data.member) && Number.isInteger(data.seat)
+        ? { type: 'assignSeat', member: data.member, seat: data.seat as number }
+        : null;
+    case 'kick':
+    case 'ban':
+    case 'unban':
+      return isMemberId(data.member) ? { type: data.type, member: data.member } : null;
     case 'createRoom': {
       const name = checkRoomName(data.name);
       const password = readPassword(data.password);
@@ -164,6 +192,22 @@ function readHello(data: Record<string, unknown>): NetClientMessage | null {
     identity: { id: identity.id, secret: identity.secret },
     profile,
   };
+}
+
+function isMemberId(value: unknown): value is string {
+  return typeof value === 'string' && IDENTITY_ID.test(value);
+}
+
+/** Une ligne de tchat : sans caractère de contrôle ni espace en trop, 1 à CHAT_MAX caractères. */
+function readChat(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length > CHAT_MAX * 4) return null;
+  const text = value
+    .normalize('NFC')
+    .replace(/[\p{Cc}\p{Cf}]/gu, '')
+    .trim()
+    .replace(/\s+/g, ' ');
+  const length = [...text].length;
+  return length === 0 || length > CHAT_MAX ? null : text;
 }
 
 function readProfile(value: unknown): Profile | null {

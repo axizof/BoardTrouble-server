@@ -6,6 +6,7 @@ import {
   type MemberId,
   type NetClientMessage,
   type NetHostMessage,
+  type PlayerId,
   PROTOCOL_VERSION,
   type Profile,
   parseNetMessage,
@@ -13,6 +14,7 @@ import {
   Room,
   type RoomClientMessage,
   type ServerRefusal,
+  seatPlayerId,
 } from '@board-trouble/core';
 
 // Le serveur de jeu, sans le réseau (01-architecture.md, sections 3, 5 et 7) : les connexions,
@@ -28,6 +30,8 @@ export type ServerOptions = {
   /** Combien de salons à la fois, au plus. */
   maxRooms: number;
   log: (line: string) => void;
+  /** Déconnecté en partie depuis tant (ms), un bot prend sa place (AWAY_AFTER par défaut). */
+  awayAfter?: number;
 };
 
 type Connection = {
@@ -38,6 +42,8 @@ type Connection = {
   roomId: string | null;
   /** Les mots de passe ratés récemment (instants, ms) : au-delà, on attend. */
   failures: number[];
+  /** Ses dernières lignes de tchat (instants, ms) : au-delà d'un rythme, refusées. */
+  chats: number[];
 };
 
 type HostedRoom = {
@@ -48,7 +54,21 @@ type HostedRoom = {
   /** Le salon vide disparaît au bout d'un moment (on peut y revenir d'ici là). */
   closeTimer: ReturnType<typeof setTimeout> | undefined;
   isRecapSent: boolean;
+  /** Combien de fois de suite chaque joueur a été joué d'office (son chrono écoulé). */
+  autoPlays: Map<PlayerId, number>;
+  /** Les membres déconnectés en partie : un bot les remplace au bout de AWAY_AFTER. */
+  awayTimers: Map<MemberId, ReturnType<typeof setTimeout>>;
+  /** Ceux qui reviennent pendant un mini-jeu : ils reprennent leur place à sa fin. */
+  pendingReturns: Set<MemberId>;
 };
+
+/** Déconnecté en partie depuis tant (ms) : un bot Facile prend sa place, qu'il retrouvera. */
+const AWAY_AFTER = 30_000;
+/** Joué d'office tant de fois de suite (connecté mais inactif) : un bot prend sa place. */
+const AUTO_PLAYS_BEFORE_AWAY = 2;
+/** Le tchat : pas plus de tant de lignes par fenêtre de tant (ms), par connexion. */
+const CHAT_BURST = 5;
+const CHAT_WINDOW = 5000;
 
 /** Pas plus de tant de mots de passe ratés par minute et par connexion. */
 const PASSWORD_TRIES = 5;
@@ -75,7 +95,7 @@ export class GameServer {
   }
 
   connect(peer: Peer): Connection {
-    return { peer, id: null, profile: null, roomId: null, failures: [] };
+    return { peer, id: null, profile: null, roomId: null, failures: [], chats: [] };
   }
 
   receive(connection: Connection, text: string): void {
@@ -119,6 +139,7 @@ export class GameServer {
     for (const hosted of this.#rooms.values()) {
       clearTimeout(hosted.timer);
       clearTimeout(hosted.closeTimer);
+      for (const timer of hosted.awayTimers.values()) clearTimeout(timer);
     }
     this.#rooms.clear();
   }
@@ -180,6 +201,9 @@ export class GameServer {
       timer: undefined,
       closeTimer: undefined,
       isRecapSent: false,
+      autoPlays: new Map(),
+      awayTimers: new Map(),
+      pendingReturns: new Set(),
     };
     this.#rooms.set(code, hosted);
     this.#options.log(`${connection.profile?.name} a créé le salon "${name}" (${code})`);
@@ -224,6 +248,11 @@ export class GameServer {
     clearTimeout(hosted.closeTimer);
     hosted.closeTimer = undefined;
     connection.roomId = room.id;
+    this.#send(connection, { type: 'chat', lines: [...room.chat] });
+    // Revenu à temps : pas de bot ; revenu après : il reprend sa place (à la fin d'un mini-jeu).
+    clearTimeout(hosted.awayTimers.get(connection.id));
+    hosted.awayTimers.delete(connection.id);
+    if (room.isAway(connection.id)) this.#giveBack(hosted, connection.id);
     this.#broadcastRoom(hosted);
     const session = room.session;
     if (session) {
@@ -234,6 +263,46 @@ export class GameServer {
     this.#broadcastRooms();
   }
 
+  /** Un membre reprend sa place (que jouait un bot) ; pendant un mini-jeu, à sa fin. */
+  #giveBack(hosted: HostedRoom, id: MemberId): void {
+    const { room } = hosted;
+    if (room.session?.isPlayingArena) {
+      hosted.pendingReturns.add(id);
+      return;
+    }
+    hosted.pendingReturns.delete(id);
+    if (!room.reclaim(id).ok) return;
+    hosted.autoPlays.delete(seatPlayerId(room.seatOf(id)));
+    this.#announce(hosted, `${room.member(id)?.name} a repris sa place`);
+    this.#broadcastSeats(hosted);
+  }
+
+  /** Un membre est absent : un bot Facile joue pour lui, jusqu'à son retour. */
+  #replaceAway(hosted: HostedRoom, id: MemberId, why: string): void {
+    const { room } = hosted;
+    if (room.replaceAway(id) === null) return;
+    this.#announce(hosted, `${room.member(id)?.name} ${why} : un bot Facile joue à sa place`);
+    this.#broadcastRoom(hosted);
+    this.#broadcastSeats(hosted);
+    this.#schedule(hosted);
+  }
+
+  /** Une ligne du système dans le tchat du salon. */
+  #announce(hosted: HostedRoom, text: string): void {
+    const line = hosted.room.say(null, text);
+    this.#options.log(`[${hosted.room.name}] ${text}`);
+    if (!line) return;
+    for (const member of this.#members(hosted)) this.#send(member, { type: 'chat', lines: [line] });
+  }
+
+  /** Qui joue chaque place, à tout le salon (après un remplacement, un retour, un déplacement). */
+  #broadcastSeats(hosted: HostedRoom): void {
+    const session = hosted.room.session;
+    if (!session) return;
+    const seats = session.seatViews();
+    for (const member of this.#members(hosted)) this.#send(member, { type: 'seats', seats });
+  }
+
   /**
    * Sort du salon où l'on est. `isLeaving` : il part pour de bon (sinon, il est seulement
    * déconnecté, et retrouvera sa place en pleine partie).
@@ -242,8 +311,21 @@ export class GameServer {
     const hosted = connection.roomId === null ? undefined : this.#rooms.get(connection.roomId);
     connection.roomId = null;
     if (!hosted || connection.id === null) return;
-    hosted.room.leave(connection.id);
+    const id = connection.id;
+    hosted.room.leave(id);
     if (isLeaving) this.#send(connection, { type: 'room', room: null });
+    if (hosted.room.phase === 'playing' && hosted.room.seatOf(id) >= 0) {
+      clearTimeout(hosted.awayTimers.get(id));
+      hosted.awayTimers.set(
+        id,
+        setTimeout(() => {
+          hosted.awayTimers.delete(id);
+          if (hosted.room.member(id)?.isConnected === false) {
+            this.#replaceAway(hosted, id, "s'est déconnecté");
+          }
+        }, this.#options.awayAfter ?? AWAY_AFTER),
+      );
+    }
     this.#broadcastRoom(hosted);
     if (hosted.room.connected.length === 0) this.#closeLater(hosted);
     this.#broadcastRooms();
@@ -298,6 +380,75 @@ export class GameServer {
       case 'startGame':
         this.#startGame(connection, hosted);
         return;
+      case 'chat': {
+        const recent = connection.chats.filter((at) => now() - at < CHAT_WINDOW);
+        connection.chats = recent;
+        if (recent.length >= CHAT_BURST) {
+          this.#refuse(connection, 'chatTooFast');
+          return;
+        }
+        connection.chats.push(now());
+        const line = room.say(id, message.text);
+        if (!line) return;
+        for (const member of this.#members(hosted)) {
+          this.#send(member, { type: 'chat', lines: [line] });
+        }
+        return;
+      }
+      case 'reclaimSeat':
+        if (room.isAway(id)) this.#giveBack(hosted, id);
+        return;
+      case 'assignSeat': {
+        const result = room.assignSeat(id, message.member, message.seat);
+        if (!result.ok) {
+          this.#refuse(connection, result.reason);
+          return;
+        }
+        this.#announce(
+          hosted,
+          `${room.member(message.member)?.name} joue la place ${message.seat + 1}`,
+        );
+        this.#broadcastRoom(hosted);
+        this.#broadcastSeats(hosted);
+        // Sa vue de la partie change (une autre place) : il la reçoit en entier.
+        const moved = this.#byId.get(message.member);
+        const session = room.session;
+        if (moved && session) {
+          this.#send(moved, session.snapshot(room.viewerOf(message.member), now()));
+        }
+        this.#schedule(hosted);
+        return;
+      }
+      case 'kick':
+      case 'ban': {
+        const name = room.member(message.member)?.name;
+        const result = room.remove(id, message.member, message.type === 'ban');
+        if (!result.ok) {
+          this.#refuse(connection, result.reason);
+          return;
+        }
+        const target = this.#byId.get(message.member);
+        if (target && target.roomId === room.id) {
+          target.roomId = null;
+          this.#refuse(target, 'kicked');
+          this.#send(target, { type: 'room', room: null });
+        }
+        this.#announce(
+          hosted,
+          `${name} ${message.type === 'ban' ? 'a été banni du salon' : 'a été sorti du salon'}`,
+        );
+        this.#broadcastRoom(hosted);
+        this.#broadcastSeats(hosted);
+        this.#broadcastRooms();
+        this.#schedule(hosted);
+        return;
+      }
+      case 'unban': {
+        const result = room.unban(id, message.member);
+        if (!result.ok) this.#refuse(connection, result.reason);
+        else this.#broadcastRoom(hosted);
+        return;
+      }
       case 'intent':
       case 'arenaReady':
       case 'arenaInput':
@@ -340,8 +491,9 @@ export class GameServer {
     const session = hosted.room.session;
     if (!session || connection.id === null) return;
     const viewer = hosted.room.viewerOf(connection.id);
-    // Un spectateur ne joue pas.
-    if (viewer.type !== 'player') return;
+    // Un spectateur ne joue pas ; un absent non plus (un bot joue sa place, il la reprend
+    // d'abord).
+    if (viewer.type !== 'player' || hosted.room.isAway(connection.id)) return;
     if (message.type === 'arenaInput') {
       session.arenaInput(viewer.playerId, message.input, message.seq);
       return;
@@ -357,6 +509,7 @@ export class GameServer {
       this.#send(connection, { type: 'rejected', error: result.error });
       return;
     }
+    hosted.autoPlays.delete(viewer.playerId);
     this.#broadcastEvents(hosted, result.events);
     this.#schedule(hosted);
   }
@@ -374,10 +527,35 @@ export class GameServer {
         // L'arène, à chaque pas (et une dernière fois, vide, quand elle se termine).
         if (wasPlaying || session.isPlayingArena) this.#broadcastArena(hosted);
         if (events && events.length > 0) this.#broadcastEvents(hosted, events);
-        if (hosted.room.session === session) this.#schedule(hosted);
+        if (hosted.room.session !== session) return;
+        this.#watchPresence(hosted);
+        this.#schedule(hosted);
       },
       Math.max(0, wake - now()),
     );
+  }
+
+  /**
+   * Après une action automatique : un joueur joué d'office trop souvent de suite est remplacé par
+   * un bot ; ceux revenus pendant un mini-jeu reprennent leur place s'il est fini.
+   */
+  #watchPresence(hosted: HostedRoom): void {
+    const { room } = hosted;
+    const session = room.session;
+    if (!session) return;
+    for (const player of session.takeAutoPlayed()) {
+      const count = (hosted.autoPlays.get(player) ?? 0) + 1;
+      hosted.autoPlays.set(player, count);
+      const seats = room.view().seats;
+      const member = seats.find((_, index) => seatPlayerId(index) === player)?.member;
+      if (count >= AUTO_PLAYS_BEFORE_AWAY && member) {
+        hosted.autoPlays.delete(player);
+        this.#replaceAway(hosted, member, 'ne joue plus');
+      }
+    }
+    if (!session.isPlayingArena) {
+      for (const id of [...hosted.pendingReturns]) this.#giveBack(hosted, id);
+    }
   }
 
   /** Les événements, à chacun selon ce qu'il a le droit de voir ; puis, à la fin, le récap. */

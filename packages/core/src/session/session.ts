@@ -90,7 +90,10 @@ type ArenaToPlay = { minigame: MinigameId; players: PlayerId[]; solo: PlayerId |
  */
 export class GameSession {
   readonly board: Board;
-  readonly seats: Readonly<Record<PlayerId, Seat>>;
+  /** Qui contrôle chaque place ; en multi, ça change (un absent remplacé par un bot, qui revient). */
+  #seats: Record<PlayerId, Seat>;
+  /** Les humains joués d'office depuis la dernière fois qu'on l'a demandé (chrono écoulé). */
+  #autoPlayed: PlayerId[] = [];
   readonly #options: SessionOptions;
   readonly #botRng: Rng;
   #state: GameState;
@@ -112,11 +115,49 @@ export class GameSession {
   ) {
     this.board = board;
     this.#state = state;
-    this.seats = seats;
+    this.#seats = seats;
     this.#options = options;
     this.#botRng = new Rng(seed + BOT_SEED_OFFSET);
     this.#readyAt = readyAt;
     this.#chronicle = chronicle;
+  }
+
+  get seats(): Readonly<Record<PlayerId, Seat>> {
+    return this.#seats;
+  }
+
+  /** Change qui contrôle une place : un humain, ou un bot de ce niveau (multi : absent, retour). */
+  setControl(player: PlayerId, control: SeatControl): void {
+    const seat = this.#seats[player];
+    if (seat) this.#seats = { ...this.#seats, [player]: { ...seat, control } };
+  }
+
+  /** Renomme un joueur (sa place reprise par quelqu'un d'autre) ; les clients le voient au prochain état. */
+  renamePlayer(player: PlayerId, name: string): void {
+    this.#state = {
+      ...this.#state,
+      players: this.#state.players.map((one) => (one.id === player ? { ...one, name } : one)),
+    };
+  }
+
+  /**
+   * Les humains que l'hôte a joués d'office (leur chrono écoulé) depuis le dernier appel : en
+   * multi, deux de suite et un bot prend la place.
+   */
+  takeAutoPlayed(): PlayerId[] {
+    const played = this.#autoPlayed;
+    this.#autoPlayed = [];
+    return played;
+  }
+
+  /** Qui joue chaque place, comme tout le monde le voit. */
+  seatViews(): Record<PlayerId, SeatView> {
+    return Object.fromEntries(
+      Object.entries(this.#seats).map(([id, { control, appearance }]): [PlayerId, SeatView] => [
+        id,
+        { kind: control === 'human' ? 'human' : 'bot', appearance },
+      ]),
+    );
   }
 
   /** Crée la partie : elle commence par la présentation du plateau, puis le tirage de l'ordre. */
@@ -199,7 +240,7 @@ export class GameSession {
       if (this.#arenaToPlay()) return this.#arena ? this.#arena.nextWakeAt() : this.#readyAt;
       return this.#readyAt + WHEEL_TIME;
     }
-    if (this.seats[actor.playerId]?.control !== 'human') {
+    if (this.#seats[actor.playerId]?.control !== 'human') {
       return this.#readyAt + botThinkTime(this.#state);
     }
     const decisionTime = this.#decisionTime();
@@ -229,6 +270,9 @@ export class GameSession {
           );
     if (intent === null)
       throw new Error(`Aucune action automatique (phase ${this.#state.phase.type})`);
+    if (actor.type === 'player' && this.#seats[actor.playerId]?.control === 'human') {
+      this.#autoPlayed.push(actor.playerId);
+    }
     const result = this.submit(actor, intent, now);
     if (!result.ok) throw new Error(`Action automatique refusée : ${result.error}`);
     return result.events;
@@ -241,12 +285,7 @@ export class GameSession {
       protocol: PROTOCOL_VERSION,
       board: this.board.definition,
       you: viewer.type === 'player' ? viewer.playerId : null,
-      seats: Object.fromEntries(
-        Object.entries(this.seats).map(([id, { control, appearance }]): [PlayerId, SeatView] => [
-          id,
-          { kind: control === 'human' ? 'human' : 'bot', appearance },
-        ]),
-      ),
+      seats: this.seatViews(),
       state: viewState(this.#state, viewer),
       decisionEndsIn: this.#decisionEndsIn(now),
     };
@@ -321,7 +360,7 @@ export class GameSession {
     if (!this.#arena) {
       const bots = new Map(
         to.players.flatMap((id): [PlayerId, BotLevel][] => {
-          const control = this.seats[id]?.control;
+          const control = this.#seats[id]?.control;
           return control && control !== 'human' ? [[id, control]] : [];
         }),
       );
@@ -372,14 +411,14 @@ export class GameSession {
 
   #decisionEndsIn(now: number): number | null {
     const actor = this.#actor();
-    if (actor?.type !== 'player' || this.seats[actor.playerId]?.control !== 'human') return null;
+    if (actor?.type !== 'player' || this.#seats[actor.playerId]?.control !== 'human') return null;
     const decisionTime = this.#decisionTime();
     return decisionTime === null ? null : this.#readyAt + decisionTime - now;
   }
 
   /** Qui l'hôte fait jouer ou attend. Quand tout le monde agit en même temps, les bots d'abord. */
   #actor(): Actor | null {
-    const bot = pendingPlayers(this.#state)?.find((id) => this.seats[id]?.control !== 'human');
+    const bot = pendingPlayers(this.#state)?.find((id) => this.#seats[id]?.control !== 'human');
     return bot ? { type: 'player', playerId: bot } : whoMustAct(this.#state);
   }
 
@@ -389,7 +428,7 @@ export class GameSession {
   }
 
   #levelOf(playerId: PlayerId): BotLevel {
-    const control = this.seats[playerId]?.control;
+    const control = this.#seats[playerId]?.control;
     return control === undefined || control === 'human' ? STAND_IN_LEVEL : control;
   }
 }

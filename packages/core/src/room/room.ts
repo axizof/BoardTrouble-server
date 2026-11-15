@@ -44,8 +44,22 @@ export const DEFAULT_ROOM_SETTINGS: RoomSettings = {
   tips: true,
 };
 
-/** Une place de la table : le membre qui la joue, sinon un bot de ce niveau. */
-export type RoomSeat = { member: MemberId | null; botLevel: BotLevel };
+/**
+ * Une place de la table : le membre qui la joue, sinon un bot de ce niveau. `isAway` : en
+ * partie, son membre est absent et un bot Facile joue pour lui (il seul peut la reprendre).
+ */
+export type RoomSeat = { member: MemberId | null; botLevel: BotLevel; isAway: boolean };
+
+/** Un absent est remplacé par un bot de ce niveau : plus fort, il jouerait mieux que lui. */
+export const AWAY_BOT: BotLevel = 'easy';
+
+/** Une ligne du tchat : d'un membre, ou du système (`from` null : un absent remplacé...). */
+export type ChatLine = { id: number; from: MemberId | null; name: string; text: string };
+
+/** Le tchat garde tant de lignes (ce que voit qui arrive). */
+const CHAT_KEPT = 50;
+/** Une ligne de tchat fait au plus tant de caractères. */
+export const CHAT_MAX = 200;
 
 export type RoomMember = {
   id: MemberId;
@@ -66,6 +80,8 @@ export type RoomView = {
   settings: RoomSettings;
   seats: RoomSeat[];
   members: RoomMember[];
+  /** Les bannis du salon (l'hôte peut les débannir). */
+  banned: { id: MemberId; name: string }[];
 };
 
 /** Ce que la liste des salons d'un serveur en montre. */
@@ -90,7 +106,10 @@ export type RoomRefusal =
   | 'notInLobby'
   | 'tableTooSmall'
   | 'noHuman'
-  | 'badSeat';
+  | 'badSeat'
+  | 'banned'
+  | 'notAway'
+  | 'seatTaken';
 
 export type RoomResult = { ok: true } | { ok: false; reason: RoomRefusal };
 
@@ -106,6 +125,9 @@ export class Room {
   #settings: RoomSettings = { ...DEFAULT_ROOM_SETTINGS };
   #seats: RoomSeat[];
   readonly #members = new Map<MemberId, RoomMember>();
+  readonly #banned = new Map<MemberId, string>();
+  #chat: ChatLine[] = [];
+  #chatId = 0;
   #session: GameSession | null = null;
 
   constructor(id: string, name: string, hasPassword: boolean) {
@@ -115,6 +137,7 @@ export class Room {
     this.#seats = Array.from({ length: this.#settings.tableSize }, () => ({
       member: null,
       botLevel: 'normal',
+      isAway: false,
     }));
   }
 
@@ -158,6 +181,7 @@ export class Room {
       if (this.#hostId === null) this.#hostId = member.id;
       return OK;
     }
+    if (this.#banned.has(member.id)) return refuse('banned');
     if (this.#members.size >= ROOM_MEMBERS_MAX) return refuse('roomFull');
     if (this.#isNameTaken(member.name, member.id)) return refuse('nameTaken');
     this.#members.set(member.id, { ...member, isConnected: true });
@@ -207,7 +231,7 @@ export class Room {
     const kept = [...humans, ...this.#seats.filter((seat) => seat.member === null)];
     this.#seats = Array.from(
       { length: settings.tableSize },
-      (_, index) => kept[index] ?? { member: null, botLevel: 'normal' },
+      (_, index) => kept[index] ?? { member: null, botLevel: 'normal', isAway: false },
     );
     this.#settings = { ...settings };
     return OK;
@@ -279,9 +303,111 @@ export class Room {
     if (this.#phase !== 'playing') return;
     this.#phase = 'lobby';
     this.#session = null;
+    for (const seat of this.#seats) seat.isAway = false;
     for (const member of [...this.#members.values()]) {
       if (!member.isConnected) this.leave(member.id);
     }
+  }
+
+  /** L'index de la place de ce membre, ou -1. */
+  seatOf(id: MemberId): number {
+    return this.#seats.findIndex((seat) => seat.member === id);
+  }
+
+  /** Ce membre a une place, et un bot la joue pour lui (absent). */
+  isAway(id: MemberId): boolean {
+    return this.#seats[this.seatOf(id)]?.isAway === true;
+  }
+
+  /**
+   * Le membre est absent (déconnecté trop longtemps, ou joué d'office deux fois de suite) : un
+   * bot Facile prend sa place, qu'il reprendra en revenant. Rend sa place dans la partie.
+   */
+  replaceAway(id: MemberId): PlayerId | null {
+    const index = this.seatOf(id);
+    const seat = this.#seats[index];
+    if (!seat || seat.isAway || !this.#session) return null;
+    seat.isAway = true;
+    this.#session.setControl(seatPlayerId(index), AWAY_BOT);
+    return seatPlayerId(index);
+  }
+
+  /** Le membre revient : il reprend sa place (la sienne seulement), que jouait un bot. */
+  reclaim(id: MemberId): RoomResult {
+    const index = this.seatOf(id);
+    const seat = this.#seats[index];
+    if (!seat || !this.#session) return refuse('notInRoom');
+    if (!seat.isAway) return refuse('notAway');
+    seat.isAway = false;
+    this.#session.setControl(seatPlayerId(index), 'human');
+    return OK;
+  }
+
+  /**
+   * L'hôte place un membre (un spectateur arrivé en cours de partie, un joueur qu'il déplace) sur
+   * la place d'un bot. En partie, la place prend son pseudo ; sa place d'avant redevient un bot.
+   */
+  assignSeat(by: MemberId, id: MemberId, seatIndex: number): RoomResult {
+    if (by !== this.#hostId) return refuse('notHost');
+    const member = this.#members.get(id);
+    const target = this.#seats[seatIndex];
+    if (!member) return refuse('notInRoom');
+    if (!target) return refuse('badSeat');
+    if (target.member !== null) return refuse('seatTaken');
+    const before = this.seatOf(id);
+    const left = this.#seats[before];
+    if (left) {
+      Object.assign(left, { member: null, isAway: false, botLevel: AWAY_BOT });
+      this.#session?.setControl(seatPlayerId(before), AWAY_BOT);
+    }
+    Object.assign(target, { member: id, isAway: false });
+    if (this.#session) {
+      this.#session.setControl(seatPlayerId(seatIndex), 'human');
+      this.#session.renamePlayer(seatPlayerId(seatIndex), member.name);
+    }
+    return OK;
+  }
+
+  /**
+   * L'hôte sort un membre du salon (il peut revenir) ; `isBanned` : il ne peut plus revenir. En
+   * partie, sa place devient un bot.
+   */
+  remove(by: MemberId, id: MemberId, isBanned: boolean): RoomResult {
+    if (by !== this.#hostId) return refuse('notHost');
+    const member = this.#members.get(id);
+    if (!member || id === by) return refuse('notInRoom');
+    if (isBanned) this.#banned.set(id, member.name);
+    const index = this.seatOf(id);
+    const seat = this.#seats[index];
+    if (seat) {
+      Object.assign(seat, { member: null, isAway: false });
+      if (this.#session) {
+        seat.botLevel = AWAY_BOT;
+        this.#session.setControl(seatPlayerId(index), AWAY_BOT);
+      }
+    }
+    this.#members.delete(id);
+    return OK;
+  }
+
+  unban(by: MemberId, id: MemberId): RoomResult {
+    if (by !== this.#hostId) return refuse('notHost');
+    this.#banned.delete(id);
+    return OK;
+  }
+
+  /** Une ligne du tchat : d'un membre (`from`), ou du système (null). Rend la ligne. */
+  say(from: MemberId | null, text: string): ChatLine | null {
+    const name = from === null ? '' : this.#members.get(from)?.name;
+    if (name === undefined) return null;
+    const line = { id: ++this.#chatId, from, name, text: text.slice(0, CHAT_MAX) };
+    this.#chat = [...this.#chat.slice(1 - CHAT_KEPT), line];
+    return line;
+  }
+
+  /** Les dernières lignes du tchat (pour qui arrive). */
+  get chat(): readonly ChatLine[] {
+    return this.#chat;
   }
 
   /** Ce que la partie montre à ce membre : sa place s'il en a une, sinon la vue spectateur. */
@@ -302,6 +428,7 @@ export class Room {
       settings: { ...this.#settings },
       seats: this.#seats.map((seat) => ({ ...seat })),
       members: [...this.#members.values()].map((member) => ({ ...member })),
+      banned: [...this.#banned].map(([id, name]) => ({ id, name })),
     };
   }
 
