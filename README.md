@@ -27,6 +27,8 @@ bun run start --port 7400 --name "Les copains" --client ../client/dist
 
 La console affiche les adresses à donner aux joueurs (celle de ta machine et celles du réseau local). Les joueurs ouvrent l'une d'elles dans leur navigateur : le serveur leur envoie le jeu lui-même, puis ils choisissent Multijoueur, rejoignent ou créent un salon (avec un mot de passe s'ils veulent). Les réglages existent aussi en variables d'environnement : `BT_PORT`, `BT_NAME`, `BT_CLIENT`.
 
+Avec une manette : un navigateur ne la donne qu'à une page en HTTPS. Le serveur sert donc aussi le jeu en HTTPS, sur le port suivant (7351 si le jeu est sur 7350), avec un certificat qu'il fabrique lui-même au premier lancement (dans `data/tls/`). La console donne cette adresse ; chaque joueur accepte une fois l'avertissement du navigateur ("connexion non privée", puis continuer). Options : `--https-port 7400`, ou `--no-https` (variables `BT_HTTPS_PORT`, `BT_NO_HTTPS=1`).
+
 Pour tester comme par Internet : `bun run start --lag 80` simule un réseau lent (80 ms de latence, avec des à-coups).
 
 ### Le tableau de bord
