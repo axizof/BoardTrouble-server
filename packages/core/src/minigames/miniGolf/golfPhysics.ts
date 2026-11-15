@@ -83,6 +83,8 @@ export type BallMotion = {
   airborne: number;
   /** Le pas où elle est sortie d'un tuyau (elle n'y rentre pas aussitôt), ou -1. */
   piped: number;
+  /** Les chocs contre les champignons, comptés (le client en fait un son). */
+  bumps?: number;
 };
 
 export type GolfBallEvent = 'holed' | 'fell' | 'stopped' | null;
@@ -261,6 +263,7 @@ export function advanceBall(
           const out = Math.max(BUMPER_KICK, -into);
           ball.vx += (out - into) * nx;
           ball.vz += (out - into) * nz;
+          ball.bumps = (ball.bumps ?? 0) + 1;
         }
       } else if (feature.kind === 'windmill' || feature.kind === 'spinner') {
         const reach = feature.length + GOLF_BALL_RADIUS;
