@@ -10,6 +10,7 @@ import {
   isAirborne,
   isSteady,
   jumpBody,
+  knockDown,
   moveBodies,
   WALKER,
   walkBody,
@@ -19,10 +20,12 @@ import {
   distanceToSpot,
   HILL_SPOTS,
   HILL_STARTS,
+  type HillSpot,
   isInSpot,
   keepInRuins,
   nodeAt,
   ruinGround,
+  WEAPON_SPOTS,
   wayToSpot,
 } from './ruins';
 
@@ -30,9 +33,11 @@ import {
 // zone de lumière se pose sur un relief, y reste ZONE_TIME secondes, puis saute ailleurs ; sa
 // prochaine place s'annonce PREVIEW secondes avant. Seul dedans, on marque (un point par
 // seconde) ; à plusieurs, personne. Espace / A : un coup d'épaule, court et sec, qui fait
-// glisser celui qu'il touche de 2,5 m environ (hors de la zone, ou en bas d'un gradin) ;
+// glisser celui qu'il touche de 2,5 m environ, à terre (hors de la zone, ou en bas d'un gradin) ;
 // Maj / B : sauter (les gradins font un mètre, on les saute ; un coup d'épaule passe sous celui
-// qui saute). Le plus de points au bout de HILL_TIME secondes gagne.
+// qui saute). De temps en temps, une arme apparaît sur un côté de la cour (une seule à la fois) :
+// une batte (deux coups qui envoient loin) ou un marteau (un tour sur soi qui renverse tout le
+// monde autour). Le plus de points au bout de HILL_TIME secondes gagne.
 
 /** Le marcheur des arènes, avec un saut d'environ 1,2 m : de quoi monter un gradin. */
 const HILL_WALKER: BodyTuning = { ...WALKER, jumpSpeed: 7 };
@@ -44,11 +49,12 @@ export const SHOVE_COOLDOWN = 1;
 const SHOVE_REACH = WALKER.radius * 2 + 0.2;
 const SHOVE_CONE = 0.5;
 /**
- * Touché : il part à HIT_SPEED en perdant l'appui HIT_STUN secondes (environ 2,5 m de glissade).
- * Deux coups d'épaule de face : chacun repart à HEAD_ON de cette vitesse.
+ * Touché : il tombe, glisse à HIT_SPEED (environ 2,3 m) et reste HIT_DOWN secondes au sol, puis
+ * se relève encore un peu sonné (retour de test : touché, on se relevait trop vite). Deux coups
+ * d'épaule de face : chacun repart à HEAD_ON de cette vitesse. On ne frappe pas qui est à terre.
  */
-const HIT_SPEED = 6;
-const HIT_STUN = 0.45;
+const HIT_SPEED = 7.5;
+export const HIT_DOWN = 1.6;
 const HEAD_ON = 0.7;
 const PASS_UNDER = 0.4;
 /** Descendre une rampe : on garde les pieds au sol tant que le sol ne s'enfonce pas plus vite. */
@@ -60,6 +66,60 @@ const FIRST_ZONE_TIME = 9;
 export const PREVIEW = 3;
 /** Le pas qui compte : un point par seconde seul dans la zone (le score est en pas). */
 export const HILL_POINT_STEPS = Math.round(1 / ARENA_STEP);
+/**
+ * Les armes (retour de test : pour pimenter la bagarre) : une seule à la fois, au sol ou en main.
+ * La première apparaît après FIRST_WEAPON secondes, la suivante WEAPON_PAUSE à WEAPON_PAUSE +
+ * WEAPON_SPREAD secondes après la fin de la précédente. On la ramasse en passant dessus. Tenue
+ * WEAPON_HOLD secondes sans servir, elle casse. La zone qui se pose sur une arme l'avale.
+ */
+const FIRST_WEAPON = 6;
+const WEAPON_PAUSE = 7;
+const WEAPON_SPREAD = 5;
+export const WEAPON_HOLD = 12;
+const PICK_REACH = 0.9;
+/** Une arme partie (cassée, avalée) reste dans l'état ce temps-là : le client montre sa fin. */
+const WEAPON_KEPT = 1;
+/**
+ * La batte : BAT_USES coups, chacun touche ce qui est devant à BAT_REACH (tous) et l'envoie à
+ * BAT_SPEED (environ 6 m), au sol BAT_DOWN secondes. Un coup, touché ou non, compte.
+ */
+export const BAT_USES = 2;
+const BAT_REACH = 1.9;
+const BAT_CONE = 0.3;
+const BAT_SPEED = 12;
+const BAT_DOWN = 2.6;
+/**
+ * Le marteau : un seul tour sur soi (SPIN_TIME, sur place), qui renverse tout le monde à
+ * SPIN_RADIUS autour (environ 3,4 m de glissade), au sol SPIN_DOWN secondes.
+ */
+export const HAMMER_USES = 1;
+export const SPIN_TIME = 0.5;
+export const SPIN_RADIUS = 2.4;
+const SPIN_SPEED = 9;
+const SPIN_DOWN = 2.2;
+/** Un coup de batte occupe le frappeur tant de secondes (le geste). */
+export const SWING_TIME = 0.3;
+
+export type HillWeaponKind = 'bat' | 'hammer';
+
+export type HillWeapon = {
+  id: number;
+  kind: HillWeaponKind;
+  /** Sa place au sol (WEAPON_SPOTS), tant que personne ne l'a ramassée. */
+  spot: number;
+  x: number;
+  y: number;
+  z: number;
+  /** Qui la tient, ou null (au sol) ; les coups qui lui restent. */
+  holder: PlayerId | null;
+  uses: number;
+  /** Le pas où elle est apparue, où on l'a ramassée. */
+  spawnedAt: number;
+  pickedAt: number | null;
+  /** Le pas où elle est partie, et comment (cassée, ou avalée par la zone), ou null. */
+  goneAt: number | null;
+  gone: 'broken' | 'swallowed' | null;
+};
 
 export type HillFighter = ArenaBody & {
   /** Personne n'est éliminé : toujours null (le cadre des arènes le demande). */
@@ -70,8 +130,13 @@ export type HillFighter = ArenaBody & {
   shoving: number;
   shoveReady: number;
   shovedAt: number | null;
-  /** Le pas où un coup d'épaule l'a touché, ou null (le client montre le choc). */
+  /** Le pas où un coup l'a touché, et lequel, ou null (le client montre le choc). */
   hitAt: number | null;
+  hitBy: 'shove' | HillWeaponKind | null;
+  /** Secondes restantes de geste d'arme, le pas du dernier coup et son arme, ou null. */
+  attacking: number;
+  attackedAt: number | null;
+  attackKind: HillWeaponKind | null;
   /** Les touches tenues au pas précédent : on agit en appuyant, pas en tenant. */
   heldShove: boolean;
   heldJump: boolean;
@@ -96,6 +161,12 @@ export type HillState = {
   /** Ceux qui sont dans la zone à ce pas ; celui qui marque (seul dedans), ou null. */
   inside: PlayerId[];
   king: PlayerId | null;
+  /** L'arme du moment (au sol, en main, ou qui vient de partir), ou null. */
+  weapon: HillWeapon | null;
+  /** Le pas où la prochaine arme apparaît, ou null (il y en a une). */
+  nextWeaponAt: number | null;
+  /** Combien d'armes sont déjà apparues. */
+  weapons: number;
 };
 
 function steps(seconds: number): number {
@@ -131,6 +202,10 @@ function create(
         shoveReady: 0,
         shovedAt: null,
         hitAt: null,
+        hitBy: null,
+        attacking: 0,
+        attackedAt: null,
+        attackKind: null,
         heldShove: false,
         heldJump: false,
       };
@@ -145,6 +220,9 @@ function create(
     },
     inside: [],
     king: null,
+    weapon: null,
+    nextWeaponAt: steps(practice ? 1 : FIRST_WEAPON),
+    weapons: 0,
   };
 }
 
@@ -152,9 +230,10 @@ function step(state: HillState, inputs: Partial<Record<PlayerId, ArenaInput>>): 
   const dt = ARENA_STEP;
   const tick = state.tick + 1;
   const fighters = state.fighters.map((fighter) => ({ ...fighter }));
-  const next: HillState = { ...state, tick, fighters, zone: { ...state.zone } };
+  const weapon = state.weapon ? { ...state.weapon } : null;
+  const next: HillState = { ...state, tick, fighters, zone: { ...state.zone }, weapon };
   if (isOver(state)) return next;
-  for (const fighter of fighters) act(fighter, inputs[fighter.id] ?? IDLE_INPUT, tick, dt);
+  for (const fighter of fighters) act(next, fighter, inputs[fighter.id] ?? IDLE_INPUT, tick, dt);
   shoves(fighters, tick);
   // Les contacts se règlent l'un après l'autre : l'ordre change à chaque pas (pawnSumo.ts).
   const shift = tick % Math.max(1, fighters.length);
@@ -170,18 +249,43 @@ function step(state: HillState, inputs: Partial<Record<PlayerId, ArenaInput>>): 
     }
     keepInRuins(fighter, HILL_WALKER.radius);
   }
+  pickWeapon(next, tick);
   score(next);
   moveZone(next, tick);
+  updateWeapon(next, tick);
   return next;
 }
 
-/** Les commandes d'un joueur : marcher, sauter, le coup d'épaule. */
-function act(fighter: HillFighter, input: ArenaInput, tick: number, dt: number): void {
+/** Les commandes d'un joueur : marcher, sauter, le coup d'épaule, ou son arme s'il en tient une. */
+function act(
+  state: HillState,
+  fighter: HillFighter,
+  input: ArenaInput,
+  tick: number,
+  dt: number,
+): void {
   const pressedShove = input.primary && !fighter.heldShove;
   const pressedJump = input.secondary && !fighter.heldJump;
   fighter.heldShove = input.primary;
   fighter.heldJump = input.secondary;
   fighter.shoveReady = Math.max(0, fighter.shoveReady - dt);
+  if (fighter.attacking > 0) {
+    // Le geste de l'arme, sur place ; au marteau, il tourne sur lui-même.
+    fighter.attacking = Math.max(0, fighter.attacking - dt);
+    if (fighter.attackKind === 'hammer') {
+      fighter.facing += ((Math.PI * 2) / SPIN_TIME) * dt;
+    }
+    walkBody(fighter, { x: 0, z: 0 }, HILL_WALKER, dt);
+    return;
+  }
+  const weapon = weaponOf(state, fighter.id);
+  if (weapon && pressedShove && isSteady(fighter) && !isAirborne(fighter)) {
+    if (Math.hypot(input.move.x, input.move.z) > 0.1) {
+      fighter.facing = Math.atan2(input.move.x, input.move.z);
+    }
+    strike(state, fighter, weapon, tick);
+    return;
+  }
   if (fighter.shoving > 0) {
     // Lancé : il ne freine ni ne tourne.
     fighter.shoving = Math.max(0, fighter.shoving - dt);
@@ -211,7 +315,7 @@ function shoves(fighters: HillFighter[], tick: number): void {
     const dirX = Math.sin(shover.facing);
     const dirZ = Math.cos(shover.facing);
     for (const other of fighters) {
-      if (other === shover || other.hitAt === tick) continue;
+      if (other === shover || other.hitAt === tick || other.downed > 0) continue;
       const dx = other.x - shover.x;
       const dz = other.z - shover.z;
       const gap = Math.hypot(dx, dz);
@@ -224,22 +328,140 @@ function shoves(fighters: HillFighter[], tick: number): void {
         other.shoving > 0 &&
         -(dx * Math.sin(other.facing) + dz * Math.cos(other.facing)) / gap > SHOVE_CONE;
       const speed = isHeadOn ? HIT_SPEED * HEAD_ON : HIT_SPEED;
-      hit(other, dx / gap, dz / gap, speed, tick);
-      if (isHeadOn) hit(shover, -dx / gap, -dz / gap, speed, tick);
+      hit(other, dx / gap, dz / gap, speed, HIT_DOWN, 'shove', tick);
+      if (isHeadOn) hit(shover, -dx / gap, -dz / gap, speed, HIT_DOWN, 'shove', tick);
       else Object.assign(shover, { shoving: 0, vx: shover.vx * 0.2, vz: shover.vz * 0.2 });
       break;
     }
   }
 }
 
-function hit(body: HillFighter, nx: number, nz: number, speed: number, tick: number): void {
-  Object.assign(body, {
-    vx: nx * speed,
-    vz: nz * speed,
-    stunned: HIT_STUN,
+/** Touché : il tombe et glisse dans le sens du coup, et lâche ce qu'il faisait. */
+function hit(
+  body: HillFighter,
+  nx: number,
+  nz: number,
+  speed: number,
+  down: number,
+  by: HillFighter['hitBy'],
+  tick: number,
+): void {
+  knockDown(body, nx, nz, speed, down);
+  Object.assign(body, { shoving: 0, attacking: 0, hitAt: tick, hitBy: by });
+}
+
+/**
+ * Un coup d'arme : la batte frappe tout ce qui est devant elle, le marteau tout ce qui est
+ * autour ; elle s'use d'un coup, touché ou non, et casse au dernier.
+ */
+function strike(state: HillState, fighter: HillFighter, weapon: HillWeapon, tick: number): void {
+  const isBat = weapon.kind === 'bat';
+  Object.assign(fighter, {
+    attacking: isBat ? SWING_TIME : SPIN_TIME,
+    attackedAt: tick,
+    attackKind: weapon.kind,
     shoving: 0,
-    hitAt: tick,
+    vx: 0,
+    vz: 0,
   });
+  const dirX = Math.sin(fighter.facing);
+  const dirZ = Math.cos(fighter.facing);
+  for (const other of state.fighters) {
+    if (other === fighter || other.downed > 0 || Math.abs(other.y - fighter.y) > 1) continue;
+    const dx = other.x - fighter.x;
+    const dz = other.z - fighter.z;
+    const gap = Math.hypot(dx, dz);
+    if (gap === 0) continue;
+    const nx = dx / gap;
+    const nz = dz / gap;
+    if (isBat && gap <= BAT_REACH && nx * dirX + nz * dirZ > BAT_CONE) {
+      hit(other, nx, nz, BAT_SPEED, BAT_DOWN, 'bat', tick);
+    } else if (!isBat && gap <= SPIN_RADIUS) {
+      hit(other, nx, nz, SPIN_SPEED, SPIN_DOWN, 'hammer', tick);
+    }
+  }
+  weapon.uses -= 1;
+  if (weapon.uses <= 0) Object.assign(weapon, { goneAt: tick, gone: 'broken' });
+}
+
+/** Celui qui passe sur l'arme au sol, debout, la ramasse. */
+function pickWeapon(state: HillState, tick: number): void {
+  const { weapon } = state;
+  if (!weapon || weapon.holder !== null || weapon.goneAt !== null) return;
+  const taker = state.fighters.find(
+    (one) =>
+      isSteady(one) &&
+      Math.hypot(one.x - weapon.x, one.z - weapon.z) <= PICK_REACH &&
+      Math.abs(one.y - weapon.y) < 1,
+  );
+  if (taker) Object.assign(weapon, { holder: taker.id, pickedAt: tick });
+}
+
+/**
+ * L'arme : avalée si la zone se pose sur elle, cassée si on la garde trop sans s'en servir ;
+ * partie, elle disparaît un peu plus tard et la suivante se prépare ; sans arme, la suivante
+ * apparaît à l'heure, sur une place des côtés loin de la zone et de la prochaine.
+ */
+function updateWeapon(state: HillState, tick: number): void {
+  const { weapon } = state;
+  if (weapon && weapon.goneAt === null) {
+    const spot = HILL_SPOTS[state.zone.spot];
+    const isSwallowed =
+      weapon.holder === null &&
+      spot !== undefined &&
+      isInSpot({ ...spot, radius: spot.radius + 0.5 }, weapon.x, weapon.y, weapon.z);
+    const isStale =
+      weapon.pickedAt !== null && (tick - weapon.pickedAt) * ARENA_STEP >= WEAPON_HOLD;
+    if (isSwallowed) Object.assign(weapon, { goneAt: tick, gone: 'swallowed' });
+    else if (isStale) Object.assign(weapon, { goneAt: tick, gone: 'broken' });
+  }
+  if (weapon && weapon.goneAt !== null && tick - weapon.goneAt >= steps(WEAPON_KEPT)) {
+    state.weapon = null;
+    const pause = WEAPON_PAUSE + forestUnit(state.seed, state.weapons, 411) * WEAPON_SPREAD;
+    state.nextWeaponAt = tick + steps(state.practice ? 2 : pause);
+  }
+  if (state.weapon !== null || state.nextWeaponAt === null || tick < state.nextWeaponAt) return;
+  spawnWeapon(state, tick);
+}
+
+/** Une nouvelle arme, batte ou marteau, sur une place des côtés loin de la zone et de la suivante. */
+function spawnWeapon(state: HillState, tick: number): void {
+  const zones = [HILL_SPOTS[state.zone.spot], HILL_SPOTS[state.zone.next]];
+  const free = WEAPON_SPOTS.map((_, id) => id).filter((id) => {
+    const place = WEAPON_SPOTS[id];
+    return (
+      place !== undefined &&
+      zones.every(
+        (zone) => !zone || Math.hypot(zone.x - place.x, zone.z - place.z) > zone.radius + 2,
+      )
+    );
+  });
+  const id = state.weapons;
+  const spot = free[Math.floor(forestUnit(state.seed, id, 412) * free.length)] ?? 0;
+  const place = WEAPON_SPOTS[spot] ?? { x: 0, y: 0, z: 0 };
+  const kind: HillWeaponKind = forestUnit(state.seed, id, 413) < 0.5 ? 'bat' : 'hammer';
+  state.weapon = {
+    id,
+    kind,
+    spot,
+    x: place.x,
+    y: place.y,
+    z: place.z,
+    holder: null,
+    uses: kind === 'bat' ? BAT_USES : HAMMER_USES,
+    spawnedAt: tick,
+    pickedAt: null,
+    goneAt: null,
+    gone: null,
+  };
+  state.weapons = id + 1;
+  state.nextWeaponAt = null;
+}
+
+/** L'arme que tient ce joueur (pas encore partie), s'il en tient une. */
+export function weaponOf(state: HillState, id: PlayerId): HillWeapon | null {
+  const { weapon } = state;
+  return weapon && weapon.holder === id && weapon.goneAt === null ? weapon : null;
 }
 
 /** Seul dans la zone, on marque ; à plusieurs, personne. */
@@ -295,18 +517,22 @@ function ranking(state: HillState): PlayerId[][] {
 // Le bot (02-mini-jeux.md, fiche 4) : il va à la zone par le chemin des ruines (escaliers,
 // rampes, sauts de gradin) ; dedans, il reste au milieu s'il est seul, sinon il se place entre le
 // milieu et l'intrus et le pousse dehors d'un coup d'épaule. Il saute pour esquiver un coup
-// d'épaule qui arrive sur lui. Selon son niveau : le temps qu'il met à voir que la zone a sauté,
-// s'il part d'avance vers la prochaine, la justesse de sa visée, son envie de frapper, ses
-// esquives.
+// d'épaule qui arrive sur lui. Une arme au sol pas trop loin, il fait parfois le détour pour la
+// prendre ; armé, il frappe à la batte un intrus devant lui, ou tourne au marteau quand il y a du
+// monde autour. Selon son niveau : le temps qu'il met à voir que la zone a sauté, s'il part
+// d'avance vers la prochaine, la justesse de sa visée, son envie de frapper, ses esquives, son
+// goût pour les armes.
 
 const BOT: Record<
   BotLevel,
-  { reaction: number; noise: number; eager: number; dodge: number; ahead: number }
+  { reaction: number; noise: number; eager: number; dodge: number; ahead: number; arms: number }
 > = {
-  easy: { reaction: 1, noise: 0.6, eager: 0.2, dodge: 0.1, ahead: 0 },
-  normal: { reaction: 0.7, noise: 0.35, eager: 0.4, dodge: 0.3, ahead: 0.15 },
-  expert: { reaction: 0.5, noise: 0.2, eager: 0.6, dodge: 0.5, ahead: 0.3 },
+  easy: { reaction: 1, noise: 0.6, eager: 0.2, dodge: 0.1, ahead: 0, arms: 0.35 },
+  normal: { reaction: 0.7, noise: 0.35, eager: 0.4, dodge: 0.3, ahead: 0.15, arms: 0.65 },
+  expert: { reaction: 0.5, noise: 0.2, eager: 0.6, dodge: 0.5, ahead: 0.3, arms: 0.9 },
 };
+/** Il va chercher une arme à moins de tant de mètres de chemin (pas s'il marque). */
+const WEAPON_DETOUR = 13;
 /** Son temps de réaction varie d'une zone à l'autre, jusqu'à tant de secondes en plus. */
 const REACTION_SPREAD = 0.8;
 /** Seul dans la zone, il revient au milieu s'il s'en écarte de plus que ça. */
@@ -316,19 +542,25 @@ const STRIKE_RANGE = 1.5;
 
 function botInput(state: HillState, player: PlayerId, level: BotLevel, rng: Rng): ArenaInput {
   const me = state.fighters.find((one) => one.id === player);
-  if (!me || !isSteady(me) || me.shoving > 0) return IDLE_INPUT;
+  if (!me || !isSteady(me) || me.shoving > 0 || me.attacking > 0) return IDLE_INPUT;
   const bot = BOT[level];
   const noise = (rng.next() - 0.5) * bot.noise;
   if (shouldDodge(state, me, bot.dodge))
     return { move: { x: 0, z: 0 }, primary: false, secondary: true };
+  const armed = weaponOf(state, me.id);
+  if (armed) {
+    const blow = armedBlow(state, me, armed, noise, bot.eager, rng);
+    if (blow) return blow;
+  }
+  const loot = wantedWeapon(state, me, bot.arms);
   const goal = goalSpot(state, me, bot);
-  const spot = HILL_SPOTS[goal];
+  const spot = loot ?? HILL_SPOTS[goal];
   if (!spot) return IDLE_INPUT;
-  if (isInSpot(spot, me.x, me.y, me.z) && goal === state.zone.spot) {
+  if (!loot && isInSpot(spot, me.x, me.y, me.z) && goal === state.zone.spot) {
     return holdZone(state, me, spot, bot.eager, noise, rng);
   }
   const node = nodeAt(me.x, me.z, me.y);
-  const way = node === null ? null : wayToSpot(node, goal);
+  const way = node === null ? null : wayToSpot(node, spot);
   // Hors de la grille (contre un mur) ou déjà dedans : droit vers le milieu de la zone.
   const target = way ?? { x: spot.x, z: spot.z, isJump: false };
   const move = rotate(toward(me, target), noise);
@@ -351,7 +583,8 @@ function goalSpot(
   if (!thinksAhead || !isAnnounced || state.king === me.id) return zone.spot;
   // L'Expert part d'avance quand il n'y marque pas, ou que la prochaine est loin.
   const node = nodeAt(me.x, me.z, me.y);
-  const far = node === null ? 0 : distanceToSpot(node, zone.next);
+  const upcoming = HILL_SPOTS[zone.next];
+  const far = node === null || !upcoming ? 0 : distanceToSpot(node, upcoming);
   const left = (zone.endAt - state.tick) * ARENA_STEP;
   return state.inside.length > 1 || far > left * HILL_WALKER.walkSpeed * 0.8
     ? zone.next
@@ -393,6 +626,45 @@ function holdZone(
     primary: false,
     secondary: false,
   };
+}
+
+/**
+ * L'arme au sol qu'il va chercher, ou null : s'il en a le goût (une fois par arme), qu'il ne
+ * marque pas, et qu'elle est à moins de WEAPON_DETOUR mètres de chemin.
+ */
+function wantedWeapon(state: HillState, me: HillFighter, taste: number): HillSpot | null {
+  const { weapon } = state;
+  if (!weapon || weapon.holder !== null || weapon.goneAt !== null || state.king === me.id) {
+    return null;
+  }
+  if (forestUnit(state.seed, weapon.id, 414 + saltOf(me.id)) >= taste) return null;
+  const place = WEAPON_SPOTS[weapon.spot];
+  const node = nodeAt(me.x, me.z, me.y);
+  if (!place || node === null || distanceToSpot(node, place) > WEAPON_DETOUR) return null;
+  return place;
+}
+
+/**
+ * Armé : à la batte, il frappe un adversaire debout tout près (il se tourne vers lui) ; au
+ * marteau, il tourne dès qu'il y a quelqu'un autour, et plus volontiers s'ils sont plusieurs.
+ */
+function armedBlow(
+  state: HillState,
+  me: HillFighter,
+  weapon: HillWeapon,
+  noise: number,
+  eager: number,
+  rng: Rng,
+): ArenaInput | null {
+  const near = state.fighters
+    .filter((one) => one.id !== me.id && one.downed <= 0 && Math.abs(one.y - me.y) < 1)
+    .map((one) => ({ one, gap: Math.hypot(one.x - me.x, one.z - me.z) }))
+    .sort((a, b) => a.gap - b.gap);
+  const reach = weapon.kind === 'bat' ? BAT_REACH - 0.3 : SPIN_RADIUS - 0.4;
+  const inReach = near.filter(({ gap }) => gap < reach);
+  const first = inReach[0];
+  if (!first || !rng.chance(eager * inReach.length)) return null;
+  return { move: rotate(toward(me, first.one), noise), primary: true, secondary: false };
 }
 
 /** Un coup d'épaule arrive droit sur lui, tout près : il saute (s'il le voit à temps). */

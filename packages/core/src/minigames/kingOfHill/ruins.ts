@@ -124,6 +124,19 @@ export const HILL_SPOTS: readonly HillSpot[] = [
   { name: 'ledge', x: 3, z: -1, y: 1, radius: 1.2 },
 ];
 
+/**
+ * Les places des armes (une à la fois, tirée de la graine), sur les côtés de la cour : il faut un
+ * petit détour pour aller la chercher. Leur nom sert de clé aux distances des bots.
+ */
+export const WEAPON_SPOTS: readonly HillSpot[] = [
+  { name: 'weaponFrontLeft', x: -11, z: 8.8, y: 0, radius: 0.6 },
+  { name: 'weaponFrontRight', x: 11, z: 8.8, y: 0, radius: 0.6 },
+  { name: 'weaponLeft', x: -11.2, z: 0.5, y: 0, radius: 0.6 },
+  { name: 'weaponRight', x: 11.2, z: 0.5, y: 0, radius: 0.6 },
+  { name: 'weaponBackLeft', x: -5.8, z: -2, y: 0, radius: 0.6 },
+  { name: 'weaponBackRight', x: 5.8, z: -2, y: 0, radius: 0.6 },
+];
+
 /** Les places de départ, dans l'ordre des joueurs, toutes au sol devant et sur les côtés. */
 export const HILL_STARTS: readonly { x: number; z: number }[] = [
   { x: -3, z: 8.5 },
@@ -267,7 +280,7 @@ type HillEdge = { to: number; cost: number; isJump: boolean };
 type Grid = { nodes: HillNode[]; byCell: number[][]; edges: HillEdge[][] };
 
 let grid: Grid | null = null;
-const distances = new Map<number, Float64Array>();
+const distances = new Map<string, Float64Array>();
 
 function cellCenter(column: number, row: number): { x: number; z: number } {
   return { x: -COURT_HALF_X + (column + 0.5) * CELL, z: -COURT_HALF_Z + (row + 0.5) * CELL };
@@ -384,11 +397,10 @@ export function hillNode(id: number): HillNode | undefined {
 }
 
 /** Les distances de chaque nœud à la zone de cette place (en mètres de marche, sauts comptés). */
-function distancesTo(spot: number): Float64Array {
-  const known = distances.get(spot);
+function distancesTo(place: HillSpot): Float64Array {
+  const known = distances.get(place.name);
   if (known) return known;
   const { nodes, edges } = theGrid();
-  const place = HILL_SPOTS[spot];
   const dist = new Float64Array(nodes.length).fill(Number.POSITIVE_INFINITY);
   const reverse: { from: number; cost: number }[][] = nodes.map(() => []);
   edges.forEach((list, from) => {
@@ -396,7 +408,6 @@ function distancesTo(spot: number): Float64Array {
   });
   const queue: number[] = [];
   nodes.forEach((node, id) => {
-    if (!place) return;
     const isInside =
       Math.abs(node.y - place.y) < 0.3 &&
       Math.hypot(node.x - place.x, node.z - place.z) <= place.radius - 0.3;
@@ -419,12 +430,12 @@ function distancesTo(spot: number): Float64Array {
       }
     }
   }
-  distances.set(spot, dist);
+  distances.set(place.name, dist);
   return dist;
 }
 
 /** La distance (mètres de marche, sauts comptés) d'un nœud à la zone de cette place. */
-export function distanceToSpot(node: number, spot: number): number {
+export function distanceToSpot(node: number, spot: HillSpot): number {
   return distancesTo(spot)[node] ?? Number.POSITIVE_INFINITY;
 }
 
@@ -434,7 +445,7 @@ export function distanceToSpot(node: number, spot: number): number {
  */
 export function wayToSpot(
   node: number,
-  spot: number,
+  spot: HillSpot,
 ): { x: number; z: number; isJump: boolean } | null {
   const { nodes, edges } = theGrid();
   const dist = distancesTo(spot);

@@ -2,16 +2,21 @@ import { describe, expect, test } from 'bun:test';
 import { Rng } from '../../random/rng';
 import { ARENA_STEP, type ArenaInput, IDLE_INPUT } from '../arena/arena';
 import {
+  BAT_USES,
   HILL_POINT_STEPS,
   HILL_TIME,
+  HIT_DOWN,
   type HillFighter,
   type HillState,
+  type HillWeapon,
   hillPoints,
   KING_OF_HILL,
   PREVIEW,
+  WEAPON_HOLD,
+  weaponOf,
   ZONE_TIME,
 } from './kingOfHill';
-import { distanceToSpot, HILL_SPOTS, HILL_STARTS, nodeAt, ruinGround } from './ruins';
+import { distanceToSpot, HILL_SPOTS, HILL_STARTS, nodeAt, ruinGround, WEAPON_SPOTS } from './ruins';
 
 const steps = (seconds: number) => Math.round(seconds / ARENA_STEP);
 const walk = (x: number, z: number, extra: Partial<ArenaInput> = {}): ArenaInput => ({
@@ -68,6 +73,8 @@ describe('Roi de la colline', () => {
     expect(pushed.hitAt).not.toBeNull();
     expect(pushed.x).toBeGreaterThan(2);
     expect(pushed.x).toBeLessThan(3.5);
+    // Il reste à terre HIT_DOWN secondes avant de se relever (retour de test : environ 2 s).
+    expect(HIT_DOWN).toBeGreaterThanOrEqual(1.5);
     // Celui qui saute au bon moment laisse passer le coup sous lui.
     let dodged = placed([
       { x: -0.9, z: 7 },
@@ -103,11 +110,11 @@ describe('Roi de la colline', () => {
     expect(fighter(state, 'p0').y).toBe(0);
   });
 
-  test('every zone can be reached from every start', () => {
+  test('every zone and every weapon place can be reached from every start', () => {
     for (const start of HILL_STARTS) {
       const node = nodeAt(start.x, start.z, 0);
       expect(node).not.toBeNull();
-      for (let spot = 0; spot < HILL_SPOTS.length; spot++) {
+      for (const spot of [...HILL_SPOTS, ...WEAPON_SPOTS]) {
         expect(distanceToSpot(node ?? 0, spot)).toBeLessThan(40);
       }
     }
@@ -157,5 +164,87 @@ describe('Roi de la colline', () => {
     expect(KING_OF_HILL.isOver(state)).toBe(false);
     expect(KING_OF_HILL.timeLeft(state)).toBeNull();
     expect(fighter(state, 'mannequin').score).toBeGreaterThan(0);
+  });
+
+  test('a weapon appears on a side, one at a time; walking over it picks it up', () => {
+    let state = KING_OF_HILL.create(['a', 'b'], { practice: false, seed: 3 });
+    while (state.weapon === null) state = KING_OF_HILL.step(state, {});
+    const weapon = state.weapon as HillWeapon;
+    const place = WEAPON_SPOTS[weapon.spot];
+    if (!place) throw new Error('no place');
+    for (const zone of [HILL_SPOTS[state.zone.spot], HILL_SPOTS[state.zone.next]]) {
+      if (zone) expect(Math.hypot(zone.x - place.x, zone.z - place.z)).toBeGreaterThan(zone.radius);
+    }
+    state = {
+      ...state,
+      fighters: state.fighters.map((one) =>
+        one.id === 'a' ? { ...one, x: place.x, z: place.z, y: place.y } : one,
+      ),
+    };
+    state = KING_OF_HILL.step(state, {});
+    expect(weaponOf(state, 'a')?.id).toBe(weapon.id);
+    // Tenue sans servir, elle casse ; aucune autre n'apparaît tant qu'elle est là.
+    for (let k = 0; k < steps(WEAPON_HOLD - 1); k++) state = KING_OF_HILL.step(state, {});
+    expect(state.weapon?.id).toBe(weapon.id);
+    for (let k = 0; k < steps(1.5); k++) state = KING_OF_HILL.step(state, {});
+    expect(weaponOf(state, 'a')).toBeNull();
+  });
+
+  test('the bat sends the one in front far away and breaks after two swings', () => {
+    let state = placed([
+      { x: -0.9, z: 7 },
+      { x: 0, z: 7 },
+    ]);
+    const bat: HillWeapon = {
+      id: 0,
+      kind: 'bat',
+      spot: 0,
+      x: 0,
+      y: 0,
+      z: 0,
+      holder: 'p0',
+      uses: BAT_USES,
+      spawnedAt: 0,
+      pickedAt: 0,
+      goneAt: null,
+      gone: null,
+    };
+    state = { ...state, weapon: bat, nextWeaponAt: null };
+    state = KING_OF_HILL.step(state, { p0: walk(1, 0, { primary: true }) });
+    for (let k = 0; k < steps(2); k++) state = KING_OF_HILL.step(state, {});
+    const struck = fighter(state, 'p1');
+    expect(struck.hitBy).toBe('bat');
+    expect(struck.x).toBeGreaterThan(4.5);
+    expect(struck.downed).toBeGreaterThan(0);
+    expect(state.weapon?.uses).toBe(1);
+    state = KING_OF_HILL.step(state, { p0: walk(1, 0, { primary: true }) });
+    expect(state.weapon?.gone).toBe('broken');
+  });
+
+  test('the hammer spin knocks down everyone around at once', () => {
+    let state = placed([
+      { x: 0, z: 7 },
+      { x: 1.2, z: 7 },
+      { x: -1.2, z: 7 },
+      { x: 0, z: 5.5 },
+    ]);
+    const hammer: HillWeapon = {
+      id: 0,
+      kind: 'hammer',
+      spot: 0,
+      x: 0,
+      y: 0,
+      z: 0,
+      holder: 'p0',
+      uses: 1,
+      spawnedAt: 0,
+      pickedAt: 0,
+      goneAt: null,
+      gone: null,
+    };
+    state = { ...state, weapon: hammer, nextWeaponAt: null };
+    state = KING_OF_HILL.step(state, { p0: walk(0, 0, { primary: true }) });
+    for (const id of ['p1', 'p2', 'p3']) expect(fighter(state, id).hitBy).toBe('hammer');
+    expect(state.weapon?.gone).toBe('broken');
   });
 });
