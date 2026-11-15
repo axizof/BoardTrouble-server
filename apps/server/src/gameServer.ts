@@ -6,6 +6,7 @@ import {
   GAME_VERSION,
   type GameEvent,
   type MemberId,
+  MINIGAME_NAMES,
   type NetClientMessage,
   type NetHostMessage,
   type PlayerId,
@@ -799,8 +800,7 @@ function stepOf(room: Room): string | null {
   if (!session) return null;
   const arena = session.arenaMessage({ type: 'spectator' }, now());
   if (arena.type === 'arena' && arena.run) {
-    // (Les noms des mini-jeux sont dans le client : ici, leur identifiant.)
-    return `Mini-jeu ${arena.run.minigame} (${STAGE_NAMES[arena.run.stage]})`;
+    return `${MINIGAME_NAMES[arena.run.minigame]} (${STAGE_NAMES[arena.run.stage]})`;
   }
   const snapshot = session.snapshot({ type: 'spectator' }, now());
   if (snapshot.type !== 'snapshot') return null;
