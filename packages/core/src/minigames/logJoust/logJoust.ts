@@ -278,11 +278,12 @@ function ranking(state: JoustState): PlayerId[][] {
 /**
  * Les bots, selon leur niveau : le retard de leur regard (secondes : ils corrigent ce qu'ils ont
  * vu un peu plus tôt), leur dosage de la correction, leur envie de frapper (chance par seconde)
- * et la part des coups de talon de l'autre qu'ils sautent.
+ * et la part des coups de talon de l'autre qu'ils sautent. Retour de test (2026-11-15) : le
+ * Normal était un peu trop fort ; affaibli, il bat le Facile 69 % du temps, l'Expert le bat 89 %.
  */
 const BOT: Record<BotLevel, { lag: number; skill: number; eager: number; dodge: number }> = {
   easy: { lag: 0.3, skill: 0.6, eager: 0.15, dodge: 0.25 },
-  normal: { lag: 0.2, skill: 0.85, eager: 0.3, dodge: 0.55 },
+  normal: { lag: 0.25, skill: 0.75, eager: 0.22, dodge: 0.4 },
   expert: { lag: 0.08, skill: 1, eager: 0.55, dodge: 0.85 },
 };
 
