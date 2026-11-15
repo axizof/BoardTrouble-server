@@ -1,0 +1,160 @@
+name: Release
+
+# Chaque push sur main publie la Release de sa version (GAME_VERSION, packages/core/src/version.ts),
+# si elle n'existe pas encore : ses nouveautés (packages/core/src/changelog.ts) et un exécutable par
+# système, le jeu embarqué. Le client (repo privé) est compilé ici, contre le core de ce commit.
+# Secrets du repo : CLIENT_REPO_TOKEN (lecture seule du repo client) et BT_API_URL (l'adresse de
+# l'API officielle, écrite dans le jeu et dans les exécutables, jamais dans ce repo public).
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      exists: ${{ steps.version.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: server
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - id: version
+        working-directory: server
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(bun -e "import { GAME_VERSION } from './packages/core/src/version'; console.log(GAME_VERSION)")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::La Release v$version existe déjà : rien à publier. Pour une nouvelle Release, monte GAME_VERSION et ajoute ses nouveautés."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Secrets
+        if: steps.version.outputs.exists == 'false'
+        env:
+          CLIENT_REPO_TOKEN: ${{ secrets.CLIENT_REPO_TOKEN }}
+          BT_API_URL: ${{ secrets.BT_API_URL }}
+        run: |
+          [ -n "$CLIENT_REPO_TOKEN" ] || { echo "::error::Secret CLIENT_REPO_TOKEN manquant"; exit 1; }
+          [ -n "$BT_API_URL" ] || { echo "::error::Secret BT_API_URL manquant"; exit 1; }
+      - name: Vérifications du serveur
+        if: steps.version.outputs.exists == 'false'
+        working-directory: server
+        run: bun install --frozen-lockfile && bun run check
+      - if: steps.version.outputs.exists == 'false'
+        uses: actions/checkout@v5
+        with:
+          repository: axizof/BoardTrouble-client
+          ref: main
+          token: ${{ secrets.CLIENT_REPO_TOKEN }}
+          path: client
+      - if: steps.version.outputs.exists == 'false'
+        uses: actions/setup-node@v5
+        with:
+          node-version-file: client/.nvmrc
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - name: Le jeu (client)
+        if: steps.version.outputs.exists == 'false'
+        working-directory: client
+        env:
+          VITE_API_URL: ${{ secrets.BT_API_URL }}
+        run: npm ci && npm run build -- --outDir ../stage/client --emptyOutDir
+      - if: steps.version.outputs.exists == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: client
+          path: stage
+          retention-days: 1
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.exists == 'false'
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            targets: bun-linux-x64 bun-linux-arm64
+          # Les propriétés du .exe (nom, version) ne se posent qu'en compilant sur Windows.
+          - os: windows-2025
+            targets: bun-windows-x64
+          # Un Mac Apple Silicon ne lance pas un exécutable sans signature : signé sur un Mac.
+          - os: macos-15
+            targets: bun-darwin-arm64 bun-darwin-x64
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: server
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: client
+          path: stage
+      - name: Exécutables
+        working-directory: server
+        env:
+          BT_RELEASE_AUTH_URL: ${{ secrets.BT_API_URL }}
+        run: |
+          bun install --frozen-lockfile
+          bun apps/server/scripts/release.ts ../stage ../release ${{ matrix.targets }}
+      - name: Signature (Mac)
+        if: runner.os == 'macOS'
+        # Une signature ad hoc (sans compte développeur Apple) : le Mac accepte de lancer le
+        # fichier ; le joueur confirme quand même au premier lancement (téléchargé d'Internet).
+        run: for file in release/*; do codesign --force --sign - "$file"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-${{ matrix.os }}
+          path: release
+          retention-days: 1
+
+  publish:
+    needs: [prepare, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: server
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: server-*
+          merge-multiple: true
+          path: release
+      - name: Release
+        working-directory: server
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          bun install --frozen-lockfile
+          bun apps/server/scripts/releaseNotes.ts > ../notes.md
+          gh release create "v$VERSION" ../release/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Board Trouble $VERSION" \
+            --notes-file ../notes.md \
+            --target "$GITHUB_SHA"
