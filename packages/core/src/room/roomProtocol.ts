@@ -41,7 +41,9 @@ export type RoomClientMessage =
   | { type: 'assignSeat'; member: string; seat: number }
   | { type: 'kick'; member: string }
   | { type: 'ban'; member: string }
-  | { type: 'unban'; member: string };
+  | { type: 'unban'; member: string }
+  /** La réponse au `ping` du serveur (il mesure ainsi la latence de chacun). */
+  | { type: 'pong'; id: number };
 
 /** Pourquoi le serveur refuse : la connexion, ou une demande dans le salon. */
 export type ServerRefusal =
@@ -66,7 +68,9 @@ export type RoomHostMessage =
   | { type: 'room'; room: RoomView | null }
   | { type: 'refused'; reason: ServerRefusal; version?: string }
   /** Des lignes du tchat : les dernières en arrivant, puis chaque nouvelle. */
-  | { type: 'chat'; lines: ChatLine[] };
+  | { type: 'chat'; lines: ChatLine[] }
+  /** Le serveur mesure la latence : le client répond `pong` avec le même numéro. */
+  | { type: 'ping'; id: number };
 
 /** Tout ce qu'un client peut envoyer à un serveur, et tout ce qu'il peut en recevoir. */
 export type NetClientMessage = RoomClientMessage | ClientMessage;
@@ -123,6 +127,8 @@ export function parseNetMessage(text: string): NetClientMessage | null {
       return isMemberId(data.member) && Number.isInteger(data.seat)
         ? { type: 'assignSeat', member: data.member, seat: data.seat as number }
         : null;
+    case 'pong':
+      return Number.isSafeInteger(data.id) ? { type: 'pong', id: data.id as number } : null;
     case 'kick':
     case 'ban':
     case 'unban':
@@ -144,7 +150,7 @@ export function parseNetMessage(text: string): NetClientMessage | null {
       return profile ? { type: 'setProfile', profile } : null;
     }
     case 'setSettings': {
-      const settings = readSettings(data.settings);
+      const settings = readRoomSettings(data.settings);
       return settings ? { type: 'setSettings', settings } : null;
     }
     case 'setBotLevel': {
@@ -225,7 +231,8 @@ function readPassword(value: unknown): string | null | undefined {
   return value;
 }
 
-function readSettings(value: unknown): RoomSettings | null {
+/** Relit des réglages de salon (un client, un preset du tableau de bord) ; null s'ils sont invalides. */
+export function readRoomSettings(value: unknown): RoomSettings | null {
   if (typeof value !== 'object' || value === null) return null;
   const data = value as Record<string, unknown>;
   const tableSize = data.tableSize === 4 || data.tableSize === 6 ? data.tableSize : null;

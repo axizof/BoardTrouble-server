@@ -278,6 +278,20 @@ export class GameSession {
     return result.events;
   }
 
+  /**
+   * Le tableau de bord force l'étape suivante (une partie bloquée) : ce qui attend se joue tout de
+   * suite (le choix par défaut du joueur attendu, comme à la fin de son chrono ; un mini-jeu, voir
+   * `ArenaRun.forceNext`). Un joueur ainsi joué d'office ne compte pas comme absent.
+   */
+  forceNext(now: number): GameEvent[] | null {
+    if (this.#arena) this.#arena.forceNext(now);
+    // Tout ce qui attend est dû : une heure de prêt assez ancienne pour tous les délais.
+    else this.#readyAt = now - (this.#options.decisionTime ?? 0) - INTRO_TIME - WHEEL_TIME - 1;
+    const events = this.tick(now);
+    this.#autoPlayed = [];
+    return events;
+  }
+
   /** Message d'arrivée dans la partie, pour une place ou un spectateur. */
   snapshot(viewer: Viewer, now: number): HostMessage {
     return {

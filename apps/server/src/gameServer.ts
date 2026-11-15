@@ -1,5 +1,7 @@
 import {
+  type ArenaStage,
   type Board,
+  type BotLevel,
   buildMontTrouble,
   GAME_VERSION,
   type GameEvent,
@@ -13,8 +15,12 @@ import {
   prepareBoard,
   Room,
   type RoomClientMessage,
+  type RoomRefusal,
+  type RoomSettings,
+  type RoomView,
   type ServerRefusal,
   seatPlayerId,
+  whoMustAct,
 } from '@board-trouble/core';
 
 // Le serveur de jeu, sans le réseau (01-architecture.md, sections 3, 5 et 7) : les connexions,
@@ -32,7 +38,30 @@ export type ServerOptions = {
   log: (line: string) => void;
   /** Déconnecté en partie depuis tant (ms), un bot prend sa place (AWAY_AFTER par défaut). */
   awayAfter?: number;
+  /** Les bannis du serveur (le tableau de bord), gardés sur disque par main.ts. */
+  bans?: ServerBans;
 };
+
+/** Les bannis de tout le serveur : leur identifiant et leur pseudo. */
+export type ServerBans = {
+  has(id: MemberId): boolean;
+  add(id: MemberId, name: string): void;
+  remove(id: MemberId): void;
+  list(): { id: MemberId; name: string }[];
+};
+
+/** Ce que le tableau de bord voit d'un joueur connecté. */
+export type AdminPlayer = {
+  id: MemberId;
+  name: string;
+  roomId: string | null;
+  address: string;
+  /** Aller-retour mesuré avec le client (ms), ou null pas encore mesuré. */
+  ping: number | null;
+};
+
+/** Ce que le tableau de bord voit d'un salon : sa vue, et où en est sa partie. */
+export type AdminRoom = { view: RoomView; step: string | null };
 
 type Connection = {
   peer: Peer;
@@ -44,6 +73,11 @@ type Connection = {
   failures: number[];
   /** Ses dernières lignes de tchat (instants, ms) : au-delà d'un rythme, refusées. */
   chats: number[];
+  /** Son adresse IP (le tableau de bord), et la latence mesurée (ms). */
+  address: string;
+  ping: number | null;
+  /** Le dernier `ping` envoyé : son numéro et son heure. */
+  pingSent: { id: number; at: number } | null;
 };
 
 type HostedRoom = {
@@ -94,8 +128,129 @@ export class GameServer {
     this.#options = options;
   }
 
-  connect(peer: Peer): Connection {
-    return { peer, id: null, profile: null, roomId: null, failures: [], chats: [] };
+  connect(peer: Peer, address = ''): Connection {
+    return {
+      peer,
+      id: null,
+      profile: null,
+      roomId: null,
+      failures: [],
+      chats: [],
+      address,
+      ping: null,
+      pingSent: null,
+    };
+  }
+
+  /** Mesure la latence de chacun (main.ts l'appelle toutes les quelques secondes). */
+  pingAll(): void {
+    for (const connection of this.#byId.values()) {
+      const id = (connection.pingSent?.id ?? 0) + 1;
+      connection.pingSent = { id, at: now() };
+      this.#send(connection, { type: 'ping', id });
+    }
+  }
+
+  // Le tableau de bord (admin/adminHub.ts) : voir, et agir sans être hôte.
+
+  adminPlayers(): AdminPlayer[] {
+    return [...this.#byId.values()].flatMap((connection) =>
+      connection.id === null || connection.profile === null
+        ? []
+        : [
+            {
+              id: connection.id,
+              name: connection.profile.name,
+              roomId: connection.roomId,
+              address: connection.address,
+              ping: connection.ping,
+            },
+          ],
+    );
+  }
+
+  adminRooms(): AdminRoom[] {
+    return [...this.#rooms.values()].map(({ room }) => ({
+      view: room.view(),
+      step: stepOf(room),
+    }));
+  }
+
+  /** Un salon créé depuis le tableau de bord, avec ses réglages : le premier arrivé en est l'hôte. */
+  adminCreateRoom(
+    name: string,
+    password: string | null,
+    settings: RoomSettings,
+    botLevels: BotLevel[],
+  ): RoomRefusal | ServerRefusal | null {
+    if (this.#rooms.size >= this.#options.maxRooms) return 'tooManyRooms';
+    let code = roomCode();
+    while (this.#rooms.has(code)) code = roomCode();
+    const hosted = this.#host(new Room(code, name, password !== null), password);
+    const configured = hosted.room.configure(settings, botLevels);
+    if (!configured.ok) return configured.reason;
+    this.#rooms.set(code, hosted);
+    this.#options.log(`Le tableau de bord a créé le salon "${name}" (${code})`);
+    this.#broadcastRooms();
+    return null;
+  }
+
+  /** Ferme un salon : ses membres reviennent à la liste des salons. */
+  adminCloseRoom(roomId: string): void {
+    const hosted = this.#rooms.get(roomId);
+    if (!hosted) return;
+    for (const member of this.#members(hosted)) {
+      member.roomId = null;
+      this.#refuse(member, 'kicked');
+      this.#send(member, { type: 'room', room: null });
+    }
+    clearTimeout(hosted.timer);
+    clearTimeout(hosted.closeTimer);
+    for (const timer of hosted.awayTimers.values()) clearTimeout(timer);
+    this.#rooms.delete(roomId);
+    this.#options.log(`Le tableau de bord a fermé le salon "${hosted.room.name}" (${roomId})`);
+    this.#broadcastRooms();
+  }
+
+  /** Sort un joueur de son salon ; `isBanned` : banni de tout le serveur (il est déconnecté). */
+  adminExpel(id: MemberId, isBanned: boolean): void {
+    const connection = this.#byId.get(id);
+    const hosted = connection?.roomId ? this.#rooms.get(connection.roomId) : undefined;
+    const name = connection?.profile?.name ?? hosted?.room.member(id)?.name ?? id;
+    if (hosted?.room.expel(id, false).ok) {
+      this.#announce(hosted, `${name} a été sorti du salon par le serveur`);
+      this.#broadcastRoom(hosted);
+      this.#broadcastSeats(hosted);
+      this.#schedule(hosted);
+    }
+    if (connection) {
+      connection.roomId = null;
+      this.#refuse(connection, isBanned ? 'banned' : 'kicked');
+      this.#send(connection, { type: 'room', room: null });
+    }
+    if (isBanned) {
+      this.#options.bans?.add(id, name);
+      this.#options.log(`${name} est banni du serveur`);
+      connection?.peer.close();
+    }
+    this.#broadcastRooms();
+  }
+
+  adminUnban(id: MemberId): void {
+    this.#options.bans?.remove(id);
+  }
+
+  /** Force l'étape suivante d'une partie bloquée (le choix par défaut, tout de suite). */
+  adminForceNext(roomId: string): void {
+    const hosted = this.#rooms.get(roomId);
+    const session = hosted?.room.session;
+    if (!hosted || !session) return;
+    const wasPlaying = session.isPlayingArena;
+    const events = session.forceNext(now());
+    this.#options.log(`Étape forcée dans le salon "${hosted.room.name}" (${roomId})`);
+    if (wasPlaying || session.isPlayingArena) this.#broadcastArena(hosted);
+    if (events && events.length > 0) this.#broadcastEvents(hosted, events);
+    if (hosted.room.session === session) this.#schedule(hosted);
   }
 
   receive(connection: Connection, text: string): void {
@@ -110,6 +265,11 @@ export class GameServer {
     switch (message.type) {
       case 'listRooms':
         this.#send(connection, { type: 'rooms', rooms: this.#summaries() });
+        return;
+      case 'pong':
+        if (connection.pingSent?.id === message.id) {
+          connection.ping = Math.round(now() - connection.pingSent.at);
+        }
         return;
       case 'createRoom':
         this.#createRoom(connection, message.name, message.password);
@@ -156,6 +316,11 @@ export class GameServer {
       return;
     }
     const { id, secret } = message.identity;
+    if (this.#options.bans?.has(id)) {
+      this.#send(connection, { type: 'refused', reason: 'banned' });
+      connection.peer.close();
+      return;
+    }
     const known = this.#secrets.get(id);
     if (known !== undefined && known !== secret) {
       this.#send(connection, { type: 'refused', reason: 'identity' });
@@ -195,8 +360,17 @@ export class GameServer {
     this.#leaveRoom(connection);
     let code = roomCode();
     while (this.#rooms.has(code)) code = roomCode();
-    const hosted: HostedRoom = {
-      room: new Room(code, name, password !== null),
+    const hosted = this.#host(new Room(code, name, password !== null), password);
+    this.#rooms.set(code, hosted);
+    this.#options.log(`${connection.profile?.name} a créé le salon "${name}" (${code})`);
+    this.#enter(connection, hosted);
+    this.#broadcastRooms();
+  }
+
+  /** Un salon à héberger, son mot de passe haché. */
+  #host(room: Room, password: string | null): HostedRoom {
+    return {
+      room,
       password: password === null ? null : Bun.password.hashSync(password, 'bcrypt'),
       timer: undefined,
       closeTimer: undefined,
@@ -205,10 +379,6 @@ export class GameServer {
       awayTimers: new Map(),
       pendingReturns: new Set(),
     };
-    this.#rooms.set(code, hosted);
-    this.#options.log(`${connection.profile?.name} a créé le salon "${name}" (${code})`);
-    this.#enter(connection, hosted);
-    this.#broadcastRooms();
   }
 
   #joinRoom(connection: Connection, roomId: string, password: string | null): void {
@@ -622,6 +792,33 @@ export class GameServer {
     connection.peer.send(JSON.stringify(message));
   }
 }
+
+/** Où en est la partie d'un salon, pour le tableau de bord ; null au salon. */
+function stepOf(room: Room): string | null {
+  const session = room.session;
+  if (!session) return null;
+  const arena = session.arenaMessage({ type: 'spectator' }, now());
+  if (arena.type === 'arena' && arena.run) {
+    // (Les noms des mini-jeux sont dans le client : ici, leur identifiant.)
+    return `Mini-jeu ${arena.run.minigame} (${STAGE_NAMES[arena.run.stage]})`;
+  }
+  const snapshot = session.snapshot({ type: 'spectator' }, now());
+  if (snapshot.type !== 'snapshot') return null;
+  const actor = whoMustAct(snapshot.state);
+  const name =
+    actor?.type === 'player'
+      ? snapshot.state.players.find((player) => player.id === actor.playerId)?.name
+      : null;
+  return name ? `Au tour de ${name}` : `Plateau (${snapshot.state.phase.type})`;
+}
+
+const STAGE_NAMES: Record<ArenaStage, string> = {
+  intro: 'présentation',
+  countdown: 'décompte',
+  play: 'en jeu',
+  reveal: 'révélation',
+  result: 'résultat',
+};
 
 function roomCode(): string {
   let code = '';

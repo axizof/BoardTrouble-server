@@ -114,6 +114,12 @@ describe('an arena run', () => {
     expect(later.arena.fighters[0]?.flippedAt).toBe(flipped.arena.fighters[0]?.flippedAt);
   });
 
+  test('the dashboard can force a stuck presentation to start', () => {
+    const run = new ArenaRun('pawnSumo', ['a', 'b'], new Map(), 1, 0);
+    run.forceNext(5_000);
+    expect(run.stage).toBe('countdown');
+  });
+
   test('in multiplayer, the presentation starts by itself after its time limit', () => {
     const run = new ArenaRun('pawnSumo', ['a', 'b'], new Map(), 1, 0, null, 60_000);
     expect(run.view(0, SPECTATOR).stageEndsIn).toBe(60_000);

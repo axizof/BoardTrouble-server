@@ -318,6 +318,16 @@ export class ArenaRun {
     this.#stageAt = now + ARENA_TIMES.result + this.#tieBreaks.length * ARENA_TIMES.tieRoll;
   }
 
+  /**
+   * Le tableau de bord force l'étape suivante (quelqu'un bloque) : la présentation part au
+   * décompte, le décompte, la révélation ou le résultat finissent tout de suite. Le jeu, lui, a
+   * toujours son chrono.
+   */
+  forceNext(now: number): void {
+    if (this.#stage === 'intro') this.#startCountdown(now);
+    else if (this.#stage !== 'play') this.#stageAt = now;
+  }
+
   /** Le résultat a été montré : le classement peut partir au moteur. */
   isDone(now: number): boolean {
     return this.#ranking !== null && this.#stage === 'result' && now >= this.#stageAt;

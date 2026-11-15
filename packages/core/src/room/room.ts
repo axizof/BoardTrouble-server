@@ -224,6 +224,14 @@ export class Room {
   /** L'hôte change les réglages ; la table ne rétrécit pas sous les humains assis. */
   setSettings(by: MemberId, settings: RoomSettings): RoomResult {
     if (by !== this.#hostId) return refuse('notHost');
+    return this.configure(settings);
+  }
+
+  /**
+   * Règle le salon (les réglages, et le niveau des bots s'il est donné) : l'hôte, ou le tableau
+   * de bord du serveur pour un salon qu'il crée. Pendant le salon seulement.
+   */
+  configure(settings: RoomSettings, botLevels?: readonly BotLevel[]): RoomResult {
     if (this.#phase !== 'lobby') return refuse('notInLobby');
     const humans = this.#seats.filter((seat) => seat.member !== null);
     if (humans.length > settings.tableSize) return refuse('tableTooSmall');
@@ -234,6 +242,11 @@ export class Room {
       (_, index) => kept[index] ?? { member: null, botLevel: 'normal', isAway: false },
     );
     this.#settings = { ...settings };
+    if (botLevels) {
+      this.#seats.forEach((seat, index) => {
+        seat.botLevel = botLevels[index] ?? seat.botLevel;
+      });
+    }
     return OK;
   }
 
@@ -374,8 +387,17 @@ export class Room {
    */
   remove(by: MemberId, id: MemberId, isBanned: boolean): RoomResult {
     if (by !== this.#hostId) return refuse('notHost');
+    if (id === by) return refuse('notInRoom');
+    return this.expel(id, isBanned);
+  }
+
+  /**
+   * Sort un membre du salon (l'hôte, ou le tableau de bord du serveur) ; en partie, sa place
+   * devient un bot. Parti, l'hôte passe au membre connecté suivant.
+   */
+  expel(id: MemberId, isBanned: boolean): RoomResult {
     const member = this.#members.get(id);
-    if (!member || id === by) return refuse('notInRoom');
+    if (!member) return refuse('notInRoom');
     if (isBanned) this.#banned.set(id, member.name);
     const index = this.seatOf(id);
     const seat = this.#seats[index];
@@ -387,6 +409,7 @@ export class Room {
       }
     }
     this.#members.delete(id);
+    if (this.#hostId === id) this.#hostId = this.connected[0]?.id ?? null;
     return OK;
   }
 
