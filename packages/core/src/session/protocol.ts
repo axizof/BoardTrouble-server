@@ -7,7 +7,7 @@ import type { GameRecap } from '../recap/recap';
 
 // Messages entre un client et l'hôte de la partie : le serveur en multi, un Web Worker en
 // solo. Les deux parlent exactement ce protocole (01-architecture.md, section 5).
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 8;
 
 export type ClientMessage =
   | { type: 'intent'; intent: Intent }

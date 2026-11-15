@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { type KeyObject, randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { join, normalize, resolve, sep } from 'node:path';
@@ -8,6 +8,7 @@ import { DataStore } from './admin/dataStore';
 import { FileBans } from './admin/fileBans';
 import adminPage from './admin/index.html';
 import { LogBuffer } from './admin/logBuffer';
+import { authPublicKey } from './authToken';
 import { GameServer, type Peer } from './gameServer';
 import { FileSaveSlots } from './saveSlots';
 import { loadCertificate } from './tls';
@@ -31,6 +32,8 @@ import { UpdateChecker } from './updates';
 //   BT_SAVE_SLOTS                 combien de parties gardées en même temps (3 par défaut)
 //   BT_UPDATE_REPO                le repo GitHub dont suivre les Releases (le repo du serveur)
 //   BT_NO_UPDATE_CHECK=1          ne pas chercher de mises à jour
+//   BT_AUTH_URL                   l'API centrale (connexion Discord) : sa clé publique est lue au
+//                                 lancement. Ou BT_AUTH_PUBLIC_KEY : la clé recopiée directement
 
 type Settings = {
   port: number;
@@ -128,7 +131,47 @@ const bans = new FileBans(store);
 /** Les emplacements de sauvegarde des parties (BT_SAVE_SLOTS, 3 par défaut). */
 const saveSlots = Math.max(1, Math.min(20, Number(process.env.BT_SAVE_SLOTS) || 3));
 const saves = new FileSaveSlots(join(settings.data, 'saves'), saveSlots, log);
-const game = new GameServer({ name: settings.name, maxRooms: 8, log, bans, saves });
+/** Le temps laissé à l'API centrale pour donner sa clé, au lancement (ms). */
+const AUTH_KEY_TIMEOUT = 5000;
+
+/**
+ * La clé publique de l'API centrale (connexion Discord) : recopiée (BT_AUTH_PUBLIC_KEY), ou lue
+ * sur l'API (BT_AUTH_URL). Rien de réglé, ou l'API injoignable : le serveur marche sans Discord.
+ */
+async function loadAuthKey(): Promise<KeyObject | null> {
+  const written = process.env.BT_AUTH_PUBLIC_KEY;
+  const url = process.env.BT_AUTH_URL;
+  let text = written;
+  if (!text && url) {
+    try {
+      const response = await fetch(`${url.replace(/\/$/, '')}/public-key`, {
+        signal: AbortSignal.timeout(AUTH_KEY_TIMEOUT),
+      });
+      const body = (await response.json()) as { key?: unknown };
+      text = typeof body.key === 'string' ? body.key : undefined;
+    } catch (error) {
+      log(`Connexion Discord désactivée : l'API ne répond pas (${String(error)})`);
+      return null;
+    }
+  }
+  if (!text) return null;
+  const key = authPublicKey(text);
+  log(
+    key
+      ? 'Connexion Discord activée'
+      : "Connexion Discord désactivée : la clé publique de l'API est invalide",
+  );
+  return key;
+}
+
+const game = new GameServer({
+  name: settings.name,
+  maxRooms: 8,
+  log,
+  bans,
+  saves,
+  authKey: await loadAuthKey(),
+});
 /** Le mot de passe du tableau de bord (hors de cette machine), affiché au lancement s'il est tiré. */
 const adminPassword = process.env.BT_ADMIN_PASSWORD || randomBytes(6).toString('base64url');
 

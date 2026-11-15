@@ -1,8 +1,10 @@
+import type { KeyObject } from 'node:crypto';
 import {
   type ArenaStage,
   type Board,
   type BotLevel,
   buildMontTrouble,
+  DISCORD_MEMBER_PREFIX,
   GAME_VERSION,
   type GameEvent,
   type MemberId,
@@ -24,6 +26,7 @@ import {
   seatPlayerId,
   whoMustAct,
 } from '@board-trouble/core';
+import { verifyAuthToken } from './authToken';
 import { SAVE_FILE_VERSION, type SaveSlots } from './saveSlots';
 
 // Le serveur de jeu, sans le réseau (01-architecture.md, sections 3, 5 et 7) : les connexions,
@@ -45,6 +48,8 @@ export type ServerOptions = {
   bans?: ServerBans;
   /** Les parties sauvegardées (data/saves) ; absent : rien n'est sauvegardé. */
   saves?: SaveSlots;
+  /** La clé publique de l'API centrale (connexion Discord) ; absente : pas de Discord ici. */
+  authKey?: KeyObject | null;
 };
 
 /** Les bannis de tout le serveur : leur identifiant et leur pseudo. */
@@ -136,7 +141,7 @@ export class GameServer {
   readonly #rooms = new Map<string, HostedRoom>();
   /** La connexion active de chaque joueur présenté. */
   readonly #byId = new Map<MemberId, Connection>();
-  /** Le secret de chaque identifiant déjà vu : lui seul peut reprendre cet identifiant. */
+  /** Le secret de chaque navigateur déjà vu : lui seul peut reprendre son identifiant. */
   readonly #secrets = new Map<MemberId, string>();
 
   constructor(options: ServerOptions) {
@@ -368,19 +373,26 @@ export class GameServer {
       connection.peer.close();
       return;
     }
-    const { id, secret } = message.identity;
+    const { secret } = message.identity;
+    const id = this.#memberId(message);
+    // Un identifiant Discord ne se prend qu'avec son jeton.
+    if (id === null) {
+      this.#send(connection, { type: 'refused', reason: 'identity' });
+      connection.peer.close();
+      return;
+    }
     if (this.#options.bans?.has(id)) {
       this.#send(connection, { type: 'refused', reason: 'banned' });
       connection.peer.close();
       return;
     }
-    const known = this.#secrets.get(id);
+    const known = this.#secrets.get(message.identity.id);
     if (known !== undefined && known !== secret) {
       this.#send(connection, { type: 'refused', reason: 'identity' });
       connection.peer.close();
       return;
     }
-    this.#secrets.set(id, secret);
+    this.#secrets.set(message.identity.id, secret);
     // Le même joueur dans un autre onglet (ou une connexion morte pas encore vue) : la nouvelle
     // connexion prend la relève.
     const previous = this.#byId.get(id);
@@ -391,7 +403,9 @@ export class GameServer {
     connection.id = id;
     connection.profile = message.profile;
     this.#byId.set(id, connection);
-    this.#options.log(`${message.profile.name} est arrivé`);
+    this.#options.log(
+      `${message.profile.name} est arrivé${id === message.identity.id ? '' : ' (Discord)'}`,
+    );
     // Revenu en pleine partie : il reprend sa place.
     const back = [...this.#rooms.values()].find(
       (hosted) => hosted.room.phase === 'playing' && hosted.room.member(id) !== undefined,
@@ -401,9 +415,25 @@ export class GameServer {
       serverName: this.#options.name,
       version: GAME_VERSION,
       rooms: this.#summaries(),
+      memberId: id,
       roomId: back?.room.id ?? null,
     });
     if (back) this.#enter(connection, back);
+  }
+
+  /**
+   * Qui se présente : son compte Discord si le jeton est valable (la même place dans tous ses
+   * navigateurs), sinon l'identifiant de son navigateur. Un jeton refusé (expiré, autre API, pas
+   * de clé ici) n'empêche pas de jouer : le `welcome` dit au client sous quel nom il est entré.
+   * Null : un navigateur qui prétend être un compte Discord.
+   */
+  #memberId(message: Extract<RoomClientMessage, { type: 'hello' }>): MemberId | null {
+    const { id } = message.identity;
+    if (id.startsWith(DISCORD_MEMBER_PREFIX)) return null;
+    const key = this.#options.authKey;
+    if (message.auth === undefined || !key) return id;
+    const user = verifyAuthToken(message.auth, key, id, Date.now() / 1000);
+    return user ? `${DISCORD_MEMBER_PREFIX}${user.id}` : id;
   }
 
   #createRoom(connection: Connection, name: string, password: string | null): void {

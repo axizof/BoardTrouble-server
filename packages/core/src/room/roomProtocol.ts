@@ -7,6 +7,7 @@ import {
   CHAT_MAX,
   type ChatLine,
   DECISION_TIMES,
+  type MemberId,
   type RoomRefusal,
   type RoomSettings,
   type RoomSummary,
@@ -35,7 +36,15 @@ export type SaveSummary = {
 };
 
 export type RoomClientMessage =
-  | { type: 'hello'; protocol: number; version: string; identity: Identity; profile: Profile }
+  /** `auth` : le jeton de la connexion Discord (l'API centrale), s'il y en a une. */
+  | {
+      type: 'hello';
+      protocol: number;
+      version: string;
+      identity: Identity;
+      profile: Profile;
+      auth?: string;
+    }
   | { type: 'listRooms' }
   | { type: 'createRoom'; name: string; password: string | null }
   | { type: 'joinRoom'; roomId: string; password: string | null }
@@ -75,17 +84,18 @@ export type ServerRefusal =
   | 'kicked';
 
 export type RoomHostMessage =
-  /** La réponse au `hello` : le serveur, sa version, et ses salons. */
   /**
-   * La réponse au `hello` : le serveur, sa version, ses salons ; `roomId` : le salon où l'on
-   * revient (une partie en cours qui garde sa place), ou null (après un redémarrage du serveur,
-   * la partie affichée n'existe plus).
+   * La réponse au `hello` : le serveur, sa version, ses salons ; `memberId` : qui l'on est ici
+   * (l'identifiant du navigateur, ou `discord-...` si le serveur a reconnu le jeton Discord) ;
+   * `roomId` : le salon où l'on revient (une partie en cours qui garde sa place), ou null (après
+   * un redémarrage du serveur, la partie affichée n'existe plus).
    */
   | {
       type: 'welcome';
       serverName: string;
       version: string;
       rooms: RoomSummary[];
+      memberId: MemberId;
       roomId: string | null;
     }
   | { type: 'rooms'; rooms: RoomSummary[] }
@@ -109,6 +119,18 @@ export const ROOM_NAME_MAX = 24;
 export const ROOM_PASSWORD_MAX = 64;
 const IDENTITY_ID = /^[A-Za-z0-9_-]{16,64}$/;
 const IDENTITY_SECRET = /^[A-Za-z0-9_-]{32,128}$/;
+/** Un jeton Discord : deux morceaux en base64url (sa charge est courte). */
+const AUTH_TOKEN = /^[A-Za-z0-9_-]{1,1500}\.[A-Za-z0-9_-]{86}$/;
+/**
+ * L'identifiant d'un joueur connecté avec Discord, le même dans tous ses navigateurs. Un
+ * navigateur ne peut pas se présenter sous un identifiant qui commence ainsi (le serveur le
+ * refuse sans jeton valable) : `isDiscordMember` suffit à dire qui est passé par Discord.
+ */
+export const DISCORD_MEMBER_PREFIX = 'discord-';
+
+export function isDiscordMember(id: MemberId): boolean {
+  return id.startsWith(DISCORD_MEMBER_PREFIX);
+}
 const ROOM_ID = /^[A-Za-z0-9]{4,16}$/;
 const TEXT_SPEEDS: readonly RoomTextSpeed[] = ['slow', 'normal', 'fast', 'instant'];
 const BOT_LEVELS: readonly BotLevel[] = ['easy', 'normal', 'expert'];
@@ -216,7 +238,8 @@ function readHello(data: Record<string, unknown>): NetClientMessage | null {
     typeof identity.secret !== 'string' ||
     !IDENTITY_ID.test(identity.id) ||
     !IDENTITY_SECRET.test(identity.secret) ||
-    !profile
+    !profile ||
+    (data.auth !== undefined && (typeof data.auth !== 'string' || !AUTH_TOKEN.test(data.auth)))
   ) {
     return null;
   }
@@ -226,6 +249,7 @@ function readHello(data: Record<string, unknown>): NetClientMessage | null {
     version: data.version,
     identity: { id: identity.id, secret: identity.secret },
     profile,
+    ...(data.auth === undefined ? {} : { auth: data.auth }),
   };
 }
 
