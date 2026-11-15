@@ -6,10 +6,10 @@ import { GOLF_HOLES, type GolfHole } from './holes';
 import {
   FULL_SWING_SPEED,
   GOLF_COURSE,
-  GOLF_TIME,
   type GolfState,
   golfCourseOf,
   golfScore,
+  HOLE_TIME,
   holeOffset,
   MAX_STROKES,
   MINI_GOLF,
@@ -98,31 +98,42 @@ describe('Mini-golf', () => {
     expect(state.fighters[0]?.strokes[0]).toBe(1);
   });
 
-  test('a ball rolls, bounces off a rail, and drops in the cup only when slow enough', () => {
+  test('the cup is a real hole: a slow ball drops in, a fast one skips over, one on the rim can lip out', () => {
     const windmill = hole('windmill');
-    const ball: BallMotion = {
-      x: windmill.cup.x,
-      z: windmill.cup.z + 0.5,
-      vx: 0,
-      vz: -1.5,
-      airborne: 0,
-      piped: -1,
+    const run = (ball: BallMotion) => {
+      let event = null;
+      for (let k = 0; k < 60 && event === null; k++)
+        event = advanceBall(ball, windmill, 0, k, ARENA_STEP);
+      return event;
     };
-    let event = null;
-    for (let k = 0; k < 30 && event === null; k++)
-      event = advanceBall(ball, windmill, 0, k, ARENA_STEP);
-    expect(event).toBe('holed');
+    expect(
+      run({ x: windmill.cup.x, z: windmill.cup.z + 0.6, vx: 0, vz: -1.2, airborne: 0, piped: -1 }),
+    ).toBe('holed');
+    // Trop vite, droit dessus : elle passe par-dessus le trou.
     const fast: BallMotion = {
       x: windmill.cup.x,
       z: windmill.cup.z + 0.5,
       vx: 0,
-      vz: -9,
+      vz: -7,
       airborne: 0,
       piped: -1,
     };
-    const first = advanceBall(fast, windmill, 0, 0, ARENA_STEP);
-    expect(first).not.toBe('holed');
-    const wall: BallMotion = { x: 1.3, z: 3, vx: 3, vz: 0, airborne: 0, piped: -1 };
+    for (let k = 0; k < 3; k++)
+      expect(advanceBall(fast, windmill, 0, k, ARENA_STEP)).not.toBe('holed');
+    expect(fast.z).toBeLessThan(windmill.cup.z);
+    // Qui frôle le bord : le trou la fait dévier, sans qu'elle tombe forcément.
+    const grazing: BallMotion = {
+      x: windmill.cup.x + 0.17,
+      z: windmill.cup.z + 0.6,
+      vx: 0,
+      vz: -2.5,
+      airborne: 0,
+      piped: -1,
+    };
+    for (let k = 0; k < 8; k++) advanceBall(grazing, windmill, 0, k, ARENA_STEP);
+    expect(grazing.vx).not.toBe(0);
+    // Une bordure renvoie la balle.
+    const wall: BallMotion = { x: 1.9, z: -0.5, vx: 3, vz: 0, airborne: 0, piped: -1 };
     for (let k = 0; k < 10; k++) advanceBall(wall, windmill, 0, k, ARENA_STEP);
     expect(wall.vx).toBeLessThan(0);
   });
@@ -130,7 +141,7 @@ describe('Mini-golf', () => {
   test('falling off costs a stroke and brings the ball back where it was', () => {
     let state = onHole('jump');
     // Trop doux pour le tremplin : la balle roule dans le vide.
-    state = swing(state, 'a', Math.PI, FULL_SWING_SPEED * 0.62);
+    state = swing(state, 'a', Math.PI, FULL_SWING_SPEED * 0.7);
     state = rollOut(state);
     for (let k = 0; k < steps(1.5); k++) state = MINI_GOLF.step(state, {});
     const ball = state.fighters[0];
@@ -152,6 +163,24 @@ describe('Mini-golf', () => {
     expect(state.fighters[0]?.hole).toBe(1);
   });
 
+  test('a finished player waits for the others; everyone moves to the next hole together', () => {
+    let state = onHole('windmill', ['a', 'b']);
+    state = {
+      ...state,
+      fighters: state.fighters.map((ball) =>
+        ball.id === 'a' ? { ...ball, phase: 'holed' as const } : ball,
+      ),
+    };
+    for (let k = 0; k < steps(5); k++) state = MINI_GOLF.step(state, {});
+    expect(state.hole).toBe(0);
+    expect(state.fighters[0]?.phase).toBe('holed');
+    // Au bout du temps du trou, qui n'a pas fini compte le maximum, et l'on passe au suivant.
+    for (let k = 0; k < steps(HOLE_TIME + 2); k++) state = MINI_GOLF.step(state, {});
+    expect(state.fighters[1]?.strokes[0]).toBe(MAX_STROKES + 1);
+    expect(state.hole).toBe(1);
+    expect(state.fighters.every((ball) => ball.phase === 'ready')).toBe(true);
+  });
+
   test('balls not yet struck pass through each other; struck ones collide', () => {
     let state = onHole('windmill', ['a', 'b']);
     state = { ...state, fighters: state.fighters.map((ball) => ({ ...ball, x: 0, z: 5 })) };
@@ -170,20 +199,30 @@ describe('Mini-golf', () => {
     expect(state.fighters[1]?.z ?? 0).toBeLessThan(4.5);
   });
 
-  test('fewest strokes wins; on equal strokes, the first to finish; unfinished holes count the max', () => {
+  test('in practice, the dummy who never plays does not hold the next hole', () => {
+    let state = MINI_GOLF.create(['a', 'dummy'], { practice: true, seed: 1 });
+    state = {
+      ...state,
+      fighters: state.fighters.map((ball) =>
+        ball.id === 'a' ? { ...ball, phase: 'holed' as const, struck: true } : ball,
+      ),
+    };
+    for (let k = 0; k < steps(3); k++) state = MINI_GOLF.step(state, {});
+    expect(state.hole).toBe(1);
+  });
+
+  test('fewest strokes wins; on equal strokes, the least time spent on the holes', () => {
     let state = MINI_GOLF.create(['a', 'b', 'c'], { practice: false, seed: 1 });
     state = {
       ...state,
-      tick: steps(GOLF_TIME),
       fighters: state.fighters.map((ball, i) => ({
         ...ball,
-        hole: i === 2 ? 1 : 2,
-        phase: i === 2 ? ('ready' as const) : ('done' as const),
-        strokes: i === 2 ? [2, 1, 0] : [3, 3, 3],
-        finishedAt: i === 0 ? 900 : i === 1 ? 800 : null,
+        phase: 'done' as const,
+        strokes: i === 2 ? [4, 4, 3] : [3, 3, 3],
+        time: i === 0 ? 40 : i === 1 ? 35 : 20,
       })),
     };
-    expect(golfScore(state, state.fighters[2] as never)).toBe(2 + (MAX_STROKES + 1) * 2);
+    expect(golfScore(state, state.fighters[2] as never)).toBe(11);
     expect(MINI_GOLF.ranking(state)).toEqual([['b'], ['a'], ['c']]);
   });
 
@@ -199,6 +238,7 @@ describe('Mini-golf', () => {
       );
     }
     expect(state.fighters.every((ball) => ball.phase === 'done')).toBe(true);
-    for (const ball of state.fighters) expect(golfScore(state, ball)).toBeLessThan(GOLF_COURSE * 5);
+    for (const ball of state.fighters)
+      expect(golfScore(state, ball)).toBeLessThanOrEqual(GOLF_COURSE * (MAX_STROKES + 1));
   });
 });

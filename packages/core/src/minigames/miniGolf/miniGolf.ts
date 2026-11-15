@@ -3,33 +3,42 @@ import type { PlayerId } from '../../game/types';
 import type { Rng } from '../../random/rng';
 import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT } from '../arena/arena';
 import { forestUnit } from '../offPiste/forest';
+import { navDistance } from './golfNav';
 import { advanceBall, type BallMotion, GOLF_BALL_RADIUS } from './golfPhysics';
-import { GOLF_HOLES, type GolfHole, type GolfWaypoint } from './holes';
+import { GOLF_HOLES, type GolfHole } from './holes';
 
 // Le Mini-golf (02-mini-jeux.md, fiche 20) : un parcours de GOLF_COURSE trous tirés parmi ceux
-// des îles flottantes (holes.ts), joués à la suite, chacun à son rythme. Tout le monde sur les
-// mêmes trous ; les balles se cognent (une balle pas encore frappée sur ce trou passe au travers :
-// au départ, posées côte à côte, elles ne s'accrochent pas). Le geste du tir :
-//   - à la souris : on vise en la bougeant ; on maintient le clic, on recule la souris derrière
-//     la balle et on l'avance : la balle part quand la souris la dépasse, d'autant plus fort que
-//     le geste est rapide ;
+// des îles flottantes (holes.ts), joués l'un après l'autre par tout le monde ensemble : qui a
+// fini un trou regarde les autres, et l'on passe au suivant quand tous l'ont fini (ou au bout de
+// HOLE_TIME secondes). Les balles se cognent (une balle pas encore frappée sur ce trou passe au
+// travers : au départ, posées côte à côte, elles ne s'accrochent pas). Le tir, comme un putter :
+//   - à la souris (le client fait d'elle un putter, sa tête envoyée en `point`) : on vise en la
+//     bougeant de côté ; on maintient le clic, on recule le putter et on l'avance : il frappe la
+//     balle quand sa tête la dépasse, et la balle part à la vitesse de la tête (doucement si on
+//     l'avance lentement, fort si on la ramène d'un coup) ;
 //   - au stick : on vise à gauche et à droite ; on maintient A, on tire le stick vers soi et on le
 //     relâche : plus on a tiré, plus c'est fort ;
 //   - au clavier : on vise aux flèches ; on maintient Espace pour charger, on relâche pour tirer.
-// MAX_STROKES coups au plus par trou : pas rentrée au dernier, la balle compte MAX_STROKES + 1.
-// Une balle qui tombe dans le vide coûte un coup et revient où elle était. Au bout de GOLF_TIME
-// secondes, un trou pas fini compte MAX_STROKES + 1. Le moins de coups gagne ; à égalité, le plus
-// rapide (le premier à finir) ; à égalité parfaite, les dés.
+// MAX_STROKES coups au plus par trou : pas rentrée au dernier, la balle compte MAX_STROKES + 1 ;
+// pareil pour qui n'a pas fini au bout du temps. Une balle qui tombe dans le vide coûte un coup et
+// revient où elle était. Le moins de coups gagne ; à égalité, le moins de temps passé sur les
+// trous ; à égalité parfaite, les dés.
 
 export const GOLF_COURSE = 3;
 export const MAX_STROKES = 6;
-export const GOLF_TIME = 100;
+/** Le temps de chaque trou : passé, ceux qui n'ont pas fini comptent MAX_STROKES + 1. */
+export const HOLE_TIME = 45;
 /** La balle à pleine puissance (m/s). */
 export const MAX_POWER_SPEED = 9.5;
-/** À la souris : la vitesse du geste (m/s, au sol) qui donne la pleine puissance. */
-export const FULL_SWING_SPEED = 22;
-/** À la souris : il faut reculer d'au moins ça (m) derrière la balle pour que le geste compte. */
-export const MIN_BACKSWING = 0.25;
+/**
+ * À la souris : la vitesse de la tête du putter (m/s) qui donne la pleine puissance ; la balle
+ * part un peu plus vite que la tête qui la frappe (comme au vrai golf).
+ */
+export const FULL_SWING_SPEED = 8.6;
+/** À la souris : il faut reculer le putter d'au moins ça (m) derrière la balle. */
+export const MIN_BACKSWING = 0.15;
+/** Le putter ne recule pas plus que ça (m) derrière la balle (le client le retient là). */
+export const MAX_BACKSWING = 1.3;
 /** Au clavier : la charge pleine en tant de secondes. */
 const CHARGE_TIME = 1.2;
 /** Au stick ou au clavier : la visée tourne à tant de radians par seconde. */
@@ -76,8 +85,8 @@ export type GolfBall = BallMotion & {
   /** La visée (un angle autour de la verticale, comme `atan2(x, z)`). */
   aim: number;
   swing: GolfSwing | null;
-  /** Le pas où il a fini le parcours, ou null. */
-  finishedAt: number | null;
+  /** Les secondes passées sur les trous déjà finis (le départage des égalités). */
+  time: number;
   /** Le pas de son dernier tir (le client le montre), ou null. */
   shotAt: number | null;
   heldPrimary: boolean;
@@ -95,6 +104,11 @@ export type GolfState = {
   seed: number;
   /** Les trous du parcours (rangs dans GOLF_HOLES). */
   course: number[];
+  /** Le trou du parcours où l'on en est (tout le monde ensemble), et le pas où il a commencé. */
+  hole: number;
+  holeStartAt: number;
+  /** Le pas où tout le monde a fini ce trou (on passe au suivant après une pause), ou null. */
+  clearedAt: number | null;
   fighters: GolfBall[];
 };
 
@@ -157,7 +171,16 @@ function create(
   players: PlayerId[],
   { practice, seed }: { practice: boolean; seed: number },
 ): GolfState {
-  const state: GolfState = { tick: 0, practice, seed, course: golfCourseOf(seed), fighters: [] };
+  const state: GolfState = {
+    tick: 0,
+    practice,
+    seed,
+    course: golfCourseOf(seed),
+    hole: 0,
+    holeStartAt: 0,
+    clearedAt: null,
+    fighters: [],
+  };
   state.fighters = players.map((id) => ({
     id,
     fellAt: null,
@@ -176,7 +199,7 @@ function create(
     struck: false,
     aim: 0,
     swing: null,
-    finishedAt: null,
+    time: 0,
     shotAt: null,
     heldPrimary: false,
     lastPoint: null,
@@ -201,17 +224,55 @@ function step(state: GolfState, inputs: Partial<Record<PlayerId, ArenaInput>>): 
   };
   if (isOver(state)) return next;
   const time = tick * ARENA_STEP;
-  next.fighters.forEach((ball, index) => {
+  for (const ball of next.fighters) {
     const input = inputs[ball.id] ?? IDLE_INPUT;
     const since = (tick - ball.phaseAt) * ARENA_STEP;
     if (ball.phase === 'ready') aimAndSwing(next, ball, input);
     else ball.heldPrimary = input.primary;
     if (ball.phase === 'rolling') roll(next, ball, time);
     else if (ball.phase === 'falling' && since >= GOLF_FALL_TIME) afterFall(next, ball);
-    else if (ball.phase === 'holed' && since >= HOLE_PAUSE) nextHole(next, ball, index);
-  });
+  }
   collideBalls(next);
+  closeHole(next);
   return next;
+}
+
+/**
+ * Le trou en cours : au bout du temps, ceux qui n'ont pas fini comptent MAX_STROKES + 1 ; quand
+ * tout le monde a fini, une pause, puis tout le monde passe au trou suivant (ou c'est la fin).
+ */
+function closeHole(state: GolfState): void {
+  const { tick } = state;
+  const isLate = !state.practice && (tick - state.holeStartAt) * ARENA_STEP >= HOLE_TIME;
+  if (isLate && state.clearedAt === null) {
+    for (const ball of state.fighters) {
+      if (ball.phase === 'holed' || ball.phase === 'done') continue;
+      ball.strokes[state.hole] = MAX_STROKES + 1;
+      finishBall(state, ball);
+    }
+  }
+  if (state.clearedAt === null) {
+    // Au bac à sable, le mannequin ne joue pas : on n'attend que les balles frappées.
+    const players = state.practice ? state.fighters.filter((ball) => ball.struck) : state.fighters;
+    if (players.length > 0 && players.every((ball) => ball.phase === 'holed'))
+      state.clearedAt = tick;
+    return;
+  }
+  if ((tick - state.clearedAt) * ARENA_STEP < HOLE_PAUSE) return;
+  nextHole(state);
+}
+
+/** Un joueur a fini le trou (rentré, ou au coup de trop) : il compte son temps et regarde les autres. */
+function finishBall(state: GolfState, ball: GolfBall): void {
+  const spent = Math.min(HOLE_TIME, (state.tick - state.holeStartAt) * ARENA_STEP);
+  Object.assign(ball, {
+    phase: 'holed',
+    phaseAt: state.tick,
+    vx: 0,
+    vz: 0,
+    swing: null,
+    time: ball.time + spent,
+  });
 }
 
 /** Ce que le joueur fait de sa balle arrêtée : viser, puis le geste du tir. */
@@ -311,14 +372,14 @@ function shoot(state: GolfState, ball: GolfBall, power: number): void {
 function roll(state: GolfState, ball: GolfBall, time: number): void {
   const event = advanceBall(ball, courseHole(state, ball.hole), time, state.tick, ARENA_STEP);
   if (event === 'holed') {
-    Object.assign(ball, { phase: 'holed', phaseAt: state.tick });
+    finishBall(state, ball);
   } else if (event === 'fell') {
     Object.assign(ball, { phase: 'falling', phaseAt: state.tick });
   } else if (event === 'stopped') {
     const isOut = (ball.strokes[ball.hole] ?? 0) >= MAX_STROKES;
     if (isOut) {
       ball.strokes[ball.hole] = MAX_STROKES + 1;
-      Object.assign(ball, { phase: 'holed', phaseAt: state.tick });
+      finishBall(state, ball);
     } else {
       Object.assign(ball, {
         phase: 'ready',
@@ -334,7 +395,7 @@ function afterFall(state: GolfState, ball: GolfBall): void {
   const strokes = (ball.strokes[ball.hole] ?? 0) + 1;
   ball.strokes[ball.hole] = Math.min(MAX_STROKES + 1, strokes);
   if (strokes >= MAX_STROKES + 1) {
-    Object.assign(ball, { phase: 'holed', phaseAt: state.tick, vx: 0, vz: 0 });
+    finishBall(state, ball);
     return;
   }
   Object.assign(ball, {
@@ -349,20 +410,21 @@ function afterFall(state: GolfState, ball: GolfBall): void {
   });
 }
 
-/** Le trou suivant, ou la fin du parcours (au bac à sable, on recommence au premier). */
-function nextHole(state: GolfState, ball: GolfBall, index: number): void {
-  if (ball.hole + 1 >= GOLF_COURSE) {
-    if (state.practice) {
-      ball.strokes = ball.strokes.map(() => 0);
-      ball.hole = 0;
-      placeOnHole(state, ball, index);
-      return;
-    }
-    Object.assign(ball, { phase: 'done', phaseAt: state.tick, finishedAt: state.tick });
+/** Tout le monde au trou suivant, ou la fin du parcours (au bac à sable, on recommence). */
+function nextHole(state: GolfState): void {
+  const isLast = state.hole + 1 >= GOLF_COURSE;
+  if (isLast && !state.practice) {
+    for (const ball of state.fighters) Object.assign(ball, { phase: 'done', phaseAt: state.tick });
+    state.clearedAt = null;
     return;
   }
-  ball.hole += 1;
-  placeOnHole(state, ball, index);
+  state.hole = isLast ? 0 : state.hole + 1;
+  Object.assign(state, { holeStartAt: state.tick, clearedAt: null });
+  state.fighters.forEach((ball, index) => {
+    if (isLast) ball.strokes = ball.strokes.map(() => 0);
+    ball.hole = state.hole;
+    placeOnHole(state, ball, index);
+  });
 }
 
 /** Les balles frappées sur un même trou se cognent (chocs élastiques, mêmes masses). */
@@ -410,32 +472,27 @@ function collideBalls(state: GolfState): void {
   }
 }
 
-/** Les coups d'un joueur : ceux joués, et MAX_STROKES + 1 pour chaque trou pas fini (à la fin). */
-export function golfScore(state: GolfState, ball: GolfBall): number {
-  const isEnded = isOver(state);
-  return ball.strokes.reduce((total, strokes, hole) => {
-    const isFinished =
-      hole < ball.hole || ball.phase === 'done' || (hole === ball.hole && ball.phase === 'holed');
-    return total + (isEnded && !isFinished ? MAX_STROKES + 1 : strokes);
-  }, 0);
+/** Les coups d'un joueur sur tout le parcours (ceux du trou en cours compris). */
+export function golfScore(_state: GolfState, ball: GolfBall): number {
+  return ball.strokes.reduce((total, strokes) => total + strokes, 0);
 }
 
+/** Les secondes qui restent sur le trou en cours. */
 function timeLeft(state: GolfState): number | null {
   if (state.practice) return null;
-  return Math.max(0, GOLF_TIME - state.tick * ARENA_STEP);
+  return Math.max(0, HOLE_TIME - (state.tick - state.holeStartAt) * ARENA_STEP);
 }
 
 function isOver(state: GolfState): boolean {
-  if (state.practice) return false;
-  return state.tick >= steps(GOLF_TIME) || state.fighters.every((ball) => ball.phase === 'done');
+  return !state.practice && state.fighters.every((ball) => ball.phase === 'done');
 }
 
-/** Le moins de coups d'abord ; à coups égaux, le premier à finir ; à égalité parfaite, ensemble. */
+/** Le moins de coups d'abord ; à coups égaux, le moins de temps ; à égalité parfaite, ensemble. */
 function ranking(state: GolfState): PlayerId[][] {
   const scored = state.fighters.map((ball) => ({
     id: ball.id,
     score: golfScore(state, ball),
-    finish: ball.finishedAt ?? Number.POSITIVE_INFINITY,
+    finish: Math.round(ball.time / ARENA_STEP),
   }));
   scored.sort((a, b) => a.score - b.score || a.finish - b.finish);
   const groups: PlayerId[][] = [];
@@ -451,29 +508,46 @@ function ranking(state: GolfState): PlayerId[][] {
 
 // Le bot (02-mini-jeux.md, fiche 20) : balle arrêtée, il essaie des coups en pensée (des
 // directions, des puissances), joués avec la vraie physique (sans les autres balles), et garde
-// celui qui finit au plus près du trou (rentré, c'est le meilleur ; tombé, le pire). Puis il le
-// joue à la souris (reculer, avancer), avec une erreur de visée et de dosage selon son niveau.
+// celui qui finit au plus près du trou (rentré, c'est le meilleur ; tombé, le pire), puis affine
+// autour. Puis il le joue à la souris (reculer, avancer), avec une erreur de visée et de dosage
+// selon son niveau. Les coups en pensée coûtent cher (des centaines de balles simulées) : il les
+// essaie un paquet à chaque pas, pendant son temps de réflexion, pour ne jamais figer l'hôte.
 
 const BOT: Record<
   BotLevel,
   { aims: number; powers: number; aimError: number; powerError: number; think: number }
 > = {
   easy: { aims: 12, powers: 4, aimError: 0.1, powerError: 0.18, think: 1.2 },
-  normal: { aims: 28, powers: 7, aimError: 0.045, powerError: 0.08, think: 0.9 },
-  expert: { aims: 52, powers: 12, aimError: 0.015, powerError: 0.03, think: 0.6 },
+  normal: { aims: 22, powers: 6, aimError: 0.045, powerError: 0.08, think: 0.9 },
+  expert: { aims: 32, powers: 8, aimError: 0.015, powerError: 0.03, think: 0.6 },
 };
 /** Un coup essayé en pensée est suivi au plus tant de secondes. */
 const PLAN_HORIZON = 5;
 /** Le recul de la souris du bot (m), et ce qu'il garde de marge au-delà. */
 const BOT_BACKSWING = 0.6;
-const plans = new Map<string, { aim: number; power: number }>();
+/** Un coup prévu : la visée, la puissance, et le pas où il commence le geste. */
+type GolfPlan = { aim: number; power: number; at: number };
+/** Les coups essayés en pensée à chaque pas (le reste au pas suivant). */
+const PLAN_BUDGET = 15;
+/** Un coup rentré à moins de tant de puissance (score sous ce seuil) : il le prend. */
+const SOFT_HOLE = -0.6;
+/** L'affinage autour du meilleur coup : tant de visées et de puissances de part et d'autre. */
+const REFINE_AIMS = 4;
+const REFINE_POWERS = 3;
+/** Les meilleurs coups trouvés, rejoués avec l'erreur du bot : il garde celui qui tient le mieux. */
+const ROBUST_SHOTS = 5;
+/** La réflexion d'un bot : en cours (elle reprend où elle en était), ou le coup trouvé. */
+const plans = new Map<string, Generator<void, GolfPlan> | GolfPlan>();
+/** Sur un trou où quelque chose bouge, il essaie aussi d'attendre (en pas) le bon moment. */
+const WAITS = [0, 12, 24, 36, 48] as const;
 
 function botInput(state: GolfState, player: PlayerId, level: BotLevel, _rng: Rng): ArenaInput {
   const ball = state.fighters.find((one) => one.id === player);
   if (ball?.phase !== 'ready') return IDLE_INPUT;
   const bot = BOT[level];
-  if ((state.tick - ball.phaseAt) * ARENA_STEP < bot.think) return IDLE_INPUT;
+  if ((state.tick - ball.phaseAt) * ARENA_STEP < bot.think / 2) return IDLE_INPUT;
   const plan = planShot(state, ball, level);
+  if (!plan || state.tick < plan.at) return IDLE_INPUT;
   const salt = player.length * 13 + (player.charCodeAt(0) || 0);
   const key = ball.hole * 64 + (ball.strokes[ball.hole] ?? 0);
   const aim = plan.aim + (forestUnit(state.seed, key, 802 + salt) * 2 - 1) * bot.aimError;
@@ -503,38 +577,117 @@ function botInput(state: GolfState, player: PlayerId, level: BotLevel, _rng: Rng
   return { ...IDLE_INPUT, point: at(along), primary: true };
 }
 
-/** Le meilleur coup trouvé en pensée depuis la balle arrêtée (gardé pour ne pas le refaire). */
-function planShot(
-  state: GolfState,
-  ball: GolfBall,
-  level: BotLevel,
-): { aim: number; power: number } {
+/**
+ * Le meilleur coup trouvé en pensée depuis la balle arrêtée, ou null s'il n'a pas fini d'y
+ * penser : il essaie PLAN_BUDGET coups de plus (et garde où il en est).
+ */
+function planShot(state: GolfState, ball: GolfBall, level: BotLevel): GolfPlan | null {
   const key = `${state.seed}:${ball.id}:${level}:${ball.hole}:${ball.phaseAt}`;
-  const known = plans.get(key);
-  if (known) return known;
-  if (plans.size > 500) plans.clear();
+  let known = plans.get(key);
+  if (!known) {
+    if (plans.size > 500) plans.clear();
+    known = searchShot(state, ball, level);
+    plans.set(key, known);
+  }
+  if (!(Symbol.iterator in known)) return known;
+  for (let tried = 0; tried < PLAN_BUDGET; tried++) {
+    const next = known.next();
+    if (next.done) {
+      plans.set(key, next.value);
+      return next.value;
+    }
+  }
+  return null;
+}
+
+/** La recherche du coup, un coup essayé à chaque pas du générateur. */
+function* searchShot(state: GolfState, from: GolfBall, level: BotLevel): Generator<void, GolfPlan> {
+  // Une copie : la balle de l'état bouge d'un pas à l'autre, la réflexion part de son arrêt.
+  const ball = { ...from };
   const bot = BOT[level];
   const hole = courseHole(state, ball.hole);
   const toCup = aimAtCup(hole, ball.x, ball.z);
-  let best = { aim: toCup, power: 0.5, score: Number.POSITIVE_INFINITY };
-  // Le tir part quelques pas après la décision : on joue le coup à ce moment-là.
-  const startTick = state.tick + 4;
-  for (let a = 0; a < bot.aims; a++) {
-    // Les visées : resserrées autour du trou, plus quelques-unes tout autour (les bandes).
-    const spread = a < bot.aims / 2 ? (a / (bot.aims / 2) - 0.5) * 2 : (a / bot.aims) * Math.PI * 2;
-    const aim = toCup + spread;
-    for (let p = 1; p <= bot.powers; p++) {
-      const power = p / bot.powers;
-      const score = tryShot(hole, ball, aim, power, startTick);
-      if (score < best.score) best = { aim, power, score };
+  const isMoving = hole.features.some(
+    (feature) =>
+      feature.kind === 'bridge' || feature.kind === 'windmill' || feature.kind === 'spinner',
+  );
+  // Il commence son geste à la fin de sa réflexion : au plus tôt après `think`, et pas avant
+  // d'avoir pu essayer tous ses coups (un pas fixé d'avance : le coup joué part au pas où il a
+  // été simulé). Le tir part quelques pas après (viser, appuyer, reculer, puis avancer le
+  // putter jusqu'à la balle : plus longtemps pour un coup doux) ; ça compte pour ce qui bouge.
+  const waits = isMoving ? WAITS : [0];
+  const tries =
+    bot.aims * bot.powers +
+    (waits.length - 1) * Math.ceil(bot.aims / 2) * bot.powers +
+    (REFINE_AIMS * 2 + 1) * (REFINE_POWERS * 2 + 1) +
+    ROBUST_SHOTS * 4;
+  const base =
+    ball.phaseAt + Math.max(Math.ceil(bot.think / ARENA_STEP), Math.ceil(tries / PLAN_BUDGET) + 1);
+  const startTick = (at: number, power: number) =>
+    at + 3 + Math.ceil(BOT_BACKSWING / (power * FULL_SWING_SPEED * ARENA_STEP));
+  let best = { aim: toCup, power: 0.5, at: base, score: Number.POSITIVE_INFINITY };
+  const tried: (typeof best)[] = [];
+  search: for (const wait of waits) {
+    const at = base + wait;
+    for (let a = 0; a < bot.aims; a++) {
+      // Les visées : resserrées autour du trou, plus quelques-unes tout autour (les bandes, mais
+      // pas en attendant : ce qui bouge est sur le chemin du trou).
+      const isAround = a < bot.aims / 2;
+      if (!isAround && wait > 0) continue;
+      const spread = isAround ? (a / (bot.aims / 2) - 0.5) * 2 : (a / bot.aims) * Math.PI * 2;
+      const aim = toCup + spread;
+      for (let p = 1; p <= bot.powers; p++) {
+        const power = p / bot.powers;
+        // Attendre a un petit prix : il ne le fait que si le coup y gagne vraiment.
+        const score = tryShot(hole, ball, aim, power, startTick(at, power)) + wait * 0.01;
+        yield;
+        tried.push({ aim, power, at, score });
+        if (score < best.score) best = { aim, power, at, score };
+        // Rentré en douceur : il n'ira pas chercher mieux.
+        if (score < SOFT_HOLE) break search;
+      }
     }
   }
-  const plan = { aim: best.aim, power: best.power };
-  plans.set(key, plan);
-  return plan;
+  // Puis il affine autour du meilleur : un vrai trou demande un putt précis.
+  const coarse = best;
+  const isHoled = coarse.score < SOFT_HOLE;
+  for (let a = -REFINE_AIMS; a <= REFINE_AIMS && !isHoled; a++) {
+    for (let p = -REFINE_POWERS; p <= REFINE_POWERS; p++) {
+      const aim = coarse.aim + a * 0.01;
+      const power = Math.max(0.03, Math.min(1, coarse.power + p * 0.03));
+      const score =
+        tryShot(hole, ball, aim, power, startTick(coarse.at, power)) + (coarse.at - base) * 0.01;
+      yield;
+      tried.push({ aim, power, at: coarse.at, score });
+    }
+  }
+  // Un coup au millimètre (le tremplin, le pont) tombe au moindre écart : les meilleurs coups
+  // sont rejoués un peu à côté et un peu plus fort ou plus doux, à la mesure de ses erreurs.
+  tried.sort((a, b) => a.score - b.score);
+  let robust = { ...(tried[0] ?? best), score: Number.POSITIVE_INFINITY };
+  for (const shot of tried.slice(0, ROBUST_SHOTS)) {
+    let total = shot.score;
+    for (const [da, dp] of [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ] as const) {
+      const aim = shot.aim + da * bot.aimError;
+      const power = Math.max(0.03, Math.min(1, shot.power * (1 + dp * bot.powerError)));
+      total += tryShot(hole, ball, aim, power, startTick(shot.at, power)) + (shot.at - base) * 0.01;
+      yield;
+    }
+    if (total < robust.score) robust = { ...shot, score: total };
+  }
+  return { aim: robust.aim, power: robust.power, at: robust.at };
 }
 
-/** Le coup essayé en pensée : la distance au trou où la balle s'arrête (0 : rentrée ; tombée : loin). */
+/**
+ * Le coup essayé en pensée : la distance au trou où la balle s'arrête ; tombée, loin. Rentrée,
+ * moins que tout, et d'autant moins que le coup est doux : un vrai trou recrache une balle trop
+ * vive, et le bot rate un peu son dosage (un coup appuyé qui rentre de justesse ressortirait).
+ */
 function tryShot(
   hole: GolfHole,
   from: GolfBall,
@@ -554,46 +707,11 @@ function tryShot(
   for (let k = 0; k < steps(PLAN_HORIZON); k++) {
     const tick = startTick + k;
     const event = advanceBall(ball, hole, tick * ARENA_STEP, tick, ARENA_STEP);
-    if (event === 'holed') return 0;
-    if (event === 'fell') return 100 + leftToCup(hole, from.x, from.z);
+    if (event === 'holed') return power - 1;
+    if (event === 'fell') return 100 + navDistance(hole, from.x, from.z);
     if (event === 'stopped') break;
   }
-  return leftToCup(hole, ball.x, ball.z);
-}
-
-/**
- * Ce qui reste de chemin jusqu'au trou depuis un point : on le pose sur le chemin des bots (au
- * plus près d'un de ses tronçons), puis on compte ce qui reste du chemin à partir de là. Un
- * simple "au plus près d'un point" faisait viser à travers les murs du serpent.
- */
-function leftToCup(hole: GolfHole, x: number, z: number): number {
-  const route: GolfWaypoint[] = hole.route ?? [hole.cup];
-  if (route.length === 1) return Math.hypot(x - hole.cup.x, z - hole.cup.z);
-  let best = Number.POSITIVE_INFINITY;
-  let after = 0;
-  // Du bout vers le début : chaque tronçon, et le chemin restant après lui.
-  for (let index = route.length - 2; index >= 0; index--) {
-    const from = route[index];
-    const to = route[index + 1];
-    if (!from || !to) continue;
-    if (from.teleport) {
-      // Un tuyau : on l'atteint, et on ressort au point suivant.
-      best = Math.min(best, Math.hypot(x - from.x, z - from.z) + after);
-      continue;
-    }
-    const ex = to.x - from.x;
-    const ez = to.z - from.z;
-    const length = Math.hypot(ex, ez) || 1;
-    const share = Math.max(
-      0,
-      Math.min(1, ((x - from.x) * ex + (z - from.z) * ez) / (length * length)),
-    );
-    const px = from.x + ex * share;
-    const pz = from.z + ez * share;
-    best = Math.min(best, Math.hypot(x - px, z - pz) + length * (1 - share) + after);
-    after += length;
-  }
-  return best;
+  return navDistance(hole, ball.x, ball.z);
 }
 
 export const MINI_GOLF: ArenaGame<GolfState> = {
