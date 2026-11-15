@@ -19,6 +19,7 @@ export * from './minigames/arena/arena';
 export * from './minigames/arena/arenaRun';
 export * from './minigames/arena/body';
 export * from './minigames/arena/reveal';
+export * from './minigames/armWrestling/armWrestling';
 export * from './minigames/bigDie/bigDie';
 export * from './minigames/boardReflex/boardReflex';
 export * from './minigames/cannoneer/cannoneer';

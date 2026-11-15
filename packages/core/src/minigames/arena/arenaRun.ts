@@ -3,6 +3,7 @@ import { breakTies, TIE_ROLL_TIME, type TieBreak } from '../../dice/dice';
 import type { PlayerId } from '../../game/types';
 import type { Viewer } from '../../game/views';
 import type { Rng } from '../../random/rng';
+import { ARM_WRESTLING } from '../armWrestling/armWrestling';
 import { BIG_DIE } from '../bigDie/bigDie';
 import { BOARD_REFLEX } from '../boardReflex/boardReflex';
 import { CANNONEER } from '../cannoneer/cannoneer';
@@ -83,6 +84,7 @@ export const ARENAS = {
   kingOfHill: KING_OF_HILL,
   cannoneer: CANNONEER,
   freshPaint: FRESH_PAINT,
+  armWrestling: ARM_WRESTLING,
 } satisfies Record<MinigameId, ArenaGame<ArenaState>>;
 export type ArenaMinigame = keyof typeof ARENAS;
 /** L'état de chaque arène jouable. */
