@@ -173,14 +173,24 @@ class MinHeap {
  * contre un mur est souvent plus près d'une case de l'autre côté).
  */
 export function navDistance(hole: GolfHole, x: number, z: number): number {
+  return nearestCell(hole, x, z)?.total ?? FAR;
+}
+
+function mapOf(hole: GolfHole): NavMap {
   let map = maps.get(hole.id);
   if (!map) {
     map = buildMap(hole);
     maps.set(hole.id, map);
   }
+  return map;
+}
+
+/** La case de la carte par où ce point rejoint le mieux le trou (sans traverser de mur). */
+function nearestCell(hole: GolfHole, x: number, z: number) {
+  const map = mapOf(hole);
   const column = Math.floor((x - map.minX) / NAV_CELL);
   const row = Math.floor((z - map.minZ) / NAV_CELL);
-  let best = FAR;
+  let best: { cell: number; total: number } | null = null;
   for (let dr = -1; dr <= 2; dr++) {
     for (let dc = -1; dc <= 2; dc++) {
       const c = column + dc;
@@ -191,8 +201,55 @@ export function navDistance(hole: GolfHole, x: number, z: number): number {
       const cx = map.minX + c * NAV_CELL;
       const cz = map.minZ + r * NAV_CELL;
       if (hole.walls.some((wall) => crosses(x, z, cx, cz, wall))) continue;
-      best = Math.min(best, value + Math.hypot(cx - x, cz - z));
+      const total = value + Math.hypot(cx - x, cz - z);
+      if (!best || total < best.total) best = { cell: r * map.columns + c, total };
     }
   }
   return best;
+}
+
+/** Jusqu'où la visée de départ regarde le long du chemin (m). */
+const PATH_LOOK = 6;
+
+/**
+ * La visée qui suit le chemin vers le trou depuis ce point (pas le trou à vol d'oiseau, souvent
+ * derrière un muret) : vers le point du chemin le plus loin qu'on voit sans mur entre deux, à
+ * PATH_LOOK mètres au plus. La visée de départ d'un trou, au joueur de la corriger.
+ */
+export function pathAim(hole: GolfHole, x: number, z: number): number {
+  const toCup = Math.atan2(hole.cup.x - x, hole.cup.z - z);
+  const start = nearestCell(hole, x, z);
+  if (!start) return toCup;
+  const map = mapOf(hole);
+  const at = (cell: number) => ({
+    x: map.minX + (cell % map.columns) * NAV_CELL,
+    z: map.minZ + Math.floor(cell / map.columns) * NAV_CELL,
+  });
+  let target = at(start.cell);
+  // On descend la carte case par case vers le trou (la plus proche du trou parmi les voisines).
+  let cell = start.cell;
+  for (let walked = 0; walked < 200; walked++) {
+    const from = at(cell);
+    let next = cell;
+    for (let dr = -1; dr <= 1; dr++) {
+      for (let dc = -1; dc <= 1; dc++) {
+        const c = (cell % map.columns) + dc;
+        const r = Math.floor(cell / map.columns) + dr;
+        if (c < 0 || c >= map.columns || r < 0 || r >= map.rows) continue;
+        const neighbor = r * map.columns + c;
+        if ((map.distance[neighbor] ?? FAR) >= (map.distance[next] ?? FAR)) continue;
+        const to = at(neighbor);
+        if (hole.walls.some((wall) => crosses(from.x, from.z, to.x, to.z, wall))) continue;
+        next = neighbor;
+      }
+    }
+    if (next === cell) break;
+    cell = next;
+    const point = at(cell);
+    if (Math.hypot(point.x - x, point.z - z) > PATH_LOOK) break;
+    if (hole.walls.some((wall) => crosses(x, z, point.x, point.z, wall))) break;
+    target = point;
+  }
+  if (Math.hypot(target.x - x, target.z - z) < 0.5) return toCup;
+  return Math.atan2(target.x - x, target.z - z);
 }

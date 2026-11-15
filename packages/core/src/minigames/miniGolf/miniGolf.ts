@@ -3,7 +3,7 @@ import type { PlayerId } from '../../game/types';
 import type { Rng } from '../../random/rng';
 import { ARENA_STEP, type ArenaGame, type ArenaInput, IDLE_INPUT } from '../arena/arena';
 import { forestUnit } from '../offPiste/forest';
-import { navDistance } from './golfNav';
+import { navDistance, pathAim } from './golfNav';
 import { advanceBall, type BallMotion, GOLF_BALL_RADIUS } from './golfPhysics';
 import { GOLF_HOLES, type GolfHole } from './holes';
 
@@ -160,7 +160,7 @@ function placeOnHole(state: GolfState, ball: GolfBall, index: number): void {
     restX: spot.x,
     restZ: spot.z,
     struck: false,
-    aim: aimAtCup(hole, spot.x, spot.z),
+    aim: pathAim(hole, spot.x, spot.z),
     swing: null,
     phase: 'ready',
     phaseAt: state.tick,
@@ -325,7 +325,9 @@ function aimAndSwing(state: GolfState, ball: GolfBall, input: ArenaInput): void 
   if (swing.isMouse && point) {
     // Le geste à la souris : la position le long de la visée (négative derrière la balle).
     const along = (point.x - ball.x) * dirX + (point.z - ball.z) * dirZ;
-    swing.trail = [...swing.trail.slice(-2), along];
+    // La vitesse sur les 3 derniers pas (0,1 s) : d'un seul pas à l'autre, l'arrivée irrégulière
+    // des commandes la ferait sauter.
+    swing.trail = [...swing.trail.slice(-3), along];
     swing.back = Math.max(swing.back, -along);
     if (released) {
       ball.swing = null;
@@ -381,11 +383,8 @@ function roll(state: GolfState, ball: GolfBall, time: number): void {
       ball.strokes[ball.hole] = MAX_STROKES + 1;
       finishBall(state, ball);
     } else {
-      Object.assign(ball, {
-        phase: 'ready',
-        phaseAt: state.tick,
-        aim: aimAtCup(courseHole(state, ball.hole), ball.x, ball.z),
-      });
+      // La visée reste celle du coup : la caméra du joueur ne tourne pas toute seule.
+      Object.assign(ball, { phase: 'ready', phaseAt: state.tick });
     }
   }
 }
@@ -406,7 +405,6 @@ function afterFall(state: GolfState, ball: GolfBall): void {
     airborne: 0,
     phase: 'ready',
     phaseAt: state.tick,
-    aim: aimAtCup(courseHole(state, ball.hole), ball.restX, ball.restZ),
   });
 }
 

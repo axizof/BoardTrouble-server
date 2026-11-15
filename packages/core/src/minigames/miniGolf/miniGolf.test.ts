@@ -138,6 +138,36 @@ describe('Mini-golf', () => {
     expect(wall.vx).toBeLessThan(0);
   });
 
+  test('the putter speed is measured over a few steps: commands arriving unevenly do not change the shot', () => {
+    const shotSpeed = (alongs: number[]) => {
+      let state = onHole('windmill');
+      const ball = state.fighters[0];
+      if (!ball) throw new Error('no ball');
+      const at = (along: number): ArenaInput => ({
+        ...IDLE_INPUT,
+        point: { x: ball.x + Math.sin(Math.PI) * along, z: ball.z + Math.cos(Math.PI) * along },
+        primary: true,
+      });
+      state = MINI_GOLF.step(state, { a: { ...at(2), primary: false } });
+      for (const along of alongs) state = MINI_GOLF.step(state, { a: at(along) });
+      return Math.hypot(state.fighters[0]?.vx ?? 0, state.fighters[0]?.vz ?? 0);
+    };
+    // Le même geste (0,1 m par pas), reçu régulièrement, puis avec un pas sans nouvelle commande.
+    const even = shotSpeed([-0.1, -0.6, -0.5, -0.4, -0.3, -0.2, -0.1, 0]);
+    const uneven = shotSpeed([-0.1, -0.6, -0.5, -0.4, -0.3, -0.3, -0.1, 0]);
+    expect(even).toBeGreaterThan(0);
+    expect(uneven).toBeCloseTo(even, 5);
+  });
+
+  test('a stopped ball keeps the aim of its shot (the camera does not turn by itself)', () => {
+    let state = onHole('windmill');
+    state = swing(state, 'a', Math.PI + 0.3, FULL_SWING_SPEED * 0.3);
+    state = rollOut(state);
+    expect(state.fighters[0]?.phase).toBe('ready');
+    // (À un tour près.)
+    expect(Math.cos((state.fighters[0]?.aim ?? 0) - (Math.PI + 0.3))).toBeCloseTo(1, 6);
+  });
+
   test('falling off costs a stroke and brings the ball back where it was', () => {
     let state = onHole('jump');
     // Trop doux pour le tremplin : la balle roule dans le vide.
