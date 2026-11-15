@@ -41,7 +41,7 @@ export function assetName(platform = process.platform, arch = process.arch): str
 }
 
 /** Le serveur tourne en exécutable compilé (sinon, depuis les sources avec Bun). */
-function isCompiled(): boolean {
+export function isCompiled(): boolean {
   return !/[\\/]bun(\.exe)?$/i.test(process.execPath);
 }
 

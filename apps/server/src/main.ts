@@ -12,7 +12,7 @@ import { authPublicKey } from './authToken';
 import { GameServer, type Peer } from './gameServer';
 import { FileSaveSlots } from './saveSlots';
 import { loadCertificate } from './tls';
-import { UpdateChecker } from './updates';
+import { isCompiled, UpdateChecker } from './updates';
 
 // Le serveur Board Trouble (01-architecture.md, sections 3 et 10) : il sert le jeu lui-même (la
 // page et la connexion de jeu ont la même origine : en LAN, ni contenu mixte ni accès au réseau
@@ -22,7 +22,8 @@ import { UpdateChecker } from './updates';
 // Réglages (ligne de commande, sinon variables d'environnement) :
 //   --port 7350        BT_PORT
 //   --name "Mon serveur" BT_NAME
-//   --client <dossier> BT_CLIENT   le jeu compilé (dist du client)
+//   --client <dossier> BT_CLIENT   le jeu compilé (dist du client) ; un exécutable de Release
+//                                  a le sien, embarqué
 //   --lag 80           BT_LAG      développement : simule un réseau lent (ms de latence, plus
 //                                  des à-coups de la moitié), dans les deux sens
 //   --data <dossier>   BT_DATA     où garder ses données (bannis, presets) : `data/` par défaut
@@ -32,8 +33,10 @@ import { UpdateChecker } from './updates';
 //   BT_SAVE_SLOTS                 combien de parties gardées en même temps (3 par défaut)
 //   BT_UPDATE_REPO                le repo GitHub dont suivre les Releases (le repo du serveur)
 //   BT_NO_UPDATE_CHECK=1          ne pas chercher de mises à jour
-//   BT_AUTH_URL                   l'API centrale (connexion Discord) : sa clé publique est lue au
-//                                 lancement. Ou BT_AUTH_PUBLIC_KEY : la clé recopiée directement
+//   BT_AUTH_URL                   depuis les sources seulement : l'API centrale (connexion
+//                                 Discord), dont la clé publique est lue au lancement ; ou
+//                                 BT_AUTH_PUBLIC_KEY, la clé recopiée. Un exécutable de Release a
+//                                 l'adresse de l'API officielle, qu'on ne change pas
 
 type Settings = {
   port: number;
@@ -64,11 +67,14 @@ function readSettings(): Settings {
         : securePort,
     lag: Number.isFinite(lag) && lag > 0 ? Math.min(lag, 2000) : 0,
     name: (option('--name') ?? process.env.BT_NAME ?? 'Serveur Board Trouble').slice(0, 40),
-    // Par défaut, le client cloné à côté du serveur (01-architecture.md, section 2), compilé.
+    // Par défaut, le jeu embarqué dans l'exécutable (Release, scripts/release.ts), ou le client
+    // cloné à côté du serveur (01-architecture.md, section 2), compilé.
     client: resolve(
       option('--client') ??
         process.env.BT_CLIENT ??
-        join(import.meta.dir, '../../../../client/dist'),
+        (isCompiled()
+          ? join(import.meta.dir, 'client')
+          : join(import.meta.dir, '../../../../client/dist')),
     ),
     data: resolve(option('--data') ?? process.env.BT_DATA ?? 'data'),
   };
@@ -135,13 +141,20 @@ const saves = new FileSaveSlots(join(settings.data, 'saves'), saveSlots, log);
 const AUTH_KEY_TIMEOUT = 5000;
 
 /**
- * La clé publique de l'API centrale (connexion Discord) : recopiée (BT_AUTH_PUBLIC_KEY), ou lue
- * sur l'API (BT_AUTH_URL). Rien de réglé, ou l'API injoignable : le serveur marche sans Discord.
+ * L'adresse de l'API officielle, écrite dans les exécutables à leur compilation (`--define`, par
+ * la Release) : le repo est public, elle n'y figure pas (un secret du repo GitHub la donne).
+ */
+declare const BUILT_AUTH_URL: string;
+const builtAuthUrl = typeof BUILT_AUTH_URL === 'string' ? BUILT_AUTH_URL : null;
+
+/**
+ * La clé publique de l'API centrale (connexion Discord), lue sur l'API au lancement : l'API
+ * officielle pour un exécutable de Release ; depuis les sources, BT_AUTH_URL, ou la clé recopiée
+ * (BT_AUTH_PUBLIC_KEY). Rien de réglé, ou l'API injoignable : le serveur marche sans Discord.
  */
 async function loadAuthKey(): Promise<KeyObject | null> {
-  const written = process.env.BT_AUTH_PUBLIC_KEY;
-  const url = process.env.BT_AUTH_URL;
-  let text = written;
+  const url = builtAuthUrl ?? process.env.BT_AUTH_URL;
+  let text = builtAuthUrl === null ? process.env.BT_AUTH_PUBLIC_KEY : undefined;
   if (!text && url) {
     try {
       const response = await fetch(`${url.replace(/\/$/, '')}/public-key`, {

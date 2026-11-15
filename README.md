@@ -18,7 +18,9 @@ Le moteur de règles, les mini-jeux et leurs bots sont faits ; le multijoueur ar
 
 ## Lancer un serveur
 
-Pour l'instant, depuis les sources (les exécutables viendront avec les releases) : le client cloné à côté de ce repo et compilé (`npm run build` dans le client), puis :
+Le plus simple : télécharge l'exécutable de ton système dans les [Releases](../../releases/latest) (Windows, Mac, Linux), et lance-le. Le jeu est dedans, rien d'autre à installer.
+
+Depuis les sources : le client cloné à côté de ce repo et compilé (`npm run build` dans le client), puis :
 
 ```
 bun run start                       # port 7350 par défaut
@@ -41,7 +43,11 @@ Le serveur regarde la dernière Release de ce repo au lancement, puis toutes les
 
 ### Les comptes Discord
 
-Un joueur peut se connecter avec Discord (depuis l'écran Multijoueur) : il retrouve alors sa place depuis n'importe quel appareil, et les autres voient "Discord" à côté de son nom. La connexion passe par l'API centrale de Board Trouble, qui lui donne un jeton signé ; le serveur le vérifie lui-même avec la clé publique de l'API, qu'il lit au lancement (`BT_AUTH_URL=<adresse de l'API>`) ou qu'on lui donne directement (`BT_AUTH_PUBLIC_KEY=<la clé>`). Sans l'un ni l'autre, ou si l'API ne répond pas au lancement, le serveur marche sans Discord : chacun garde sa place sur son navigateur. La console dit si la connexion Discord est activée.
+Un joueur peut se connecter avec Discord (depuis l'écran Multijoueur) : il retrouve alors sa place depuis n'importe quel appareil, et les autres voient "Discord" à côté de son nom. La connexion passe par l'API centrale de Board Trouble, qui lui donne un jeton signé ; le serveur le vérifie lui-même avec la clé publique de l'API, qu'il lit au lancement. Les exécutables des Releases connaissent déjà l'adresse de l'API : rien à régler. Depuis les sources, on la donne (`BT_AUTH_URL=<adresse de l'API>`), ou directement sa clé (`BT_AUTH_PUBLIC_KEY=<la clé>`). Si l'API ne répond pas au lancement, le serveur marche sans Discord : chacun garde sa place sur son navigateur. La console dit si la connexion Discord est activée.
+
+### Les Releases
+
+Chaque push sur `main` publie la Release de la version du jeu (`GAME_VERSION`, `packages/core/src/version.ts`) si elle n'existe pas encore : ses nouveautés (`packages/core/src/changelog.ts`) et un exécutable par système (`board-trouble-server-<windows|macos|linux>-<x64|arm64>`), avec le jeu compilé embarqué. Pour en publier une : monter `GAME_VERSION` et ajouter ses nouveautés en tête du changelog (un test le vérifie). Le workflow (`.github/workflows/release.yml`) a besoin de deux secrets du repo : `CLIENT_REPO_TOKEN` (lecture du repo du client) et `BT_API_URL` (l'adresse de l'API centrale).
 
 ## Licence
 
