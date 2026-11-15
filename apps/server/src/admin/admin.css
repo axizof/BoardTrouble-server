@@ -383,3 +383,9 @@ td.actions {
 .login .card {
   width: min(360px, 100%);
 }
+
+.banner .notes {
+  margin: 8px 0 10px;
+  white-space: pre-wrap;
+  font: inherit;
+}

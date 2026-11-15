@@ -28,6 +28,7 @@ function setup() {
     log: () => {},
     onStop: () => {},
     onRestart: () => {},
+    onUpdate: async () => null,
   });
   const page = (isLocal: boolean, address = '10.0.0.2') => {
     const received: AdminOutbound[] = [];

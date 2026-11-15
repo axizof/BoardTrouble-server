@@ -33,6 +33,8 @@ export type AdminOptions = {
   log: (line: string) => void;
   onStop: () => void;
   onRestart: () => void;
+  /** Installe la mise à jour et redémarre ; rend l'erreur à afficher, ou null. */
+  onUpdate: () => Promise<string | null>;
 };
 
 /** L'état part toutes les tant de millisecondes. */
@@ -168,6 +170,12 @@ export class AdminHub {
         log('Redémarrage demandé depuis le tableau de bord');
         this.#options.onRestart();
         return;
+      case 'applyUpdate':
+        log('Mise à jour demandée depuis le tableau de bord');
+        void this.#options.onUpdate().then((error) => {
+          if (error) this.#notice(connection, error, true);
+        });
+        return;
     }
     this.#pushState();
   }
@@ -299,6 +307,7 @@ function parseAdmin(text: string): AdminInbound | null {
     }
     case 'stop':
     case 'restart':
+    case 'applyUpdate':
       return { type: data.type };
     default:
       return null;
