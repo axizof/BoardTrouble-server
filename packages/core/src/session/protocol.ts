@@ -7,13 +7,14 @@ import type { GameRecap } from '../recap/recap';
 
 // Messages entre un client et l'hôte de la partie : le serveur en multi, un Web Worker en
 // solo. Les deux parlent exactement ce protocole (01-architecture.md, section 5).
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 export type ClientMessage =
   | { type: 'intent'; intent: Intent }
   /** Pendant un mini-jeu d'arène : se dire prêt, puis envoyer ses commandes. */
   | { type: 'arenaReady' }
-  | { type: 'arenaInput'; input: ArenaInput };
+  /** `seq` : le numéro de la commande, un par pas du client (voir `ArenaRun.setInput`). */
+  | { type: 'arenaInput'; input: ArenaInput; seq: number };
 
 /** Qui joue chaque place : un humain, ou un bot. */
 export type SeatKind = 'human' | 'bot';

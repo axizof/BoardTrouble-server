@@ -125,7 +125,9 @@ export function parseNetMessage(text: string): NetClientMessage | null {
       return { type: 'setBotLevel', seat: data.seat as number, level };
     }
     case 'arenaInput':
-      return { type: 'arenaInput', input: sanitizeInput(data.input) };
+      return Number.isSafeInteger(data.seq) && (data.seq as number) >= 0
+        ? { type: 'arenaInput', input: sanitizeInput(data.input), seq: data.seq as number }
+        : null;
     case 'intent':
       // L'intention est validée par le moteur (droit d'agir, choix possibles) ; ici, sa forme.
       return typeof data.intent === 'object' &&

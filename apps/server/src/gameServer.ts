@@ -343,7 +343,7 @@ export class GameServer {
     // Un spectateur ne joue pas.
     if (viewer.type !== 'player') return;
     if (message.type === 'arenaInput') {
-      session.arenaInput(viewer.playerId, message.input);
+      session.arenaInput(viewer.playerId, message.input, message.seq);
       return;
     }
     if (message.type === 'arenaReady') {

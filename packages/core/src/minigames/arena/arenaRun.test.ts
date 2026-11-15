@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { Viewer } from '../../game/views';
 import { Rng } from '../../random/rng';
-import { ARENA_TIMES, ArenaRun } from './arenaRun';
+import { ARENA_TIMES, ArenaRun, INPUT_LAG } from './arenaRun';
 
 const SPECTATOR: Viewer = { type: 'spectator' };
 
@@ -112,6 +112,68 @@ describe('an arena run', () => {
     if (later.minigame !== 'cardMemory') throw new Error('Mémoire attendue');
     expect(later.arena.fighters[0]?.up).toEqual([4]);
     expect(later.arena.fighters[0]?.flippedAt).toBe(flipped.arena.fighters[0]?.flippedAt);
+  });
+
+  test('in multiplayer, the presentation starts by itself after its time limit', () => {
+    const run = new ArenaRun('pawnSumo', ['a', 'b'], new Map(), 1, 0, null, 60_000);
+    expect(run.view(0, SPECTATOR).stageEndsIn).toBe(60_000);
+    run.advance(60_000, new Rng(1));
+    expect(run.stage).toBe('countdown');
+  });
+
+  test('numbered inputs arriving in bursts replay at their own pace: a putt keeps its speed', () => {
+    const step = 1000 / 30;
+    const shot = (deliver: (seq: number) => number) => {
+      const run = new ArenaRun('miniGolf', ['a'], new Map(), 1, 0);
+      run.setReady('a', 0);
+      const start = run.view(0, SPECTATOR);
+      if (start.minigame !== 'miniGolf') throw new Error('Mini-golf attendu');
+      const ball = start.arena.fighters[0];
+      if (!ball) throw new Error('pas de balle');
+      // Le geste : viser loin devant, presser, reculer, puis avancer d'un coup (vers -z).
+      const along = (seq: number) =>
+        seq < 3 ? 2 : seq < 12 ? -0.1 - (seq - 3) * 0.06 : -0.64 + (seq - 12) * 0.2;
+      const input = (seq: number) => ({
+        move: { x: 0, z: 0 },
+        primary: seq >= 2,
+        secondary: false,
+        point: { x: ball.x, z: ball.z - along(seq) },
+      });
+      const sent = new Set<number>();
+      for (let tick = 1; tick <= 40; tick++) {
+        for (let seq = 0; seq < 30; seq++) {
+          if (!sent.has(seq) && deliver(seq) <= tick) {
+            sent.add(seq);
+            run.setInput('a', input(seq), seq);
+          }
+        }
+        run.advance(ARENA_TIMES.countdown + tick * step, new Rng(1));
+        // La vitesse au pas du tir (ensuite, la balle ralentit : un tir parti un pas plus tard
+        // n'aurait pas roulé autant au même instant).
+        const view = run.view(0, SPECTATOR);
+        if (view.minigame !== 'miniGolf') throw new Error('Mini-golf attendu');
+        const after = view.arena.fighters[0];
+        if (after?.shotAt != null) return { speed: Math.hypot(after.vx, after.vz), tick };
+      }
+      return { speed: 0, tick: -1 };
+    };
+    const even = shot((seq) => seq + 1);
+    // Par paquets de quatre, en retard : les commandes arrivent toutes les quatre d'un coup.
+    const bursts = shot((seq) => seq + 1 + (3 - (seq % 4)));
+    expect(even.speed).toBeGreaterThan(1);
+    expect(bursts.speed).toBeCloseTo(even.speed, 5);
+  });
+
+  test('inputs too far ahead are caught up; each human client learns the last input applied', () => {
+    const run = new ArenaRun('pawnSumo', ['a'], new Map(), 1, 0);
+    run.setReady('a', 0);
+    const step = 1000 / 30;
+    run.advance(ARENA_TIMES.countdown + step, new Rng(1));
+    const idle = { move: { x: 0, z: 0 }, primary: false, secondary: false };
+    run.setInput('a', idle, 1);
+    for (let seq = 2; seq <= 20; seq++) run.setInput('a', idle, seq);
+    run.advance(ARENA_TIMES.countdown + 2 * step, new Rng(1));
+    expect(run.view(0, SPECTATOR).acks.a).toBe(20 - INPUT_LAG);
   });
 
   test('never trusts a client input', () => {

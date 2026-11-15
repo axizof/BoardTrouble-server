@@ -98,9 +98,9 @@ export type ArenaStates = {
 export type ArenaStage = 'intro' | 'countdown' | 'play' | 'reveal' | 'result';
 
 /**
- * Durées des étapes, en millisecondes. La présentation n'a pas de limite : on prend le temps de
- * comprendre le jeu, et elle finit quand tout le monde est prêt (en multi, l'hôte pourra la
- * lancer sans attendre un retardataire).
+ * Durées des étapes, en millisecondes. La présentation finit quand tout le monde est prêt ; en
+ * solo, sans limite (on prend le temps de comprendre le jeu), en multi au bout du temps que
+ * donne la session (personne n'attend indéfiniment un retardataire).
  */
 export const ARENA_TIMES = {
   /** Entre bots seulement (le labo moteur), la présentation est courte. */
@@ -119,6 +119,11 @@ export type ArenaRunView = {
   [M in ArenaMinigame]: { minigame: M; arena: ArenaStates[M] };
 }[ArenaMinigame] & {
   stage: ArenaStage;
+  /**
+   * Pour chaque humain, le numéro de la dernière commande appliquée (voir `setInput`) : son
+   * client rejoue celles d'après sur cet état pour prédire son propre mouvement.
+   */
+  acks: Record<PlayerId, number>;
   /** En 1 contre tous, le joueur seul face aux autres ; null sinon. */
   solo: PlayerId | null;
   /** Millisecondes avant la fin de l'étape, au moment de l'envoi ; null pendant le jeu. */
@@ -136,6 +141,23 @@ export type ArenaRunView = {
   succeeded: boolean | null;
 };
 
+/**
+ * Les commandes d'un humain : `applied`, le numéro de celle du dernier pas joué ; `latest`, le
+ * plus grand reçu ; la file de celles qui attendent leur pas ; la commande en cours.
+ */
+type InputLine = {
+  applied: number;
+  latest: number;
+  queue: { seq: number; input: ArenaInput }[];
+  current: ArenaInput;
+};
+
+/**
+ * Une commande arrivée en avance attend au plus tant de pas avant d'être jouée (au-delà, on
+ * saute) : assez pour lisser les à-coups d'un réseau, sans laisser le retard grandir.
+ */
+export const INPUT_LAG = 4;
+
 export class ArenaRun {
   readonly minigame: ArenaMinigame;
   readonly players: PlayerId[];
@@ -143,7 +165,8 @@ export class ArenaRun {
   readonly #game: ArenaGame<ArenaState>;
   readonly #bots: Map<PlayerId, BotLevel>;
   readonly #ready = new Set<PlayerId>();
-  readonly #inputs = new Map<PlayerId, ArenaInput>();
+  /** Les commandes de chaque humain, rejouées au rythme où il les a envoyées (`setInput`). */
+  readonly #inputs = new Map<PlayerId, InputLine>();
   #stage: ArenaStage = 'intro';
   /** Fin de l'étape en cours (heure de l'hôte), l'infini pour une présentation sans limite ; pendant le jeu, son début. */
   #stageAt: number;
@@ -164,6 +187,8 @@ export class ArenaRun {
     seed: number,
     now: number,
     solo: PlayerId | null = null,
+    /** La présentation dure au plus tant (ms) ; null : sans limite (le solo). */
+    introLimit: number | null = null,
   ) {
     this.minigame = minigame;
     this.players = players;
@@ -173,7 +198,11 @@ export class ArenaRun {
     for (const id of players) if (bots.has(id)) this.#ready.add(id);
     this.#state = this.#game.create(players, { practice: false, seed, solo });
     const isBotsOnly = players.every((id) => bots.has(id));
-    this.#stageAt = isBotsOnly ? now + ARENA_TIMES.botsIntro : Number.POSITIVE_INFINITY;
+    this.#stageAt = isBotsOnly
+      ? now + ARENA_TIMES.botsIntro
+      : introLimit === null
+        ? Number.POSITIVE_INFINITY
+        : now + introLimit;
   }
 
   get stage(): ArenaStage {
@@ -187,10 +216,50 @@ export class ArenaRun {
     if (this.#ready.size === this.players.length) this.#startCountdown(now);
   }
 
-  setInput(player: PlayerId, input: unknown): void {
-    if (this.players.includes(player) && !this.#bots.has(player)) {
-      this.#inputs.set(player, sanitizeInput(input));
+  /**
+   * Une commande d'un humain. `seq` : son numéro, un par pas de son côté (le client en envoie une
+   * à chaque pas). Les commandes arrivent par à-coups sur un réseau irrégulier : l'arène les
+   * rejoue dans l'ordre, une par pas, avec un peu de retard au besoin, si bien qu'un geste
+   * (reculer puis avancer le putter, marteler) garde sa vraie vitesse. Sans numéro (les tests),
+   * la commande s'applique tout de suite.
+   */
+  setInput(player: PlayerId, input: unknown, seq?: number): void {
+    if (!this.players.includes(player) || this.#bots.has(player)) return;
+    const clean = sanitizeInput(input);
+    const line = this.#inputs.get(player);
+    if (seq === undefined || !Number.isInteger(seq) || !line || this.#stage !== 'play') {
+      // Hors du jeu, rien à rejouer : la commande reçue est celle du moment.
+      this.#inputs.set(player, { applied: seq ?? 0, latest: seq ?? 0, queue: [], current: clean });
+      return;
     }
+    if (seq < line.latest) return;
+    // Le même numéro (la commande a changé dans le pas) : la plus récente le remplace.
+    const queued = line.queue.at(-1);
+    if (seq === line.latest && queued?.seq === seq) queued.input = clean;
+    else if (seq > line.applied) line.queue.push({ seq, input: clean });
+    line.latest = seq;
+  }
+
+  /** La commande d'un humain pour ce pas : la suivante de sa file (voir `setInput`). */
+  #nextInput(player: PlayerId): ArenaInput {
+    const line = this.#inputs.get(player);
+    if (!line) return IDLE_INPUT;
+    // Trop de retard (des commandes arrivées en rafale, une horloge un peu rapide) : on saute
+    // jusqu'à INPUT_LAG pas derrière la dernière reçue.
+    line.applied = Math.max(line.applied + 1, line.latest - INPUT_LAG);
+    line.applied = Math.min(line.applied, line.latest);
+    let target: number | null = null;
+    while (line.queue[0] && line.queue[0].seq <= line.applied) {
+      const next = line.queue.shift();
+      if (!next) break;
+      line.current = next.input;
+      // Un clic (une visée) passé dans les commandes sautées compte quand même.
+      if (next.input.target != null) target = next.input.target;
+    }
+    const input = line.current;
+    // Une visée (un clic) ne vaut que pour un pas : la commande reste, pas le clic.
+    line.current = { ...input, target: null };
+    return target !== null && input.target == null ? { ...input, target } : input;
   }
 
   /** L'heure à laquelle l'hôte doit rappeler `advance`, ou null s'il attend les joueurs. */
@@ -212,16 +281,10 @@ export class ArenaRun {
         const inputs = Object.fromEntries(
           this.players.map((id) => {
             const level = this.#bots.get(id);
-            const input = level
-              ? this.#game.botInput(state, id, level, rng)
-              : (this.#inputs.get(id) ?? IDLE_INPUT);
+            const input = level ? this.#game.botInput(state, id, level, rng) : this.#nextInput(id);
             return [id, input];
           }),
         );
-        // Une visée (un clic) ne vaut que pour un pas : la commande reste, pas le clic.
-        for (const [id, input] of this.#inputs) {
-          if (input.target != null) this.#inputs.set(id, { ...input, target: null });
-        }
         this.#state = this.#game.step(state, inputs);
       }
       if (this.#game.isOver(this.#state)) {
@@ -285,6 +348,7 @@ export class ArenaRun {
     return {
       minigame: this.minigame,
       stage: this.#stage,
+      acks: Object.fromEntries([...this.#inputs].map(([id, line]) => [id, line.applied])),
       solo: this.solo,
       stageEndsIn:
         this.#stage === 'play' || !Number.isFinite(this.#stageAt)
