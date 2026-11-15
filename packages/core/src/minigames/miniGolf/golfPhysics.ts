@@ -8,8 +8,17 @@ import type { GolfFeature, GolfHole } from './holes';
 
 export const GOLF_BALL_RADIUS = 0.12;
 export const CUP_RADIUS = 0.2;
-/** Plus vite que ça (m/s) au-dessus du trou, la balle passe par-dessus. */
-const CUP_SPEED = 3.4;
+/**
+ * Le trou est un vrai trou (retour de test : "c'est pas juste elle touche et ça passe") : au-
+ * dessus de lui, la balle n'est plus portée et bascule vers le fond (CUP_PULL, m/s²) ; elle est
+ * dedans quand son centre passe sous le bord (CUP_DROP du centre) assez lentement (CUP_SINK) ;
+ * plus vite, elle tape la paroi d'en face et rebondit (CUP_WALL) : elle peut tourner sur le bord
+ * et ressortir. Au-delà de CUP_SKIP, elle passe par-dessus sans toucher le fond.
+ */
+const CUP_PULL = 22;
+const CUP_SINK = 2.3;
+const CUP_WALL = 0.35;
+const CUP_SKIP = 5.5;
 /** Le frottement : une décélération fixe (m/s²) et une part de la vitesse par seconde. */
 const ROLL = 1.1;
 const DRAG = 0.35;
@@ -26,6 +35,43 @@ export const BLADES = 4;
 /** Un tuyau aspire la balle à tant de son entrée, et la recrache au moins à cette vitesse. */
 export const PIPE_RADIUS = 0.5;
 const PIPE_SPEED = 3.5;
+
+/**
+ * La longueur d'un vecteur. Pas Math.hypot : bien plus lent (la balle est simulée des centaines
+ * de fois par coup de bot), et son arrondi n'est pas garanti identique d'un moteur JS à l'autre,
+ * celui de Math.sqrt si.
+ */
+function lengthOf(x: number, z: number): number {
+  return Math.sqrt(x * x + z * z);
+}
+
+/** Les bordures d'un trou, avec leur boîte élargie de la balle (pour ignorer d'emblée les loin). */
+type WallBox = {
+  ax: number;
+  az: number;
+  bx: number;
+  bz: number;
+  minX: number;
+  maxX: number;
+  minZ: number;
+  maxZ: number;
+};
+const wallBoxes = new WeakMap<GolfHole, WallBox[]>();
+
+function wallsOf(hole: GolfHole): WallBox[] {
+  let boxes = wallBoxes.get(hole);
+  if (!boxes) {
+    boxes = hole.walls.map((wall) => ({
+      ...wall,
+      minX: Math.min(wall.ax, wall.bx) - GOLF_BALL_RADIUS,
+      maxX: Math.max(wall.ax, wall.bx) + GOLF_BALL_RADIUS,
+      minZ: Math.min(wall.az, wall.bz) - GOLF_BALL_RADIUS,
+      maxZ: Math.max(wall.az, wall.bz) + GOLF_BALL_RADIUS,
+    }));
+    wallBoxes.set(hole, boxes);
+  }
+  return boxes;
+}
 
 /** Ce qu'on sait d'une balle qui roule. */
 export type BallMotion = {
@@ -57,7 +103,7 @@ export function isOnGround(hole: GolfHole, x: number, z: number, time: number): 
     if (surface.kind === 'rect') {
       if (Math.abs(x - surface.x) <= surface.hx && Math.abs(z - surface.z) <= surface.hz)
         return true;
-    } else if (Math.hypot(x - surface.x, z - surface.z) <= surface.r) {
+    } else if (lengthOf(x - surface.x, z - surface.z) <= surface.r) {
       return true;
     }
   }
@@ -124,13 +170,13 @@ function bounceOffSegment(
   const pz = az + ez * share;
   let nx = ball.x - px;
   let nz = ball.z - pz;
-  const gap = Math.hypot(nx, nz);
+  const gap = lengthOf(nx, nz);
   if (gap >= GOLF_BALL_RADIUS) return false;
   if (gap === 0) {
     nx = -ez;
     nz = ex;
   }
-  const norm = Math.hypot(nx, nz) || 1;
+  const norm = lengthOf(nx, nz) || 1;
   nx /= norm;
   nz /= norm;
   ball.x = px + nx * GOLF_BALL_RADIUS;
@@ -157,6 +203,7 @@ export function advanceBall(
   dt: number,
 ): GolfBallEvent {
   const sub = dt / SUBSTEPS;
+  const walls = wallsOf(hole);
   for (let step = 0; step < SUBSTEPS; step++) {
     const now = time + step * sub;
     if (ball.airborne > 0) {
@@ -178,7 +225,7 @@ export function advanceBall(
       } else if (feature.kind === 'mound') {
         const dx = ball.x - feature.x;
         const dz = ball.z - feature.z;
-        const gap = Math.hypot(dx, dz);
+        const gap = lengthOf(dx, dz);
         if (gap > 0.25 && gap < feature.r) {
           const push = feature.push * (gap / feature.r);
           ball.vx += (dx / gap) * push * sub;
@@ -187,7 +234,7 @@ export function advanceBall(
       }
     }
     // Le frottement.
-    const speed = Math.hypot(ball.vx, ball.vz);
+    const speed = lengthOf(ball.vx, ball.vz);
     if (speed > 0) {
       const kept = Math.max(0, speed - (ROLL + DRAG * speed) * sub) / speed;
       ball.vx *= kept;
@@ -195,13 +242,16 @@ export function advanceBall(
     }
     ball.x += ball.vx * sub;
     ball.z += ball.vz * sub;
-    for (const wall of hole.walls)
+    for (const wall of walls) {
+      if (ball.x < wall.minX || ball.x > wall.maxX || ball.z < wall.minZ || ball.z > wall.maxZ)
+        continue;
       bounceOffSegment(ball, wall.ax, wall.az, wall.bx, wall.bz, WALL_BOUNCE);
+    }
     for (const feature of hole.features) {
       if (feature.kind === 'bumper') {
         const dx = ball.x - feature.x;
         const dz = ball.z - feature.z;
-        const gap = Math.hypot(dx, dz);
+        const gap = lengthOf(dx, dz);
         if (gap < feature.r + GOLF_BALL_RADIUS && gap > 0) {
           const nx = dx / gap;
           const nz = dz / gap;
@@ -213,6 +263,10 @@ export function advanceBall(
           ball.vz += (out - into) * nz;
         }
       } else if (feature.kind === 'windmill' || feature.kind === 'spinner') {
+        const reach = feature.length + GOLF_BALL_RADIUS;
+        const fx = ball.x - feature.x;
+        const fz = ball.z - feature.z;
+        if (fx * fx + fz * fz > reach * reach) continue;
         for (const blade of spinningSegments(feature, now)) {
           // La vitesse de la pale au point le plus proche : elle pousse la balle.
           const rx = ball.x - feature.x;
@@ -224,14 +278,13 @@ export function advanceBall(
       } else if (feature.kind === 'ramp') {
         const isOnRamp =
           Math.abs(ball.x - feature.x) <= feature.hx && Math.abs(ball.z - feature.z) <= feature.hz;
-        if (isOnRamp && Math.hypot(ball.vx, ball.vz) >= feature.speed)
-          ball.airborne = feature.flight;
+        if (isOnRamp && lengthOf(ball.vx, ball.vz) >= feature.speed) ball.airborne = feature.flight;
       } else if (feature.kind === 'pipe') {
         if (
           tick - ball.piped > 10 &&
-          Math.hypot(ball.x - feature.ax, ball.z - feature.az) < PIPE_RADIUS
+          lengthOf(ball.x - feature.ax, ball.z - feature.az) < PIPE_RADIUS
         ) {
-          const out = Math.max(PIPE_SPEED, Math.hypot(ball.vx, ball.vz));
+          const out = Math.max(PIPE_SPEED, lengthOf(ball.vx, ball.vz));
           ball.x = feature.bx;
           ball.z = feature.bz;
           ball.vx = feature.dx * out;
@@ -240,19 +293,51 @@ export function advanceBall(
         }
       }
     }
-    // Le trou : assez lent au-dessus, elle tombe dedans.
-    const nowSpeed = Math.hypot(ball.vx, ball.vz);
-    if (Math.hypot(ball.x - hole.cup.x, ball.z - hole.cup.z) < CUP_RADIUS && nowSpeed < CUP_SPEED) {
-      ball.vx = 0;
-      ball.vz = 0;
-      return 'holed';
-    }
+    if (cup(ball, hole, sub)) return 'holed';
     if (!isOnGround(hole, ball.x, ball.z, now)) return 'fell';
   }
-  if (ball.airborne <= 0 && Math.hypot(ball.vx, ball.vz) < STOP_SPEED) {
+  if (ball.airborne <= 0 && lengthOf(ball.vx, ball.vz) < STOP_SPEED) {
     ball.vx = 0;
     ball.vz = 0;
     return 'stopped';
   }
   return null;
+}
+
+/** La distance du centre de la balle au centre du trou en dessous de laquelle elle est tombée. */
+const CUP_DROP = CUP_RADIUS - GOLF_BALL_RADIUS * 0.55;
+
+/**
+ * Le trou, pendant un pas de calcul : au-dessus de lui, la balle bascule vers le centre ; passée
+ * sous le bord, elle tombe si elle est assez lente, sinon elle rebondit sur la paroi d'en face.
+ * Vrai : elle est dedans.
+ */
+function cup(ball: BallMotion, hole: GolfHole, sub: number): boolean {
+  const dx = ball.x - hole.cup.x;
+  const dz = ball.z - hole.cup.z;
+  const gap = lengthOf(dx, dz);
+  const speed = lengthOf(ball.vx, ball.vz);
+  if (gap >= CUP_RADIUS || speed >= CUP_SKIP) return false;
+  const nx = gap > 0 ? dx / gap : 0;
+  const nz = gap > 0 ? dz / gap : 0;
+  // Elle bascule vers le fond, d'autant plus qu'elle est loin du bord.
+  ball.vx -= nx * CUP_PULL * sub;
+  ball.vz -= nz * CUP_PULL * sub;
+  if (gap >= CUP_DROP) return false;
+  if (speed < CUP_SINK) {
+    ball.vx = 0;
+    ball.vz = 0;
+    ball.x = hole.cup.x;
+    ball.z = hole.cup.z;
+    return true;
+  }
+  // Trop vite : elle tape la paroi d'en face (en sortant) et rebondit vers le milieu, ralentie.
+  const out = ball.vx * nx + ball.vz * nz;
+  if (out > 0) {
+    ball.vx -= (1 + CUP_WALL) * out * nx;
+    ball.vz -= (1 + CUP_WALL) * out * nz;
+    ball.vx *= 0.8;
+    ball.vz *= 0.8;
+  }
+  return false;
 }
