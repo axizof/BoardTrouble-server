@@ -6,6 +6,17 @@ export type ChangelogEntry = { version: string; date: string; title: string; ite
 
 export const CHANGELOG: readonly ChangelogEntry[] = [
   {
+    version: '0.5.1',
+    date: '2026-11-15',
+    title: 'Quitter une partie à plusieurs',
+    items: [
+      'Le tchat et la liste des joueurs passent dans un volet sur le bord gauche, loin des commandes ; il se cache pendant les mini-jeux.',
+      "Quitter une partie à plusieurs dit ce qui se passe vraiment : elle continue sans toi, et un bot Facile tient ta place jusqu'à ton retour.",
+      "L'hôte peut arrêter la partie pour tout le monde : elle reste sauvegardée sur le serveur, à reprendre depuis le salon.",
+      "Au salon, l'hôte peut supprimer une partie sauvegardée pour libérer un emplacement.",
+    ],
+  },
+  {
     version: '0.5.0',
     date: '2026-11-15',
     title: 'Le multijoueur',
