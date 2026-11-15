@@ -39,6 +39,10 @@ Sur `http://localhost:7350/admin` (le port du serveur) : la vue d'ensemble (joue
 
 Le serveur regarde la dernière Release de ce repo au lancement, puis toutes les 6 heures. Une version plus récente s'affiche dans le tableau de bord : un clic l'installe et redémarre le serveur (jamais pendant une partie) quand il tourne en exécutable ; lancé depuis les sources, mets-le à jour avec `git pull`. `BT_NO_UPDATE_CHECK=1` pour ne pas chercher de mise à jour.
 
+### Les comptes Discord
+
+Un joueur peut se connecter avec Discord (depuis l'écran Multijoueur) : il retrouve alors sa place depuis n'importe quel appareil, et les autres voient "Discord" à côté de son nom. La connexion passe par l'API centrale de Board Trouble, qui lui donne un jeton signé ; le serveur le vérifie lui-même avec la clé publique de l'API, qu'il lit au lancement (`BT_AUTH_URL=<adresse de l'API>`) ou qu'on lui donne directement (`BT_AUTH_PUBLIC_KEY=<la clé>`). Sans l'un ni l'autre, ou si l'API ne répond pas au lancement, le serveur marche sans Discord : chacun garde sa place sur son navigateur. La console dit si la connexion Discord est activée.
+
 ## Licence
 
 [GNU AGPL-3.0](LICENSE) : tu peux héberger, modifier et redistribuer ce serveur librement. Si tu mets en ligne une version modifiée, tu dois publier son code source sous la même licence.

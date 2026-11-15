@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { generateKeyPairSync, type KeyObject, sign } from 'node:crypto';
 import {
   GAME_VERSION,
   type NetHostMessage,
@@ -249,5 +250,81 @@ describe('the game server', () => {
     server.receive(ana.connection, '{oops');
     expect(ana.received).toEqual([]);
     expect(server.roomCount).toBe(0);
+  });
+});
+
+describe('the Discord login', () => {
+  const keys = generateKeyPairSync('ed25519');
+  const discordServer = (authKey: KeyObject | null = null) => {
+    server = new GameServer({ name: 'Test', maxRooms: 4, log: () => {}, authKey });
+    return server;
+  };
+  /** Un jeton comme ceux de l'API centrale, pour ce navigateur. */
+  const token = (identity: string, privateKey = keys.privateKey) => {
+    const body = Buffer.from(
+      JSON.stringify({
+        v: 1,
+        sub: '123456789012345678',
+        name: 'Ana',
+        avatar: null,
+        idn: identity,
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 3600,
+      }),
+    ).toString('base64url');
+    return `${body}.${sign(null, Buffer.from(body), privateKey).toString('base64url')}`;
+  };
+  const helloWith = (player: ReturnType<typeof client>, id: string, auth: string) =>
+    player.send({
+      type: 'hello',
+      protocol: PROTOCOL_VERSION,
+      version: GAME_VERSION,
+      identity: { id, secret: 's'.repeat(40) },
+      profile: { name: 'Ana', appearance: naturalAppearance('fox') },
+      auth,
+    });
+
+  test('a valid token makes the player the same member in every browser', () => {
+    discordServer(keys.publicKey);
+    const laptop = client(server, 'ana-000000000000001', 'Ana');
+    helloWith(laptop, 'ana-000000000000001', token('ana-000000000000001'));
+    expect(laptop.last('welcome')?.memberId).toBe('discord-123456789012345678');
+    laptop.send({ type: 'createRoom', name: 'Partie', password: null });
+    const bob = client(server, 'bob-000000000000002', 'Bob');
+    bob.hello();
+    bob.send({ type: 'joinRoom', roomId: laptop.last('room')?.room?.id, password: null });
+    laptop.send({ type: 'startGame' });
+    // Le même compte depuis un autre navigateur : il reprend sa place dans la partie.
+    const phone = client(server, 'ana-phone-0000000001', 'Ana');
+    helloWith(phone, 'ana-phone-0000000001', token('ana-phone-0000000001'));
+    expect(phone.last('welcome')?.roomId).toBe(laptop.last('room')?.room?.id ?? 'none');
+    expect(laptop.state.isClosed).toBe(true);
+  });
+
+  test('a token that does not check out lets the player in under the browser id', () => {
+    discordServer(keys.publicKey);
+    const other = generateKeyPairSync('ed25519');
+    const forged = client(server, 'ana-000000000000001', 'Ana');
+    helloWith(forged, 'ana-000000000000001', token('ana-000000000000001', other.privateKey));
+    expect(forged.last('welcome')?.memberId).toBe('ana-000000000000001');
+    // Le jeton d'un autre navigateur : pareil.
+    const borrowed = client(server, 'bob-000000000000002', 'Bob');
+    helloWith(borrowed, 'bob-000000000000002', token('ana-000000000000001'));
+    expect(borrowed.last('welcome')?.memberId).toBe('bob-000000000000002');
+  });
+
+  test('without the API key, the server ignores tokens', () => {
+    discordServer();
+    const ana = client(server, 'ana-000000000000001', 'Ana');
+    helloWith(ana, 'ana-000000000000001', token('ana-000000000000001'));
+    expect(ana.last('welcome')?.memberId).toBe('ana-000000000000001');
+  });
+
+  test('a browser cannot pose as a Discord member', () => {
+    discordServer(keys.publicKey);
+    const thief = client(server, 'discord-123456789012345678', 'Voleur');
+    thief.hello();
+    expect(thief.last('refused')?.reason).toBe('identity');
+    expect(thief.state.isClosed).toBe(true);
   });
 });
