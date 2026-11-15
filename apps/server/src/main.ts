@@ -111,6 +111,10 @@ const server = Bun.serve<SocketData>({
     // Le JSON se compresse très bien : un état d'arène envoyé 30 fois par seconde pèse bien
     // moins une fois compressé (jusqu'à 280 Ko/s par joueur sans, pour la Plateforme fondante).
     perMessageDeflate: true,
+    // Une connexion muette (pas même la réponse aux pings que Bun envoie, à laquelle un navigateur
+    // vivant répond tout seul) depuis tant de secondes est coupée : un PC en veille, un Wi-Fi
+    // tombé, sinon vus au bout de 2 minutes. Un joueur inactif mais présent n'est pas coupé.
+    idleTimeout: 30,
     open(socket) {
       const peer: Peer = {
         send: (text) => socket.data.outbound(() => socket.send(text)),
