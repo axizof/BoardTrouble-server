@@ -33,6 +33,11 @@ export type SessionOptions = {
    * en multi, réglable dans le salon).
    */
   decisionTime: number | null;
+  /**
+   * La présentation d'un mini-jeu d'arène dure au plus tant (ms), puis il se lance (en multi,
+   * personne n'attend un retardataire) ; absent : sans limite (le solo).
+   */
+  arenaIntroTime?: number;
 };
 
 /**
@@ -263,9 +268,9 @@ export class GameSession {
     return { type: 'recap', recap: recapOf(this.board, this.#state, this.#chronicle) };
   }
 
-  /** Un joueur envoie ses commandes d'arène. */
-  arenaInput(player: PlayerId, input: unknown): void {
-    this.#arena?.setInput(player, input);
+  /** Un joueur envoie ses commandes d'arène, numérotées (voir `ArenaRun.setInput`). */
+  arenaInput(player: PlayerId, input: unknown, seq?: number): void {
+    this.#arena?.setInput(player, input, seq);
   }
 
   /** Un joueur se dit prêt, à la présentation d'un mini-jeu d'arène. */
@@ -321,7 +326,15 @@ export class GameSession {
         }),
       );
       const seed = this.#botRng.int(1, 1e9);
-      this.#arena = new ArenaRun(to.minigame, to.players, bots, seed, now, to.solo);
+      this.#arena = new ArenaRun(
+        to.minigame,
+        to.players,
+        bots,
+        seed,
+        now,
+        to.solo,
+        this.#options.arenaIntroTime ?? null,
+      );
       return [];
     }
     this.#arena.advance(now, this.#botRng);

@@ -30,6 +30,9 @@ export type RoomSettings = {
   tips: boolean;
 };
 
+/** En multi, la présentation d'un mini-jeu se lance seule au bout de tant (ms). */
+export const ROOM_ARENA_INTRO = 60_000;
+
 /** Les temps pour décider proposés à l'hôte (ms). */
 export const DECISION_TIMES = [60_000, 90_000, 120_000, 180_000] as const;
 
@@ -260,7 +263,7 @@ export class Room {
       board,
       { players, tableSize: this.#settings.tableSize, seed, chaos: this.#settings.chaos },
       seats,
-      { decisionTime: this.#settings.decisionTime },
+      { decisionTime: this.#settings.decisionTime, arenaIntroTime: ROOM_ARENA_INTRO },
       now,
     );
     this.#session = created.session;

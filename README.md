@@ -27,6 +27,8 @@ bun run start --port 7400 --name "Les copains" --client ../client/dist
 
 La console affiche les adresses à donner aux joueurs (celle de ta machine et celles du réseau local). Les joueurs ouvrent l'une d'elles dans leur navigateur : le serveur leur envoie le jeu lui-même, puis ils choisissent Multijoueur, rejoignent ou créent un salon (avec un mot de passe s'ils veulent). Les réglages existent aussi en variables d'environnement : `BT_PORT`, `BT_NAME`, `BT_CLIENT`.
 
+Pour tester comme par Internet : `bun run start --lag 80` simule un réseau lent (80 ms de latence, avec des à-coups).
+
 ## Licence
 
 [GNU AGPL-3.0](LICENSE) : tu peux héberger, modifier et redistribuer ce serveur librement. Si tu mets en ligne une version modifiée, tu dois publier son code source sous la même licence.
