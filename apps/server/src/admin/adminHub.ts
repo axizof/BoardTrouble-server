@@ -35,6 +35,7 @@ export type AdminOptions = {
   onRestart: () => void;
   /** Installe la mise à jour et redémarre ; rend l'erreur à afficher, ou null. */
   onUpdate: () => Promise<string | null>;
+  saveSlots: number;
 };
 
 /** L'état part toutes les tant de millisecondes. */
@@ -158,6 +159,20 @@ export class AdminHub {
         this.#options.store.save('presets', this.#presets);
         this.#notice(connection, `Preset "${message.preset.name}" enregistré.`, false);
         break;
+      case 'resumeSave': {
+        const refused = game.adminResumeSave(message.slot);
+        this.#notice(
+          connection,
+          refused
+            ? `Reprise impossible (${refused}).`
+            : 'Salon rouvert : la partie reprend dès que le premier de ses joueurs entre.',
+          refused !== null,
+        );
+        break;
+      }
+      case 'deleteSave':
+        game.adminDeleteSave(message.slot);
+        break;
       case 'deletePreset':
         this.#presets = this.#presets.filter((one) => one.name !== message.name);
         this.#options.store.save('presets', this.#presets);
@@ -194,6 +209,8 @@ export class AdminHub {
       players: game.adminPlayers(),
       bans: bans.list(),
       presets: this.#presets,
+      saves: game.adminSaves(),
+      saveSlots: this.#options.saveSlots,
     };
   }
 
@@ -309,6 +326,9 @@ function parseAdmin(text: string): AdminInbound | null {
     case 'restart':
     case 'applyUpdate':
       return { type: data.type };
+    case 'resumeSave':
+    case 'deleteSave':
+      return Number.isInteger(data.slot) ? { type: data.type, slot: data.slot as number } : null;
     default:
       return null;
   }

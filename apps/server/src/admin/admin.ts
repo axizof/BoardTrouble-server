@@ -230,10 +230,33 @@ function rooms(state: AdminState): string {
       <button class="button is-primary" type="submit">Créer</button>
     </form>
     <p class="muted">Le premier joueur qui entre en devient l'hôte.</p></section>`;
+  const saved = savesCard(state);
   if (state.rooms.length === 0) {
-    return `${create}<section class="card"><p class="empty">Aucun salon ouvert.</p></section>`;
+    return `${create}${saved}<section class="card"><p class="empty">Aucun salon ouvert.</p></section>`;
   }
-  return create + state.rooms.map((room) => roomCard(room, state)).join('');
+  return create + saved + state.rooms.map((room) => roomCard(room, state)).join('');
+}
+
+/** Les parties sauvegardées : les reprendre (un salon rouvert à leur nom), les supprimer. */
+function savesCard(state: AdminState): string {
+  const rows = state.saves
+    .map(
+      (save) => `<tr><td>${save.slot}</td><td>${escapeHtml(save.roomName)}</td>
+        <td class="muted">manche ${save.round}, ${escapeHtml(save.players.join(', '))}</td>
+        <td class="muted">${new Date(save.savedAt).toLocaleString('fr-FR')}</td>
+        <td class="actions">${
+          save.inUse
+            ? '<span class="badge is-playing">en partie</span>'
+            : `<button class="button" data-action="resumeSave" data-slot="${save.slot}">Reprendre</button><button class="button is-danger" data-confirm="deleteSave" data-slot="${save.slot}">Supprimer</button>`
+        }</td></tr>`,
+    )
+    .join('');
+  return `<section class="card"><h2>Parties sauvegardées<small>${state.saves.length} / ${state.saveSlots} emplacements</small></h2>
+    ${
+      state.saves.length === 0
+        ? '<p class="empty">Aucune partie sauvegardée. Une partie se sauvegarde après chaque étape, et libère son emplacement une fois finie.</p>'
+        : `<table><thead><tr><th>N°</th><th>Salon</th><th>Où elle en est</th><th>Sauvegardée</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+    }</section>`;
 }
 
 function roomCard({ view: room, step }: AdminState['rooms'][number], state: AdminState): string {
@@ -394,7 +417,7 @@ function duration(ms: number): string {
 
 /** Ce qui demande confirmation : le texte, et le message à envoyer une fois confirmé. */
 function confirmation(button: HTMLElement): { text: string; action: AdminInbound } | null {
-  const { confirm, room, id, name } = button.dataset;
+  const { confirm, room, id, name, slot } = button.dataset;
   switch (confirm) {
     case 'forceNext':
       return room
@@ -429,6 +452,13 @@ function confirmation(button: HTMLElement): { text: string; action: AdminInbound
         text: 'Redémarrer le serveur ? Les parties en cours seront perdues.',
         action: { type: 'restart' },
       };
+    case 'deleteSave':
+      return slot
+        ? {
+            text: `Supprimer la sauvegarde ${slot} ? La partie ne pourra plus être reprise.`,
+            action: { type: 'deleteSave', slot: Number(slot) },
+          }
+        : null;
     case 'applyUpdate':
       return {
         text: 'Installer la nouvelle version et redémarrer le serveur ? (Impossible pendant une partie.)',
@@ -472,6 +502,9 @@ app.addEventListener('click', (event) => {
       break;
     case 'deletePreset':
       if (target.dataset.name) send({ type: 'deletePreset', name: target.dataset.name });
+      break;
+    case 'resumeSave':
+      if (target.dataset.slot) send({ type: 'resumeSave', slot: Number(target.dataset.slot) });
       break;
     default:
       return;

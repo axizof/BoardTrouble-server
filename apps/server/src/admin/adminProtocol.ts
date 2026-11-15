@@ -1,5 +1,5 @@
 import type { BotLevel, RoomSettings } from '@board-trouble/core';
-import type { AdminPlayer, AdminRoom } from '../gameServer';
+import type { AdminPlayer, AdminRoom, AdminSave } from '../gameServer';
 import type { AvailableUpdate } from '../updates';
 import type { SystemStats } from './systemStats';
 
@@ -25,6 +25,9 @@ export type AdminState = {
   players: AdminPlayer[];
   bans: { id: string; name: string }[];
   presets: Preset[];
+  /** Les parties sauvegardées, et le nombre d'emplacements. */
+  saves: AdminSave[];
+  saveSlots: number;
 };
 
 export type AdminInbound =
@@ -38,7 +41,9 @@ export type AdminInbound =
   | { type: 'deletePreset'; name: string }
   | { type: 'stop' }
   | { type: 'restart' }
-  | { type: 'applyUpdate' };
+  | { type: 'applyUpdate' }
+  | { type: 'resumeSave'; slot: number }
+  | { type: 'deleteSave'; slot: number };
 
 export type AdminOutbound =
   /** `needsPassword` : la page doit donner le mot de passe admin (hors de la machine du serveur). */
